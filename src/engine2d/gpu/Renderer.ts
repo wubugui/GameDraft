@@ -36,6 +36,8 @@ export interface RenderOptions {
   clear?: boolean;
   clearColor?: ColorSource | number[];
   transform?: Matrix;
+  /** GPU 帧调试里的这次 render 名称；只影响捕获标签，不改变画面。 */
+  debugLabel?: string;
 }
 
 export interface GenerateTextureOptions {

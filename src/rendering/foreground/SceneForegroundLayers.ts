@@ -146,6 +146,7 @@ export class SceneForegroundLayers {
       // 半浮点：G 存的是预乘过的深度（可以为负、要几位小数）
       this.coverage = RenderTexture.create({
         width: cw, height: ch, format: 'rgba16float', scaleMode: 'linear', antialias: false,
+        label: '前景面遮挡覆盖图',
       });
     }
   }
@@ -215,7 +216,7 @@ export class SceneForegroundLayers {
     if (this.destroyed || !this.enabled || this.coverageBroken || !this.coverage || !this.coverageDirty) return;
     const t0 = performance.now();
     try {
-      renderer.render({ container: this.maskRoot, target: this.coverage, clear: true, clearColor: [0, 0, 0, 0] });
+      renderer.render({ container: this.maskRoot, target: this.coverage, clear: true, clearColor: [0, 0, 0, 0], debugLabel: '前景层覆盖图重算' });
       this.coverageDirty = false;
       if (!this.coverageLive) {
         this.coverageLive = true;

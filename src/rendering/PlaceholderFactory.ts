@@ -64,8 +64,9 @@ export function createPlaceholderPlayerTextures(app: Application): {
   const texture = RenderTexture.create({
     width: frameWidth * frameCount,
     height: frameHeight,
+    label: '占位角色动画图集',
   });
-  app.renderer.render({ container, target: texture });
+  app.renderer.render({ container, target: texture, debugLabel: '占位角色动画图集生成' });
 
   return { texture, frameWidth, frameHeight };
 }

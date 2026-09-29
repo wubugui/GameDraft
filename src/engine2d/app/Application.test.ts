@@ -159,7 +159,7 @@ describe('Application.init', () => {
     await app.init();
     flushFrame();
     expect(guardedThis).toEqual([app]);
-    expect(rendererOf(app).renderCalls).toEqual([{ container: app.stage }]);
+    expect(rendererOf(app).renderCalls).toEqual([{ container: app.stage, debugLabel: '游戏舞台合成' }]);
 
     // init 之后再覆盖:ticker 手上仍是 init 时的那个(与 Pixi 相同)
     const late = vi.fn();

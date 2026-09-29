@@ -917,6 +917,7 @@ export class SceneLightingPass {
       format: 'rgba16float',
       scaleMode: 'linear',
       antialias: false,
+      label: '场景线性 HDR 辐射场',
     });
 
     // 顶点用 RT 像素坐标（走标准变换链，见着色器段头注释）
@@ -928,6 +929,7 @@ export class SceneLightingPass {
 
     this.shader = Shader.from({
       gpu: {
+        name: 'scene-lighting-radiance-bake',
         vertex: { source: BAKE_WGSL, entryPoint: 'mainVertex' },
         fragment: { source: BAKE_WGSL, entryPoint: 'mainFragment' },
       },
@@ -1224,7 +1226,7 @@ export class SceneLightingPass {
         r.uPrefix1Sampler = samplerOf(p1);
       }
     }
-    renderer.render({ container: this.mesh, target: this.rt, clear: true });
+    renderer.render({ container: this.mesh, target: this.rt, clear: true, debugLabel: '场景辐射场重算' });
     this.dirty = false;
     return true;
   }

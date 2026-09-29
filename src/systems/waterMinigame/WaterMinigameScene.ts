@@ -124,10 +124,12 @@ export class WaterMinigameScene {
     this.bottomMrt = RenderTexture.create({
       width: 4,
       height: 4,
+      label: '水下底色合成图',
     });
     this.paramsMrt = RenderTexture.create({
       width: 4,
       height: 4,
+      label: '水下深度发光物体参数图',
     });
     this.bottomMrtSprite = new Sprite(this.bottomMrt);
     this.waterFilter = new WaterShaderFilter();
@@ -721,6 +723,7 @@ export class WaterMinigameScene {
         container: this.underwaterRtRoot,
         target: this.bottomMrt,
         clear: true,
+        debugLabel: '水下底色合成',
       });
 
       this.prepareUnderwaterPass('params');
@@ -728,6 +731,7 @@ export class WaterMinigameScene {
         container: this.underwaterRtRoot,
         target: this.paramsMrt,
         clear: true,
+        debugLabel: '水下深度发光物体参数生成',
       });
 
       this.prepareUnderwaterPass('color');

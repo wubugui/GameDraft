@@ -157,6 +157,7 @@ let sharedGpuProgram: GpuProgram | null = null;
 function getSharedGpuProgram(): GpuProgram {
     if (!sharedGpuProgram) {
         sharedGpuProgram = GpuProgram.from({
+            name: 'depth-occlusion-filter',
             vertex: { source: WGSL, entryPoint: 'mainVertex' },
             fragment: { source: WGSL, entryPoint: 'mainFragment' },
         });

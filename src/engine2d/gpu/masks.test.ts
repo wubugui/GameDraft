@@ -257,7 +257,7 @@ describe('D20 Sprite 遮罩走 MaskFilter(AlphaMaskPipe)', () => {
       'pass clear 0,0,11,10',
       'draw engine2d-batch',
       'pass load 0,0,64,64',
-      'draw mask',
+      'draw sprite-alpha-mask',
     ]);
     const entry = b.alphaMaskPool[0];
     expect(entry.filter.spriteWorldTransform).toMatchObject({ a: 1, b: 0, c: 0, d: 1, tx: 3, ty: 4 });

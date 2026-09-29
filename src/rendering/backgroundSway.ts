@@ -965,9 +965,10 @@ export class SwayBackground {
     });
     const [nw, nh] = inp.paintSize;
     // ★ 半浮点：RG 存的是**差值**（几十像素量级，精度足够），可以线性过滤（预乘量插值是对的）
-    this.uvMap = RenderTexture.create({ width: nw, height: nh, format: 'rgba16float', scaleMode: 'linear', antialias: false });
+    this.uvMap = RenderTexture.create({ width: nw, height: nh, format: 'rgba16float', scaleMode: 'linear', antialias: false, label: '背景草木 UV 位移图' });
     this.shader = Shader.from({
       gpu: {
+        name: 'background-sway-displacement',
         vertex: { source: SWAY_WGSL, entryPoint: 'mainVertex' },
         fragment: { source: SWAY_WGSL, entryPoint: 'mainFragment' },
       },
@@ -992,6 +993,7 @@ export class SwayBackground {
     if (opts.composite !== false) {
       this.compShader = Shader.from({
         gpu: {
+          name: 'background-sway-composite',
           vertex: { source: COMP_WGSL, entryPoint: 'mainVertex' },
           fragment: { source: COMP_WGSL, entryPoint: 'mainFragment' },
         },
@@ -1023,7 +1025,7 @@ export class SwayBackground {
   renderUv(renderer: Renderer): boolean {
     if (this.destroyed || this.uvBroken || !this.uvDirty) return false;
     try {
-      renderer.render({ container: this.mesh, target: this.uvMap, clear: true, clearColor: [0, 0, 0, 0] });
+      renderer.render({ container: this.mesh, target: this.uvMap, clear: true, clearColor: [0, 0, 0, 0], debugLabel: '背景草木 UV 位移图生成' });
       this.uvDirty = false;
       return true;
     } catch (e) {
@@ -1089,6 +1091,7 @@ export class SwayBackground {
     const [pw, ph] = this.inp.paintSize;
     const shader = Shader.from({
       gpu: {
+        name: 'foreground-sway-coverage',
         vertex: { source: FG_COVERAGE_WGSL, entryPoint: 'mainVertex' },
         fragment: { source: FG_COVERAGE_WGSL, entryPoint: 'mainFragment' },
       },

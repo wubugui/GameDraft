@@ -58,6 +58,7 @@ function webgpuCaptureApi(): Plugin {
             const file = qs.get('file') || 'viewer.html';
             const path = await controller.viewerFile({ jobId: qs.get('jobId') ?? '', file });
             res.setHeader('Content-Type', file.endsWith('.png') ? 'image/png' :
+              file.endsWith('.css') ? 'text/css; charset=utf-8' :
               file.endsWith('.js') ? 'text/javascript; charset=utf-8' :
               file.endsWith('.json') ? 'application/json; charset=utf-8' :
               file.endsWith('.wgsl') ? 'text/plain; charset=utf-8' :
@@ -127,6 +128,14 @@ function webgpuCaptureApi(): Plugin {
                 frameIndex: Number(qs.get('frameIndex')),
                 passOrdinal: Number(qs.get('passOrdinal')), colorIndex: Number(qs.get('colorIndex')),
                 stream: req, contentLength,
+              });
+            } else if (action === 'pass-raw') {
+              result = await controller.uploadPassRaw({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: Number(qs.get('frameIndex')),
+                passOrdinal: Number(qs.get('passOrdinal')), colorIndex: Number(qs.get('colorIndex')),
+                format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
+                bytesPerRow: Number(qs.get('bytesPerRow')), stream: req, contentLength,
               });
             } else {
               result = await controller.upload({

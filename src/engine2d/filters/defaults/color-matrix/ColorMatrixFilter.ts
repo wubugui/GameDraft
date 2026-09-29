@@ -50,6 +50,7 @@ export class ColorMatrixFilter extends Filter {
     });
 
     const gpuProgram = GpuProgram.from({
+      name: 'color-matrix-filter',
       vertex: {
         source,
         entryPoint: 'mainVertex',

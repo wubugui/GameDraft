@@ -252,11 +252,12 @@ export class ShadowPrefixPass {
   private ensure(slabCount: number): void {
     if (this.destroyed) return;
     const [w, h] = this.geo.depthSize;
-    const mk = (): RenderTexture => RenderTexture.create({
+    const mk = (label: string): RenderTexture => RenderTexture.create({
       width: w, height: h, format: 'rgba16float', scaleMode: 'linear', antialias: false,
+      label,
     });
-    while (this.slabs.length < slabCount) this.slabs.push(mk());
-    if (!this.scratch) this.scratch = mk();
+    while (this.slabs.length < slabCount) this.slabs.push(mk(`阴影线扫前缀结果 · 灯组 ${this.slabs.length + 1}`));
+    if (!this.scratch) this.scratch = mk('阴影线扫 ping-pong 暂存');
     if (this.mesh) return;
 
     const geometry = new MeshGeometry({
@@ -266,6 +267,7 @@ export class ShadowPrefixPass {
     });
     this.initShader = Shader.from({
       gpu: {
+        name: 'shadow-prefix-init',
         vertex: { source: INIT_WGSL, entryPoint: 'mainVertex' },
         fragment: { source: INIT_WGSL, entryPoint: 'mainFragment' },
       },
@@ -286,6 +288,7 @@ export class ShadowPrefixPass {
     });
     this.scanShader = Shader.from({
       gpu: {
+        name: 'shadow-prefix-scan',
         vertex: { source: SCAN_WGSL, entryPoint: 'mainVertex' },
         fragment: { source: SCAN_WGSL, entryPoint: 'mainFragment' },
       },
@@ -340,7 +343,7 @@ export class ShadowPrefixPass {
       (ui.uLightZ as Float32Array).set(lz);
       ui.uBias = biasQ;
       mesh.shader = init;
-      renderer.render({ container: mesh, target: this.slabs[s], clear: true });
+      renderer.render({ container: mesh, target: this.slabs[s], clear: true, debugLabel: `阴影前缀初始化 · 灯组 ${s + 1}` });
       if (!any) continue;                       // 这一组一盏带影灯都没有，哨兵就够了
 
       const us = scan.resources.prefixScan.uniforms;
@@ -352,14 +355,14 @@ export class ShadowPrefixPass {
         us.uOffset = 2 ** j;
         scan.resources.uPrev = src.source;
         scan.resources.uPrevSampler = samplerOf(src.source);
-        renderer.render({ container: mesh, target: dst, clear: true });
+        renderer.render({ container: mesh, target: dst, clear: true, debugLabel: `阴影前缀扫描 · 灯组 ${s + 1} · 偏移 ${2 ** j}` });
         const t = src; src = dst; dst = t;
       }
       if (src !== this.slabs[s]) {
         us.uOffset = 0;                         // 位移 0 ＝ 纯拷贝
         scan.resources.uPrev = src.source;
         scan.resources.uPrevSampler = samplerOf(src.source);
-        renderer.render({ container: mesh, target: this.slabs[s], clear: true });
+        renderer.render({ container: mesh, target: this.slabs[s], clear: true, debugLabel: `阴影前缀结果回写 · 灯组 ${s + 1}` });
       }
     }
     return slabCount;

@@ -221,6 +221,7 @@ let sharedGpuProgram: GpuProgram | null = null;
 function getSharedGpuProgram(): GpuProgram {
   if (!sharedGpuProgram) {
     sharedGpuProgram = GpuProgram.from({
+      name: 'entity-lighting-filter',
       vertex: { source: WGSL, entryPoint: 'mainVertex' },
       fragment: { source: WGSL, entryPoint: 'mainFragment' },
     });

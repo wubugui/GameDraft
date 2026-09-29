@@ -290,13 +290,13 @@ export class BurnRenderer {
 
   /** 每帧（相机定稿之后）：没轮到的待上传补上；滤镜宿主推相机；纹理宿主在图像空间里画一遍 */
   update(nowMs: number, camera: { x: number; y: number; scale: number }): void {
-    for (const e of this.entries.values()) {
+    for (const [key, e] of this.entries) {
       if (e.pending) this.flush(e, nowMs, false);
       if (e.kind === 'filters') {
         e.material.setCamera(camera.x, camera.y, camera.scale);
         e.glow.setCamera(camera.x, camera.y, camera.scale);
       } else {
-        this.renderTextureEntry(e);
+        this.renderTextureEntry(key, e);
       }
     }
   }
@@ -316,7 +316,7 @@ export class BurnRenderer {
     e.pending = false;
   }
 
-  private renderTextureEntry(e: TextureEntry): void {
+  private renderTextureEntry(key: string, e: TextureEntry): void {
     const r = this.pixi?.() ?? null;
     if (!r || !e.shade) return;
     const base = e.host.burnBaseTexture();
@@ -325,7 +325,7 @@ export class BurnRenderer {
       // 模板图换了（或第一次）：按它的尺寸重建 RT 与 mesh
       if (e.handedOver) { e.host.setBurnTextures(null, null); e.handedOver = false; }
       this.disposeTextureResources(e);
-      this.buildTextureResources(e, base);
+      this.buildTextureResources(key, e, base);
     }
     if (!e.materialMesh || !e.glowMesh || !e.albedo || !e.emissive) return;
     const mu = (e.materialShader!.resources as Record<string, { uniforms: Record<string, unknown> }>)['burnUniforms'].uniforms;
@@ -333,23 +333,23 @@ export class BurnRenderer {
     writeShade(mu, e.shade);
     writeShade(gu, e.shade);
     // ⚠ Pixi 坑：渲离屏 RT 必须显式 clear，否则串到上一次的内容
-    r.render({ container: e.materialMesh, target: e.albedo, clear: true, clearColor: [0, 0, 0, 0] });
-    r.render({ container: e.glowMesh, target: e.emissive, clear: true, clearColor: [0, 0, 0, 0] });
+    r.render({ container: e.materialMesh, target: e.albedo, clear: true, clearColor: [0, 0, 0, 0], debugLabel: `燃烧图像空间颜色 · ${key}` });
+    r.render({ container: e.glowMesh, target: e.emissive, clear: true, clearColor: [0, 0, 0, 0], debugLabel: `燃烧图像空间自发光 · ${key}` });
     if (!e.handedOver) {
       e.host.setBurnTextures(e.albedo, e.emissive);
       e.handedOver = true;
     }
   }
 
-  private buildTextureResources(e: TextureEntry, base: Texture): void {
+  private buildTextureResources(key: string, e: TextureEntry, base: Texture): void {
     const fw = Math.max(1, base.frame.width);
     const fh = Math.max(1, base.frame.height);
     const k = Math.min(1, BURN_TEXTURE_MAX_SIDE / Math.max(fw, fh));
     const w = Math.max(1, Math.round(fw * k));
     const h = Math.max(1, Math.round(fh * k));
     e.base = base;
-    e.albedo = RenderTexture.create({ width: w, height: h, antialias: false, scaleMode: 'linear' });
-    e.emissive = RenderTexture.create({ width: w, height: h, antialias: false, scaleMode: 'linear' });
+    e.albedo = RenderTexture.create({ width: w, height: h, antialias: false, scaleMode: 'linear', label: `燃烧图像空间颜色图 · ${key}` });
+    e.emissive = RenderTexture.create({ width: w, height: h, antialias: false, scaleMode: 'linear', label: `燃烧图像空间自发光图 · ${key}` });
     e.geometry = new MeshGeometry({
       positions: new Float32Array([0, 0, w, 0, w, h, 0, h]),
       uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
@@ -360,12 +360,13 @@ export class BurnRenderer {
       base.frame.x / src.width, base.frame.y / src.height,
       (base.frame.x + base.frame.width) / src.width, (base.frame.y + base.frame.height) / src.height,
     ]);
-    const mk = (wgsl: string): Shader => {
+    const mk = (wgsl: string, name: string): Shader => {
       // 键名 = WGSL 变量名（burnShade.wgsl 按 burnUniforms 取 uniform）
       const burnUniforms = imageUniforms(e.field);
       (burnUniforms.uBaseFrame.value as Float32Array).set(frame);
       return Shader.from({
         gpu: {
+          name,
           vertex: { source: wgsl, entryPoint: 'mainVertex' },
           fragment: { source: wgsl, entryPoint: 'mainFragment' },
         },
@@ -379,8 +380,8 @@ export class BurnRenderer {
         },
       });
     };
-    e.materialShader = mk(IMG_WGSL_MATERIAL);
-    e.glowShader = mk(IMG_WGSL_GLOW);
+    e.materialShader = mk(IMG_WGSL_MATERIAL, 'burn-image-material');
+    e.glowShader = mk(IMG_WGSL_GLOW, 'burn-image-emissive');
     e.materialMesh = new Mesh({ geometry: e.geometry, shader: e.materialShader });
     e.glowMesh = new Mesh({ geometry: e.geometry, shader: e.glowShader });
   }

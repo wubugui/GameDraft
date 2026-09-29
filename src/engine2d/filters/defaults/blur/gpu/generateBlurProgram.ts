@@ -42,6 +42,7 @@ export function generateBlurProgram(horizontal: boolean, kernelSize: number): Gp
     .replace('%dimension%', horizontal ? 'z' : 'w');
 
   return GpuProgram.from({
+    name: `gaussian-blur-${horizontal ? 'horizontal' : 'vertical'}-kernel-${kernelSize}`,
     vertex: {
       source: finalSource,
       entryPoint: 'mainVertex',

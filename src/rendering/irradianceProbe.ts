@@ -28,7 +28,7 @@ export function buildIrradianceProbe(
   const w = Math.max(16, Math.min(maxW, srcW));
   const h = Math.max(8, Math.round((w * srcH) / srcW));
 
-  const rt = RenderTexture.create({ width: w, height: h });
+  const rt = RenderTexture.create({ width: w, height: h, label: '辐照探针背景缩略图' });
 
   const root = new Container();
   const spr = new Sprite(bgTexture);
@@ -39,7 +39,7 @@ export function buildIrradianceProbe(
   root.addChild(spr);
 
   try {
-    app.renderer.render({ container: root, target: rt, clear: true });
+    app.renderer.render({ container: root, target: rt, clear: true, debugLabel: '辐照探针背景缩略图生成' });
   } catch {
     rt.destroy(true);
     root.destroy({ children: true });

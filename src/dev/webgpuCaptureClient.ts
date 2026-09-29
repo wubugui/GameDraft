@@ -464,7 +464,8 @@ export class WebGpuCaptureClient {
       },
     };
     const passes: Array<{ passOrdinal: number; label: string; targetLabel: string;
-      colorIndex: number; width: number; height: number; format: string; reason?: string }> = [];
+      colorIndex: number; width: number; height: number; format: string; reason?: string;
+      rawBytesPerRow?: number; rawByteLength?: number; rawReason?: string }> = [];
     for (const item of diagnostics.passes) {
       if (!this.isCurrentJob(job)) return;
       let reason = item.reason;
@@ -480,10 +481,28 @@ export class WebGpuCaptureClient {
           }, png);
         } catch (error) { reason = `Pass PNG 导出失败：${String(error)}`; }
       } else if (!reason) reason = 'Pass 没有可读回的颜色输出';
+      let rawReason: string | undefined;
+      let rawByteLength: number | undefined;
+      if (item.rawPixels && item.rawBytesPerRow) {
+        try {
+          const raw = new Blob([item.rawPixels as BlobPart], { type: 'application/octet-stream' });
+          await api('PUT', {
+            action: 'pass-raw', jobId: job.id, targetBootId: this.bootId,
+            frameIndex: '1', passOrdinal: String(item.passOrdinal), colorIndex: String(item.colorIndex),
+            format: item.format, width: String(item.width), height: String(item.height),
+            bytesPerRow: String(item.rawBytesPerRow),
+          }, raw);
+          rawByteLength = raw.size;
+        } catch (error) { rawReason = `Pass 原始像素导出失败：${String(error)}`.slice(0, 500); }
+        item.rawPixels = undefined;
+      } else rawReason = item.reason || 'Pass 没有可回读的原始像素';
       passes.push({
         passOrdinal: item.passOrdinal, label: item.label, targetLabel: item.targetLabel,
         colorIndex: item.colorIndex, width: item.width, height: item.height,
         format: item.format, ...(reason ? { reason } : {}),
+        ...(rawByteLength === undefined ? { rawReason } : {
+          rawBytesPerRow: item.rawBytesPerRow, rawByteLength,
+        }),
       });
     }
     if (!this.isCurrentJob(job)) return;

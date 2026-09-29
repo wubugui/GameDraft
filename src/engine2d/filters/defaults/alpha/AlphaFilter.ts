@@ -23,6 +23,7 @@ export class AlphaFilter extends Filter {
     options = { ...AlphaFilter.defaultOptions, ...options };
 
     const gpuProgram = GpuProgram.from({
+      name: 'alpha-filter',
       vertex: {
         source,
         entryPoint: 'mainVertex',

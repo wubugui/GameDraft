@@ -38,6 +38,7 @@ export class MaskFilter extends Filter {
       uInverse: { value: inverse ? 1 : 0, type: 'f32' },
     });
     const gpuProgram = GpuProgram.from({
+      name: 'sprite-alpha-mask',
       vertex: {
         source,
         entryPoint: 'mainVertex',

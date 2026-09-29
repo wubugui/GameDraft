@@ -308,10 +308,10 @@ export class ObjectExamineContactAoFilter extends Filter {
       return;
     }
     this.destroyTargets();
-    this.rtBody = RenderTexture.create({ width: tw, height: th });
-    this.rtBodyBlur = RenderTexture.create({ width: tw, height: th });
-    this.rtCrit = RenderTexture.create({ width: tw, height: th });
-    this.rtCritBlur = RenderTexture.create({ width: tw, height: th });
+    this.rtBody = RenderTexture.create({ width: tw, height: th, label: '物件检视身体接触 AO 轮廓' });
+    this.rtBodyBlur = RenderTexture.create({ width: tw, height: th, label: '物件检视身体接触 AO 模糊' });
+    this.rtCrit = RenderTexture.create({ width: tw, height: th, label: '物件检视爬虫接触 AO 轮廓' });
+    this.rtCritBlur = RenderTexture.create({ width: tw, height: th, label: '物件检视爬虫接触 AO 模糊' });
   }
 
   /** 厘米 → mask texel（BlurFilter.strength 的单位）。 */
@@ -362,6 +362,7 @@ export class ObjectExamineContactAoFilter extends Filter {
           target: this.rtBody,
           clear: false,
           transform: this.tmpCaster,
+          debugLabel: '物件检视身体接触 AO 轮廓烘焙',
         });
       }
       this.clearMask(renderer, this.rtCrit);
@@ -373,6 +374,7 @@ export class ObjectExamineContactAoFilter extends Filter {
           target: this.rtCrit,
           clear: false,
           transform: this.tmpCaster,
+          debugLabel: '物件检视爬虫接触 AO 轮廓烘焙',
         });
       }
     } catch (e) {
@@ -391,7 +393,7 @@ export class ObjectExamineContactAoFilter extends Filter {
    * (WebGL 时代要 bind(target, clear) 手清,因为 WebGL 的 clear 只作用于当前已绑的 FBO;engine2d 没有这条路径。)
    */
   private clearMask(renderer: PixiRenderer, rt: RenderTexture): void {
-    renderer.render({ container: this.emptyScene, target: rt, clear: true, clearColor: [0, 0, 0, 0] });
+    renderer.render({ container: this.emptyScene, target: rt, clear: true, clearColor: [0, 0, 0, 0], debugLabel: `清空 ${rt.source.label}` });
   }
 
   /**

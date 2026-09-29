@@ -124,9 +124,9 @@ export class Application<R extends RendererBase = WebGPURenderer> {
     const hook = this.frameCaptureHook;
     if (hook && this.canvas.width > 0 && this.canvas.height > 0 && this.stage.visible && this.stage.activeSelf) {
       // 整次 renderer.render 含准备资源、上传和画布提交；begin/end 不能包在底层 RHI 提交之后。
-      hook(() => this.renderer.render({ container: this.stage }));
+      hook(() => this.renderer.render({ container: this.stage, debugLabel: '游戏舞台合成' }));
     } else {
-      this.renderer.render({ container: this.stage });
+      this.renderer.render({ container: this.stage, debugLabel: '游戏舞台合成' });
     }
   }
 

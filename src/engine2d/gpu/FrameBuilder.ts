@@ -44,6 +44,8 @@ export type TargetRef = 'canvas' | TextureSource;
 
 export interface PassCmd {
   readonly t: 'pass';
+  /** GPU 原生 Pass 标签，前缀是稳定的来源类别。 */
+  debugLabel: string;
   target: TargetRef;
   /** 纹理目标:本次要用的 RHI 纹理(规划时已建好 / 上传) */
   color: RhiTexture | null;
@@ -289,6 +291,8 @@ function colorMaskToRhi(m: number): number {
 
 class FilterData {
   skip = false;
+  debugCategory: 'filter' | 'mask' = 'filter';
+  debugSubject = '';
   inputTexture: Texture | null = null;
   backTexture: Texture | null = null;
   filters: readonly Filter[] | null = null;
@@ -317,6 +321,7 @@ export class FrameBuilder implements FilterSystemLike {
   private readonly projectionMatrix = new Matrix();
   /** 照 Pixi RenderTargetSystem 的 _renderTargetStack:只有 renderStart / pushRenderTarget 入栈(滤镜切目标用 bind,不入栈) */
   private readonly targetStack: Array<RenderSurface | 'canvas'> = [];
+  private currentPassDebugLabel = '';
   private passStencil = false;
   private passSamples = 1;
   // 全局 uniform
@@ -377,6 +382,7 @@ export class FrameBuilder implements FilterSystemLike {
     this.groupSlices.clear();
     this.arenaRefs.length = 0;
     this.passStencil = false;
+    this.currentPassDebugLabel = '';
   }
 
   /**
@@ -414,16 +420,19 @@ export class FrameBuilder implements FilterSystemLike {
 
   // ───────────────────────── 目标(RenderTargetSystem)
 
-  renderStart(target: RenderSurface | 'canvas', clear: boolean, clearColor: [number, number, number, number]): void {
+  renderStart(target: RenderSurface | 'canvas', clear: boolean, clearColor: [number, number, number, number], debugLabel?: string): void {
     this.targetStack.length = 0;
-    this.pushRenderTarget(target, clear, clearColor);
+    const targetName = this.targetDebugName(target);
+    const subject = debugLabel?.trim() || targetName;
+    this.pushRenderTarget(target, clear, clearColor,
+      `${target === 'canvas' ? 'canvas' : 'offscreen'} / ${subject} / begin${subject === targetName ? '' : ` → ${targetName}`}`);
     this.rootViewPort.copyFrom(this.viewport);
     this.rootTarget = this.current;
   }
 
   /** 照 Pixi RenderTargetSystem.push:绑定并入栈 */
-  private pushRenderTarget(surface: RenderSurface | 'canvas', clear: boolean, clearColor?: [number, number, number, number]): void {
-    this.bind(surface, clear, clearColor);
+  private pushRenderTarget(surface: RenderSurface | 'canvas', clear: boolean, clearColor?: [number, number, number, number], debugLabel?: string): void {
+    this.bind(surface, clear, clearColor, undefined, debugLabel);
     this.targetStack.push(surface);
   }
 
@@ -434,11 +443,12 @@ export class FrameBuilder implements FilterSystemLike {
    */
   private popRenderTarget(): void {
     this.targetStack.pop();
-    this.bind(this.targetStack[this.targetStack.length - 1], false);
+    const surface = this.targetStack[this.targetStack.length - 1];
+    this.bind(surface, false, undefined, undefined, `mask / ${this.targetDebugName(surface)} / resume`);
   }
 
   /** 绑定目标并开新 pass(Pixi 的 bind:每次都开新 pass) */
-  bind(surface: RenderSurface | 'canvas', clear: boolean, clearColor?: [number, number, number, number], frame?: Rectangle): void {
+  bind(surface: RenderSurface | 'canvas', clear: boolean, clearColor?: [number, number, number, number], frame?: Rectangle, debugLabel?: string): void {
     const t = this.resolveTarget(surface);
     this.current = t;
     this.currentSurface = surface;
@@ -471,7 +481,17 @@ export class FrameBuilder implements FilterSystemLike {
     // 画布照 master(WebGL 默认帧缓冲自下而上):内容上下颠倒画进画布中间纹理(WebGPURenderer 的 canvasFlip),
     // 帧末逐像素翻转拷上屏。这样光栅化的平局归属、gl_FragCoord 的朝向都与 master 画布一致;离屏目标照旧不翻
     calculateProjection(this.projectionMatrix, 0, 0, viewport.width / t.resolution, viewport.height / t.resolution, t.ref === 'canvas');
+    const targetName = this.targetDebugName(surface);
+    this.currentPassDebugLabel = debugLabel ?? `${t.ref === 'canvas' ? 'canvas' : 'offscreen'} / ${targetName} / draw`;
     this.startPass(clear, clearColor ?? [0, 0, 0, 0], clear);
+  }
+
+  /** 真实目标的作者名优先；匿名池纹理保留尺寸与本次会话内的源 ID，便于区分同规格目标。 */
+  private targetDebugName(surface: RenderSurface | 'canvas'): string {
+    if (surface === 'canvas' || (typeof HTMLCanvasElement !== 'undefined' && surface instanceof HTMLCanvasElement)) return '画布';
+    const source = surface instanceof Texture ? surface.source : surface as TextureSource;
+    const named = (surface instanceof Texture ? surface.label : '') || source.label;
+    return named?.trim() || `临时 RT ${source.pixelWidth}×${source.pixelHeight} ${source.format} [source ${source.uid}]`;
   }
 
   private startPass(clearColor: boolean, color: [number, number, number, number], clearStencil: boolean): void {
@@ -482,6 +502,7 @@ export class FrameBuilder implements FilterSystemLike {
     this.passSamples = samples;
     this.commands.push({
       t: 'pass',
+      debugLabel: this.currentPassDebugLabel,
       target: t.ref,
       color: t.color,
       load: clearColor ? 'clear' : 'load',
@@ -498,8 +519,10 @@ export class FrameBuilder implements FilterSystemLike {
     const key = this.current.key;
     if (!this.ctx.stencilTargets.has(key)) {
       this.ctx.stencilTargets.add(key);
+      this.currentPassDebugLabel = `mask / ${this.targetDebugName(this.currentSurface)} / stencil setup + content`;
       this.startPass(false, [0, 0, 0, 0], false);
     } else if (!this.passStencil) {
+      this.currentPassDebugLabel = `mask / ${this.targetDebugName(this.currentSurface)} / stencil resume + content`;
       this.startPass(false, [0, 0, 0, 0], false);
     }
   }
@@ -814,6 +837,7 @@ export class FrameBuilder implements FilterSystemLike {
       this.colorMask = 0;
       if (maskStackIndex !== 0) this.setStencilMode('remove', maskStackIndex);
       else {
+        this.currentPassDebugLabel = `mask / ${this.targetDebugName(this.currentSurface)} / stencil clear + content`;
         this.startPass(false, [0, 0, 0, 0], true);
         this.setStencilMode('disabled', maskStackIndex);
       }
@@ -841,7 +865,9 @@ export class FrameBuilder implements FilterSystemLike {
         bounds.ceil();
         const target = this.current;
         const filterTexture = this.takePoolTexture(bounds.width, bounds.height, target.resolution, target.antialias);
-        this.pushRenderTarget(filterTexture, true);
+        const maskName = instr.container.label?.trim() || 'alpha mask';
+        this.pushRenderTarget(filterTexture, true, undefined,
+          `mask / ${maskName} / raster → ${this.targetDebugName(filterTexture)}`);
         this.globalPush({ offset: bounds, worldColor: 0xffffffff });
         const sprite = entry.internalSprite;
         sprite.texture = filterTexture;
@@ -860,7 +886,7 @@ export class FrameBuilder implements FilterSystemLike {
         this.popRenderTarget();
         this.globalPop();
       }
-      this.filterPush(maskData.maskedContainer, maskData.entry.effect);
+      this.filterPush(maskData.maskedContainer, maskData.entry.effect, 'mask');
     } else {
       this.filterPop();
       const maskData = this.activeMaskStage.pop()!;
@@ -904,10 +930,16 @@ export class FrameBuilder implements FilterSystemLike {
 
   // ───────────────────────── 滤镜(FilterSystem)
 
-  private filterPush(container: Container, effect: FilterEffect): void {
+  private filterPush(container: Container, effect: FilterEffect, debugCategory: 'filter' | 'mask' = 'filter'): void {
     const filters = effect.filters ?? [];
     const filterData = this.pushFilterData();
     filterData.skip = false;
+    filterData.debugCategory = debugCategory;
+    const programs = [...new Set(filters.filter(f => f.enabled).map(f => f.debugLabel?.trim() || f.gpuProgram?.name).filter((name): name is string => !!name))];
+    const containerName = container.label?.trim();
+    filterData.debugSubject = debugCategory === 'mask'
+      ? (containerName || 'alpha mask')
+      : [containerName, programs.join(' + ') || '未命名滤镜'].filter(Boolean).join(' · ');
     filterData.filters = filters;
     filterData.container = container;
     filterData.outputRenderSurface = this.currentSurface;
@@ -940,7 +972,8 @@ export class FrameBuilder implements FilterSystemLike {
     if (filterData.blendRequired) {
       filterData.backTexture = this.getBackTexture(bounds, previousFilterData?.bounds);
     }
-    this.bind(filterData.inputTexture, true);
+    this.bind(filterData.inputTexture, true, undefined, undefined,
+      `${debugCategory} / ${filterData.debugSubject} / input → ${this.targetDebugName(filterData.inputTexture)}`);
     this.globalPush({ offset: bounds });
   }
 
@@ -985,6 +1018,7 @@ export class FrameBuilder implements FilterSystemLike {
   /** FilterSystemLike:滤镜的 apply 回调这里 */
   applyFilter(filter: Filter, input: Texture, output: RenderSurface | 'canvas', clear: boolean): void {
     const filterData = this.activeFilterData!;
+    const f = filter.enabled ? filter : this.getPassthrough();
     const isFinalTarget = filterData.outputRenderSurface === output;
     const rootResolution = this.rootTarget.resolution;
     const resolution = this.findFilterResolution(rootResolution);
@@ -995,8 +1029,8 @@ export class FrameBuilder implements FilterSystemLike {
       offsetX = o.x;
       offsetY = o.y;
     }
-    const u = this.updateFilterUniforms(input, output, filterData, offsetX, offsetY, resolution, isFinalTarget, clear);
-    const f = filter.enabled ? filter : this.getPassthrough();
+    const subject = [filterData.container?.label?.trim(), f.debugLabel?.trim() || f.gpuProgram?.name || '未命名滤镜'].filter(Boolean).join(' · ');
+    const u = this.updateFilterUniforms(input, output, filterData, offsetX, offsetY, resolution, isFinalTarget, clear, subject);
     const bindings: Record<string, BindingValue> = {};
     this.resolveResources(f, bindings);
     bindings.gfu = u;
@@ -1017,6 +1051,7 @@ export class FrameBuilder implements FilterSystemLike {
     resolution: number,
     isFinalTarget: boolean,
     clear: boolean,
+    debugSubject: string,
   ): ArenaRef {
     // 暂存数组复用(写进 Arena 时就拷走了,不跨调用保留)
     const { outputFrame, inputSize, inputPixel, inputClamp, globalFrame, outputTexture } = this.filterScratch;
@@ -1049,7 +1084,8 @@ export class FrameBuilder implements FilterSystemLike {
     globalFrame[1] = offsetY * resolution;
     globalFrame[2] = root.width * resolution;
     globalFrame[3] = root.height * resolution;
-    this.bind(output, !!clear);
+    this.bind(output, !!clear, undefined, undefined,
+      `${filterData.debugCategory} / ${filterData.debugCategory === 'mask' ? filterData.debugSubject : debugSubject} / ${filterData.debugCategory === 'mask' ? 'composite + continue' : 'apply + continue'} → ${this.targetDebugName(output)}`);
     if (output instanceof Texture) {
       outputTexture[0] = output.frame.width;
       outputTexture[1] = output.frame.height;

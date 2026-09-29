@@ -10,6 +10,8 @@ import type { Sprite } from '../sprite/Sprite';
 export type FilterAntialias = 'on' | 'off' | 'inherit';
 
 export interface FilterOptions extends ShaderWithResources {
+  /** 作者语义名；同一种 WGSL 在不同效果配置中可有不同抓帧名称。 */
+  debugLabel?: string;
   blendMode?: BlendMode;
   resolution?: number | 'inherit';
   padding?: number;
@@ -49,6 +51,7 @@ export class Filter extends Shader {
   };
 
   enabled = true;
+  debugLabel?: string;
   blendMode: BlendMode;
   padding: number;
   antialias: FilterAntialias;
@@ -59,6 +62,7 @@ export class Filter extends Shader {
   constructor(options: FilterOptions) {
     const o = { ...Filter.defaultOptions, ...options };
     super(o);
+    this.debugLabel = o.debugLabel;
     this.blendMode = o.blendMode!;
     this.padding = o.padding!;
     this.antialias = typeof o.antialias === 'boolean' ? (o.antialias ? 'on' : 'off') : o.antialias!;

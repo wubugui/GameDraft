@@ -474,6 +474,7 @@ let sharedGpuProgram: GpuProgram | null = null;
 function getSharedGpuProgram(): GpuProgram {
   if (!sharedGpuProgram) {
     sharedGpuProgram = GpuProgram.from({
+      name: 'character-shading-filter',
       vertex: { source: FILTER_WGSL, entryPoint: 'mainVertex' },
       fragment: { source: FILTER_WGSL, entryPoint: 'mainFragment' },
     });

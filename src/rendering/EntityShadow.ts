@@ -586,9 +586,10 @@ function sourceUniformDefaults(): Record<string, ReturnType<typeof f32>> {
 }
 
 /** WGSL 程序描述:顶点与片元拼成一个模块,两个入口。 */
-function gpuProgramOf(fragment: string) {
+function gpuProgramOf(fragment: string, name: string) {
   const source = VERT_WGSL + fragment;
   return {
+    name,
     vertex: { source, entryPoint: 'mainVertex' },
     fragment: { source, entryPoint: 'mainFragment' },
   };
@@ -598,7 +599,7 @@ function makeContactShader(ctx: ShadowSceneContext | null): Shader {
   const groundSrc = ctx?.groundTexture ?? Texture.WHITE.source;
   const depthSrc = ctx?.depthTexture?.source ?? Texture.WHITE.source;
   return Shader.from({
-    gpu: gpuProgramOf(CONTACT_FRAG_WGSL),
+    gpu: gpuProgramOf(CONTACT_FRAG_WGSL, 'entity-contact-shadow'),
     resources: {
       // 组名与 cast 相同:setU / setShadowColor 按这个名字找
       shadowUniforms: {
@@ -654,7 +655,7 @@ function makePlanarShader(ctx: ShadowSceneContext | null, texSource: TextureSour
   const colSrc = ctx?.collisionTexture?.source ?? Texture.WHITE.source;
   const groundSrc = ctx?.groundTexture ?? Texture.WHITE.source;
   return Shader.from({
-    gpu: gpuProgramOf(FRAG_WGSL),
+    gpu: gpuProgramOf(FRAG_WGSL, 'entity-planar-shadow'),
     resources: {
       shadowUniforms: {
         uDarkness: f32(0.4),

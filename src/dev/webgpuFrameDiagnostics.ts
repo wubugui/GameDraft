@@ -15,6 +15,9 @@ export interface CapturedPassPixels {
   format: string;
   reason?: string;
   pixels?: Uint8ClampedArray;
+  /** 原始 GPU copyTextureToBuffer 字节；保留每行 256 字节对齐和纹理原生通道顺序。 */
+  rawPixels?: Uint8Array;
+  rawBytesPerRow?: number;
 }
 
 export interface CapturedGpuPass {
@@ -42,6 +45,7 @@ function bytesPerPixel(format: string): number {
       format === 'bgra8unorm' || format === 'bgra8unorm-srgb') return 4;
   if (format === 'r8unorm') return 1;
   if (format === 'rgba16float') return 8;
+  if (format === 'rgba32float') return 16;
   return 0;
 }
 
@@ -62,14 +66,16 @@ function visualize(raw: Uint8Array, width: number, height: number, bytesPerRow: 
     for (let x = 0; x < width; x++) {
       const dst = (y * width + x) * 4;
       const src = y * bytesPerRow + x * bytesPerPixel(format);
-      if (format === 'rgba16float') {
+      if (format === 'rgba16float' || format === 'rgba32float') {
         // Visualize HDR values for PNG; the Inspector's raw payload remains the numeric source.
         for (let channel = 0; channel < 3; channel++) {
-          const value = halfFloat(view.getUint16(src + channel * 2, true));
+          const value = format === 'rgba16float' ? halfFloat(view.getUint16(src + channel * 2, true)) :
+            view.getFloat32(src + channel * 4, true);
           const mapped = Number.isFinite(value) ? Math.max(0, value) / (1 + Math.max(0, value)) : 0;
           rgba[dst + channel] = Math.round(Math.max(0, Math.min(1, mapped)) * 255);
         }
-        const alpha = halfFloat(view.getUint16(src + 6, true));
+        const alpha = format === 'rgba16float' ? halfFloat(view.getUint16(src + 6, true)) :
+          view.getFloat32(src + 12, true);
         rgba[dst + 3] = Number.isFinite(alpha) ? Math.round(Math.max(0, Math.min(1, alpha)) * 255) : 0;
       } else if (format === 'r8unorm') {
         rgba[dst] = rgba[dst + 1] = rgba[dst + 2] = raw[src];
@@ -208,7 +214,9 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
           if (!buffer || record.info.reason) continue;
           try {
             await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU 画面回读超时');
-            const raw = new Uint8Array(buffer.getMappedRange());
+            const raw = new Uint8Array(buffer.getMappedRange()).slice();
+            record.info.rawPixels = raw;
+            record.info.rawBytesPerRow = record.bytesPerRow;
             record.info.pixels = visualize(raw, record.info.width, record.info.height,
               record.bytesPerRow!, record.info.format);
           } catch (error) {

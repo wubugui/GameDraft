@@ -275,7 +275,8 @@ export class WebGPURenderer extends RendererBase {
         stencilTargets: this.stencilTargets,
         canvasStencilKey: this.canvasKey,
       });
-      builder.renderStart(toCanvas ? 'canvas' : (options.target as RenderSurface), clear, clearRgba);
+      builder.renderStart(toCanvas ? 'canvas' : (options.target as RenderSurface), clear, clearRgba,
+        options.debugLabel || container.label || undefined);
       const worldAlpha = Math.min(1, Math.max(0, container.localAlpha));
       builder.globalStart({
         worldTransformMatrix: transform.clone(),
@@ -336,13 +337,12 @@ export class WebGPURenderer extends RendererBase {
   private record(state: RenderState, cmds: readonly VirtualCommand[], commands: RhiCommandList, frame: RhiFrame | null): void {
     let pass: RhiRenderPassEncoder | null = null;
     let stencilRef = 0;
-    let n = 0;
     for (const cmd of cmds) {
       if (cmd.t === 'pass') {
         pass?.end();
         const target = this.passTarget(cmd, frame);
         pass = commands.beginRenderPass({
-          label: `engine2d pass ${n++}`,
+          label: cmd.debugLabel,
           target,
           colorOps: [cmd.load === 'clear' ? { load: 'clear', clearValue: cmd.clearColor } : { load: 'load' }],
           depthOp: { load: 'clear', clearValue: 1 },
@@ -377,7 +377,7 @@ export class WebGPURenderer extends RendererBase {
   /** 帧末:画布中间纹理翻回正向写进交换链(整屏覆盖写) */
   private presentCanvasFlip(commands: RhiCommandList, frame: RhiFrame, src: RhiTexture): void {
     const pass = commands.beginRenderPass({
-      label: 'engine2d 画布翻转上屏',
+      label: 'canvas / 画布 / 翻转上屏',
       target: frame.swapchain,
       colorOps: [{ load: 'clear', clearValue: [0, 0, 0, 0] }],
     });

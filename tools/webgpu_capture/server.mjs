@@ -12,7 +12,12 @@ const MAX_FRAMES = 120;
 const MAX_CAPTURE_BYTES = 512 * 1024 * 1024;
 const MAX_FRAME_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_FRAME_IMAGES_BYTES = 512 * 1024 * 1024;
+const MAX_PASS_RAW_BYTES = 256 * 1024 * 1024;
 const MAX_DIAGNOSTIC_ENTRIES = 512;
+const RAW_FORMAT_BYTES = new Map([
+  ['r8unorm', 1], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4],
+  ['bgra8unorm', 4], ['bgra8unorm-srgb', 4], ['rgba16float', 8], ['rgba32float', 16],
+]);
 const MAX_METADATA_BYTES = 64 * 1024 * 1024;
 const MAX_HEADER_BYTES = 64;
 const MIN_CAPTURE_BYTES = 16;
@@ -254,9 +259,10 @@ export function createWebGpuCaptureController(projectRoot) {
         outputDir, file: join(outputDir, 'capture.wgpuc'),
         url: client.url, sceneId: client.sceneId,
         createdAt: now, updatedAt: now, error: null,
-        uploadInProgress: false, frameImages: new Map(), passImages: new Map(), diagnostics: null,
+        uploadInProgress: false, frameImages: new Map(), passImages: new Map(), passRaw: new Map(), diagnostics: null,
         frameImageInProgress: new Set(), frameImageBytes: 0,
-        reservedFrameImageBytes: 0,
+        reservedFrameImageBytes: 0, passRawInProgress: new Set(), passRawBytes: 0,
+        reservedPassRawBytes: 0,
       };
       jobs.set(id, job);
       activeJobId = id;
@@ -299,10 +305,11 @@ export function createWebGpuCaptureController(projectRoot) {
     const analysis = await job.analysisPromise;
     const report = analysis.report;
     const allowed = new Set([
-      'viewer.html', 'viewer.js', 'viewer-data.js', 'report.json',
+      'viewer.html', 'viewer.js', 'viewer_surface.js', 'viewer_surface.css', 'viewer-data.js', 'report.json',
       report.frameImage,
       ...(report.frames || []).map(frame => frame.imageFile),
       ...(report.passSnapshots || []).map(snapshot => snapshot.imageFile),
+      ...(report.passSnapshots || []).map(snapshot => snapshot.rawFile),
       ...(report.payloads || []).map(payload => payload.bufferFile),
       ...(report.resources?.textures || []).map(texture => texture.imageFile),
       ...(report.resources?.shaders || []).map(shader => shader.codeFile),
@@ -401,6 +408,84 @@ export function createWebGpuCaptureController(projectRoot) {
   function uploadFrameImage(args = {}) { return uploadPngImage(args, 'frame'); }
   function uploadPassImage(args = {}) { return uploadPngImage(args, 'pass'); }
 
+  async function uploadPassRaw({ jobId, targetBootId, frameIndex, passOrdinal, colorIndex,
+    format, width, height, bytesPerRow, stream, contentLength } = {}) {
+    if (closed) throw new Error('capture controller is closed');
+    const job = getJob(jobId, targetBootId);
+    const frame = Number(frameIndex);
+    const pass = Number(passOrdinal);
+    const color = Number(colorIndex);
+    const w = Number(width);
+    const h = Number(height);
+    const stride = Number(bytesPerRow);
+    const bpp = RAW_FORMAT_BYTES.get(format);
+    if (job.frames !== 1 || frame !== 1 || !Number.isInteger(pass) || pass < 0 ||
+        pass >= MAX_DIAGNOSTIC_ENTRIES || !Number.isInteger(color) || color < 0 || color > 7) {
+      throw new Error('raw pass output requires a single frame and valid pass/color indices');
+    }
+    if (!bpp || !Number.isSafeInteger(w) || !Number.isSafeInteger(h) || w < 1 || h < 1 ||
+        w > 16384 || h > 16384 || !Number.isSafeInteger(stride) ||
+        stride !== Math.ceil(w * bpp / 256) * 256) {
+      throw new Error('raw pass output format, dimensions, or row stride is invalid');
+    }
+    const expected = stride * h;
+    if (!Number.isSafeInteger(expected) || expected > MAX_PASS_RAW_BYTES ||
+        contentLength != null && Number(contentLength) !== expected) {
+      throw new Error('raw pass output byte length exceeds the limit or differs from dimensions');
+    }
+    if (!['pending', 'capturing'].includes(job.state) || job.uploadInProgress) {
+      throw new Error('capture job is not accepting raw pass output');
+    }
+    const key = `${pass}:${color}`;
+    if (job.passRaw.has(key) || job.passRawInProgress.has(key)) throw new Error('raw pass output already uploaded');
+    if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') throw new Error('raw pass output stream is required');
+    if (expected > MAX_PASS_RAW_BYTES - job.passRawBytes - job.reservedPassRawBytes) {
+      throw new Error('raw pass outputs exceed 256 MiB capture limit');
+    }
+    const name = `pass-raw-${String(pass).padStart(4, '0')}-color-${color}.bin`;
+    const file = join(job.outputDir, name);
+    let handle;
+    let bytes = 0;
+    const sha = createHash('sha256');
+    job.passRawInProgress.add(key);
+    job.reservedPassRawBytes += expected;
+    try {
+      handle = await open(file, 'wx');
+      for await (const part of stream) {
+        if (closed || !['pending', 'capturing'].includes(job.state)) throw new Error('capture stopped while uploading raw pass output');
+        const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
+        bytes += chunk.length;
+        if (bytes > expected) throw new Error('raw pass output exceeds declared byte length');
+        sha.update(chunk);
+        let offset = 0;
+        while (offset < chunk.length) {
+          const { bytesWritten } = await handle.write(chunk, offset, chunk.length - offset);
+          if (bytesWritten < 1) throw new Error('raw pass output write stopped');
+          offset += bytesWritten;
+        }
+      }
+      if (bytes !== expected) throw new Error('raw pass output length differs from dimensions');
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      if (closed || !['pending', 'capturing'].includes(job.state)) throw new Error('capture stopped while uploading raw pass output');
+      const item = { file, name, bytes, width: w, height: h, format, bytesPerRow: stride,
+        sha256: sha.digest('hex') };
+      job.passRaw.set(key, item);
+      job.passRawBytes += bytes;
+      job.updatedAt = Date.now();
+      return { jobId: job.id, frameIndex: frame, passOrdinal: pass, colorIndex: color,
+        file, bytes, format, width: w, height: h, bytesPerRow: stride };
+    } catch (error) {
+      try { await handle?.close(); } catch { /* Keep the first failure. */ }
+      try { await unlink(file); } catch { /* File may not exist. */ }
+      throw error;
+    } finally {
+      job.reservedPassRawBytes -= expected;
+      job.passRawInProgress.delete(key);
+    }
+  }
+
   function diagnostics({ jobId, targetBootId, passes, gpuPasses, gpuProfilerStatus, warning } = {}) {
     if (closed) throw new Error('capture controller is closed');
     const job = getJob(jobId, targetBootId);
@@ -424,6 +509,18 @@ export function createWebGpuCaptureController(projectRoot) {
       if (!item.reason && !image) throw new Error('pass diagnostic refers to an image that was not uploaded');
       if (image && (image.width !== item.width || image.height !== item.height)) {
         throw new Error('pass image dimensions differ from diagnostic');
+      }
+      const raw = job.passRaw.get(`${item.passOrdinal}:${item.colorIndex}`);
+      if (item.rawBytesPerRow !== undefined || item.rawByteLength !== undefined) {
+        if (!raw || raw.width !== item.width || raw.height !== item.height ||
+            raw.format !== item.format || raw.bytesPerRow !== item.rawBytesPerRow ||
+            raw.bytes !== item.rawByteLength) {
+          throw new Error('raw pass output differs from diagnostic');
+        }
+      } else if (raw) throw new Error('raw pass output has no diagnostic metadata');
+      if (item.rawReason !== undefined &&
+          (typeof item.rawReason !== 'string' || item.rawReason.length > 500)) {
+        throw new Error('invalid raw pass output reason');
       }
     }
     for (const item of gpuPasses) {
@@ -465,16 +562,22 @@ export function createWebGpuCaptureController(projectRoot) {
       const pass = renderPasses[item.passOrdinal];
       const target = pass?.targets?.find(value => value.kind === 'color' && value.slot === item.colorIndex);
       const image = job.passImages.get(`${item.passOrdinal}:${item.colorIndex}`);
+      const raw = job.passRaw.get(`${item.passOrdinal}:${item.colorIndex}`);
       const base = { frameOrdinal: targetOrdinal, passIndex: pass?.index ?? null, label: item.label,
         colorIndex: item.colorIndex };
       if (!pass || pass.label !== item.label || !target) {
         passUnavailable.push({ ...base, reason: 'pass label, order, or target differs from the Inspector capture' });
-      } else if (item.reason || !image || !Number.isInteger(target.outputTextureId)) {
-        passUnavailable.push({ ...base, reason: item.reason || 'pass output has no readable color texture' });
+      } else if ((!image && !raw) || !Number.isInteger(target.outputTextureId)) {
+        passUnavailable.push({ ...base, reason: item.reason || item.rawReason || 'pass output has no readable color texture' });
       } else {
         passSnapshots.push({ frameOrdinal: targetOrdinal, passIndex: pass.index,
           afterCommandIndex: pass.endCommand, textureId: target.outputTextureId,
-          file: image.name, width: image.width, height: image.height,
+          colorIndex: item.colorIndex,
+          ...(image ? { file: image.name } : { imageReason: item.reason || 'Pass PNG was not saved' }),
+          ...(raw ? { rawFile: raw.name, rawFormat: raw.format, rawBytesPerRow: raw.bytesPerRow,
+            rawByteLength: raw.bytes, rawSha256: raw.sha256 } :
+            { rawReason: item.rawReason || 'Pass raw pixels were not saved' }),
+          width: item.width, height: item.height,
           format: item.format, label: item.label, source: 'RHI pass-end GPU readback' });
       }
     }
@@ -496,8 +599,9 @@ export function createWebGpuCaptureController(projectRoot) {
       gpuProfilerStatus: detail?.gpuProfilerStatus ?? null,
       passCaptureWarning: detail?.warning ?? null };
     await writeFile(join(job.outputDir, 'sidecars.json'), JSON.stringify(sidecars, null, 2) + '\n', { flag: 'wx' });
-    return { passSnapshots: passSnapshots.length, passUnavailable: passUnavailable.length,
-      gpuTimedPasses: gpuTimings.length };
+    return { passSnapshots: passSnapshots.length,
+      rawPassSnapshots: passSnapshots.filter(item => item.rawFile).length,
+      passUnavailable: passUnavailable.length, gpuTimedPasses: gpuTimings.length };
   }
 
   async function upload({ jobId, targetBootId, stream, actualFrames, contentLength } = {}) {
@@ -618,5 +722,6 @@ export function createWebGpuCaptureController(projectRoot) {
   }
 
   return { register, list, request, poll, status, viewerFile, uploadFrameImage, uploadPassImage,
+    uploadPassRaw,
     diagnostics, upload, fail, stop, close };
 }

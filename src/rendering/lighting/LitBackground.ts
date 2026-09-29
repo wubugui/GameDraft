@@ -178,6 +178,7 @@ export class LitBackground {
     });
     this.shader = Shader.from({
       gpu: {
+        name: 'scene-radiance-display-composite',
         vertex: { source: WGSL, entryPoint: 'mainVertex' },
         fragment: { source: WGSL, entryPoint: 'mainFragment' },
       },

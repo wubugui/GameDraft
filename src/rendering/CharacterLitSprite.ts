@@ -589,6 +589,7 @@ let litGpuProgram: GpuProgram | null = null;
 function getLitGpuProgram(): GpuProgram {
   if (!litGpuProgram) {
     litGpuProgram = GpuProgram.from({
+      name: 'character-lit-sprite',
       vertex: { source: LIT_WGSL, entryPoint: 'mainVertex' },
       fragment: { source: LIT_WGSL, entryPoint: 'mainFragment' },
     });

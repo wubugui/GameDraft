@@ -96,7 +96,8 @@ export class GpuProgram {
   destroy(): void {}
 
   static from(options: GpuProgramOptions): GpuProgram {
-    const key = `${options.vertex.source}:${options.fragment?.source}:${options.vertex.entryPoint}:${options.fragment?.entryPoint}`;
+    // 同一份 WGSL 可以用于不同的业务效果；调试名也是缓存对象的身份之一。
+    const key = `${options.name ?? ''}:${options.vertex.source}:${options.fragment?.source}:${options.vertex.entryPoint}:${options.fragment?.entryPoint}`;
     let p = cache.get(key);
     if (!p) {
       p = new GpuProgram(options);

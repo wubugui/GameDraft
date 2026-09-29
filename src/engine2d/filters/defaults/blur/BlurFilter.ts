@@ -65,6 +65,8 @@ export class BlurFilter extends Filter {
 
     super({
       ...rest,
+      // BlurFilter 本身没有 GPU 程序；入口纹理的标签仍应标出它组织的双向高斯模糊。
+      debugLabel: rest.debugLabel || 'gaussian-blur',
       compatibleRenderers: RendererType.BOTH,
       resources: {},
     });

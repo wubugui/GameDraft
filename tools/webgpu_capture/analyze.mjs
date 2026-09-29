@@ -366,6 +366,8 @@ export async function analyzeCapture(path, options = {}) {
   const viewerSourceDir = dirname(fileURLToPath(import.meta.url));
   const viewerHtml = join(viewerSourceDir, 'viewer.html');
   const viewerJs = join(viewerSourceDir, 'viewer.js');
+  const viewerSurfaceJs = join(viewerSourceDir, 'viewer_surface.js');
+  const viewerSurfaceCss = join(viewerSourceDir, 'viewer_surface.css');
   let viewerFile = null;
   if (existsSync(viewerHtml) && existsSync(viewerJs)) {
     viewerFile = join(outputDir, 'viewer.html');
@@ -373,6 +375,12 @@ export async function analyzeCapture(path, options = {}) {
     await copyFile(viewerJs, join(outputDir, 'viewer.js'));
     report.viewerFile = 'viewer.html';
     exports.push(viewerFile, join(outputDir, 'viewer.js'));
+    for (const [source, name] of [[viewerSurfaceJs, 'viewer_surface.js'], [viewerSurfaceCss, 'viewer_surface.css']]) {
+      if (existsSync(source)) {
+        await copyFile(source, join(outputDir, name));
+        exports.push(join(outputDir, name));
+      }
+    }
   } else {
     report.viewerFile = null;
   }

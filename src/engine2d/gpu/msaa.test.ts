@@ -66,16 +66,16 @@ describe('抗锯齿(MSAA)', () => {
     const { renderer, passes } = setup(true, 8);
     renderer.render({ container: scene() });
     expect(passes()).toEqual([
-      'begin render engine2d pass 0 -> engine2d 画布中间纹理 目标 MSAA×4 [clear] resolve→engine2d 画布中间纹理',
-      'begin render engine2d 画布翻转上屏 -> 画布后备缓冲 [clear]',
+      'begin render canvas / 画布 / begin -> engine2d 画布中间纹理 目标 MSAA×4 [clear] resolve→engine2d 画布中间纹理',
+      'begin render canvas / 画布 / 翻转上屏 -> 画布后备缓冲 [clear]',
     ]);
     renderer.destroy();
 
     const plain = setup(false, 8);
     plain.renderer.render({ container: scene() });
     expect(plain.passes()).toEqual([
-      'begin render engine2d pass 0 -> engine2d 画布中间纹理 目标 [clear]',
-      'begin render engine2d 画布翻转上屏 -> 画布后备缓冲 [clear]',
+      'begin render canvas / 画布 / begin -> engine2d 画布中间纹理 目标 [clear]',
+      'begin render canvas / 画布 / 翻转上屏 -> 画布后备缓冲 [clear]',
     ]);
     plain.renderer.destroy();
   });

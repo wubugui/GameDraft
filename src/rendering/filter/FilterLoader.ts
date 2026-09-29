@@ -18,6 +18,7 @@ const filterCache = new Map<string, Filter>();
  */
 export function createFilterFromDef(def: FilterDef): ColorMatrixFilter {
   const filter = new ColorMatrixFilter();
+  if (def.id) filter.debugLabel = `color-matrix:${def.id}`;
   const arr = Array.isArray(def.matrix) && def.matrix.length === 20
     ? def.matrix
     : [...IDENTITY_MATRIX];
@@ -49,6 +50,7 @@ export async function loadFilter(filterId: string, useCache = true): Promise<Fil
   }
 
   const filter = createFilterFromDef(data);
+  filter.debugLabel = `color-matrix:${filterId}`;
   if (useCache) {
     filterCache.set(filterId, filter);
   }

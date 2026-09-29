@@ -55,6 +55,7 @@ async function handleRequest(request, controller) {
       const file = url.searchParams.get('file') || 'viewer.html';
       const physical = await controller.viewerFile({ jobId: url.searchParams.get('jobId') || '', file });
       const contentType = file.endsWith('.png') ? 'image/png' :
+        file.endsWith('.css') ? 'text/css; charset=utf-8' :
         file.endsWith('.js') ? 'text/javascript; charset=utf-8' :
         file.endsWith('.json') ? 'application/json; charset=utf-8' :
         file.endsWith('.wgsl') ? 'text/plain; charset=utf-8' :
@@ -93,6 +94,12 @@ async function handleRequest(request, controller) {
       else if (action === 'pass-image') result = await controller.uploadPassImage({
         ...common, frameIndex: Number(qs.get('frameIndex')),
         passOrdinal: Number(qs.get('passOrdinal')), colorIndex: Number(qs.get('colorIndex')),
+      });
+      else if (action === 'pass-raw') result = await controller.uploadPassRaw({
+        ...common, frameIndex: Number(qs.get('frameIndex')),
+        passOrdinal: Number(qs.get('passOrdinal')), colorIndex: Number(qs.get('colorIndex')),
+        format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
+        bytesPerRow: Number(qs.get('bytesPerRow')),
       });
       else result = await controller.upload({ ...common, actualFrames: Number(qs.get('actualFrames')) });
     } else return json({ error: 'method not allowed' }, 405);
