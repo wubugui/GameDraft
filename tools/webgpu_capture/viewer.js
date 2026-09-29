@@ -23,6 +23,8 @@
     selectedResource: null,
     selectedTextureKey: null,
     textureChoices: [],
+    textureWrites: new Map(),
+    textureViews: new Map(),
     frameChoice: null,
     selectedBufferPayloadId: null,
     previewMode: 'frame',
@@ -158,10 +160,16 @@
       button.classList.toggle('active', active);
       button.setAttribute('aria-pressed', String(active));
     }
-    for (const name of ['detail', 'pipeline', 'inputs', 'buffers', 'resources', 'errors']) {
-      el(`page-${name}`).hidden = name !== page;
+    const target = el(`page-${page}`);
+    if (target?.tagName === 'DETAILS') {
+      target.open = true;
+      target.scrollIntoView({ block: 'nearest' });
+    } else {
+      for (const name of ['detail', 'pipeline', 'inputs', 'buffers', 'resources', 'errors']) {
+        el(`page-${name}`).hidden = name !== page;
+      }
+      el('inspector-scroll').scrollTop = 0;
     }
-    el('inspector-scroll').scrollTop = 0;
   }
   function setupSplitter(handle, host, cssVariable, orientation) {
     const vertical = orientation === 'vertical';
@@ -396,6 +404,7 @@
           const categoryGroup = make('details', undefined, 'tree-category');
           categoryGroup.open = state.expandedCategories.has(category.key) || !!query;
           const summary = make('summary', undefined, 'tree-category-head');
+          summary.title = category.label;
           summary.appendChild(make('span', category.label, 'tree-label'));
           categoryCount = make('span', '', 'tree-meta');
           summary.appendChild(categoryCount);
@@ -425,6 +434,7 @@
             batchGroup = make('details', undefined, 'tree-batch');
             batchGroup.open = state.expandedBatches.has(batchKey) || !!query;
             const summary = make('summary', undefined, 'tree-batch-head');
+            summary.title = subject;
             summary.appendChild(make('span', subject, 'tree-label'));
             batchCount = make('span', '', 'tree-meta');
             summary.appendChild(batchCount);
@@ -452,6 +462,7 @@
             const group = make('details', undefined, 'tree-batch tree-step-group');
             group.open = state.expandedSteps.has(expansionKey) || !!query;
             const summary = make('summary', undefined, 'tree-batch-head');
+            summary.title = step.logicalLabel || pass.label || '';
             summary.appendChild(make('span', treePassLabel(pass, passContainer === batchContainer && !!batchContainer), 'tree-label'));
             summary.appendChild(make('span', `${step.totalDraws} Draw · 逐步输出`, 'tree-meta'));
             group.appendChild(summary);
@@ -475,6 +486,7 @@
         const group = make('details', undefined, 'tree-pass');
         group.open = state.expandedPasses.has(key);
         const head = make('summary', undefined, 'tree-pass-head');
+        head.title = describePass(pass);
         head.appendChild(make('span', step?.totalDraws > 1 ? `Draw ${step.drawOrdinal}/${step.totalDraws}` :
           treePassLabel(pass, passContainer === batchContainer && !!batchContainer), 'tree-label'));
         const gpuMs = pass.gpuTiming?.source === 'webgpu-timestamp-query' && finite(pass.gpuTiming.durationMs) ?
@@ -697,8 +709,8 @@
   }
   function shaderForStage(pipeline, stage) {
     const moduleId = pipeline?.descriptor?.[stage]?.module?.__id;
-    return resourceArray('shaders').find(item => String(item.id) === String(moduleId)) ||
-      resourceArray('shaders').find(item => list(pipeline?.shaderIds).some(id => String(id) === String(item.id)));
+    return moduleId == null ? null :
+      resourceArray('shaders').find(item => String(item.id) === String(moduleId)) || null;
   }
   function table(container, headers, rows, onRow) {
     const node = make('table', undefined, 'binding-table');
@@ -718,8 +730,10 @@
     node.appendChild(body);
     container.appendChild(node);
   }
-  function previewTexture(id) {
-    const option = state.textureChoices.find(item => String(item.id) === String(id));
+  function previewTexture(id, viewId = null, input = false) {
+    const option = state.textureChoices.find(item => String(item.id) === String(id) &&
+      (!input || item.role === '绑定输入') &&
+      (viewId == null || item.key.endsWith(`:${viewId}`)));
     if (option) {
       state.selectedTextureKey = option.key;
       state.previewMode = 'texture';
@@ -877,7 +891,8 @@
         if (row.kind === 'Texture') {
           const button = make('button', '预览纹理');
           button.type = 'button';
-          button.addEventListener('click', () => previewTexture(row.id));
+          button.addEventListener('click', () => previewTexture(row.id,
+            row.resource.type === 'TextureView' ? row.resource.id : null, true));
           cell.appendChild(button);
         } else if (row.kind === 'Buffer') {
           const button = make('button', '查看字节');
@@ -903,6 +918,74 @@
     }
   }
 
+  function buildTextureWriteTimeline(report) {
+    const writes = new Map();
+    const views = new Map(list(report?.resources?.textureViews).map(view => [String(view.id), view]));
+    const textureIds = new Set(list(report?.resources?.textures).map(texture => String(texture.id)));
+    const push = (id, write) => {
+      if (id == null || !textureIds.has(String(id)) || !Number.isFinite(write.commandIndex)) return;
+      const key = String(id);
+      if (!writes.has(key)) writes.set(key, []);
+      writes.get(key).push(write);
+    };
+    const textureId = value => {
+      const id = value?.__id;
+      if (id == null) return null;
+      return textureIds.has(String(id)) ? id : views.get(String(id))?.textureId ?? null;
+    };
+    const destinationId = value => textureId(value?.texture ?? value?.view ?? value);
+    for (const pass of list(report?.passes)) {
+      if (!Number.isFinite(Number(pass.endCommand))) continue;
+      for (const target of list(pass.targets)) {
+        const outputId = target.outputTextureId ?? target.textureId;
+        const snapshot = target.kind === 'color' ? list(pass.snapshots).find(item =>
+          String(item.textureId) === String(outputId)) || null : null;
+        for (const id of new Set([target.textureId, target.resolveTextureId].filter(item => item != null))) {
+          push(id, { commandIndex: Number(pass.endCommand), kind: 'pass', passIndex: pass.index,
+            snapshot: String(id) === String(outputId) ? snapshot : null });
+        }
+      }
+    }
+    for (const event of list(report?.events)) {
+      const args = list(event.args);
+      const index = Number(event.commandIndex);
+      if (!Number.isFinite(index)) continue;
+      const destination = event.method === 'writeTexture' ? args[0] :
+        event.method === 'copyExternalImageToTexture' || event.method === 'copyBufferToTexture' ||
+        event.method === 'copyTextureToTexture' ? args[1] : null;
+      if (destination) {
+        push(destinationId(destination), { commandIndex: index, kind: event.method });
+        continue;
+      }
+      if (event.method === 'dispatchWorkgroups' || event.method === 'dispatchWorkgroupsIndirect') {
+        // The Inspector report does not state storage-texture access. Treat every bound texture
+        // as potentially written by compute, so an older image cannot impersonate a later input.
+        for (const group of list(event.bindGroups)) for (const entry of list(group?.resources)) {
+          push(entry?.resource?.textureId, { commandIndex: index, kind: 'compute-possible-write' });
+        }
+      }
+    }
+    for (const entries of writes.values()) entries.sort((a, b) => a.commandIndex - b.commandIndex);
+    return { writes, views };
+  }
+
+  function inputViewUnavailableReason(texture, viewId) {
+    const view = viewId == null ? null : state.textureViews.get(String(viewId));
+    if (viewId != null && !view && String(viewId) !== String(texture.id)) return '绑定纹理视图信息缺失';
+    const descriptor = view?.descriptor || {};
+    const mipCount = Number(texture?.descriptor?.mipLevelCount ?? 1);
+    const layers = Number(texture?.depthOrArrayLayers ?? texture?.descriptor?.size?.depthOrArrayLayers ?? 1);
+    if (Number(descriptor.baseMipLevel ?? 0) !== 0 || Number(descriptor.mipLevelCount ?? mipCount) !== 1 ||
+        mipCount !== 1 || Number(descriptor.baseArrayLayer ?? 0) !== 0 ||
+        Number(descriptor.arrayLayerCount ?? layers) !== 1 || layers !== 1 ||
+        (descriptor.aspect && descriptor.aspect !== 'all') ||
+        (descriptor.dimension && descriptor.dimension !== '2d') ||
+        (texture.dimension && texture.dimension !== '2d')) {
+      return '绑定的是非完整 mip0/第 0 层二维视图，现有图像不能代表该输入';
+    }
+    return null;
+  }
+
   function textureOptions() {
     const event = state.events[state.selectedEvent];
     const pass = state.selectedPass !== null ? passFor(state.selectedPass) :
@@ -913,38 +996,46 @@
       Number(item?.passIndex) === Number(pass.index) && ['draw', 'dispatch'].includes(eventKind(String(item?.method || '')))) : [];
     const options = [];
     const seen = new Set();
-    const writersFor = id => list(state.report?.passes).filter(item =>
-      list(item.targets).some(target => String(target.outputTextureId ?? target.textureId) === String(id)));
-    const add = (id, role, label, snapshot, evidenceOverride) => {
+    const inputEvent = draws.length === 1 ? draws[0] : null;
+    const add = (id, role, label, snapshot, evidenceOverride, viewId = null) => {
       if (id == null) return;
       const texture = resourceArray('textures').find(item => String(item.id) === String(id));
       if (!texture) return;
-      const key = `${role}:${id}`;
+      const key = `${role}:${id}:${viewId ?? ''}`;
       if (seen.has(key)) return;
       seen.add(key);
       let evidence = evidenceOverride || (snapshot ? 'this-pass' : 'capture-final');
       let file = snapshot ? snapshot.imageFile : texture.imageFile;
       if (role === '绑定输入' && pass) {
-        const writers = writersFor(id);
-        const earlier = writers.filter(item => Number(item.endCommand) < Number(pass.beginCommand))
-          .sort((a, b) => Number(b.endCommand) - Number(a.endCommand));
-        if (earlier.length) {
-          const latest = earlier[0];
-          snapshot = list(latest.snapshots).find(item => String(item.textureId) === String(id)) || null;
-          evidence = snapshot ? 'upstream-pass' : 'upstream-unavailable';
-          file = snapshot?.imageFile || null;
-        } else if (writers.length) {
+        const viewReason = inputViewUnavailableReason(texture, viewId);
+        const writes = state.textureWrites.get(String(id)) || [];
+        const command = Number(inputEvent?.commandIndex);
+        const latest = Number.isFinite(command) ? writes.filter(item => item.commandIndex < command).at(-1) : null;
+        const later = Number.isFinite(command) ? writes.find(item => item.commandIndex > command) : null;
+        if (viewReason || !inputEvent) {
+          snapshot = null; file = null;
+          evidence = viewReason ? 'view-unavailable' : 'pass-aggregate';
+        } else if (latest?.snapshot) {
+          snapshot = latest.snapshot;
+          evidence = 'upstream-pass-candidate';
+          file = snapshot.imageFile || null;
+        } else if (texture.imageFile) {
           snapshot = null;
-          evidence = 'later-write';
-          file = null;
+          evidence = 'capture-final-unverified';
+          file = texture.imageFile;
+        } else {
+          snapshot = null; file = null;
+          evidence = latest ? 'upstream-unavailable' : later ? 'later-write' : 'no-image';
         }
+        if (viewReason) evidenceOverride = viewReason;
       }
       options.push({ key, id, role, label: label || texture.label || `纹理 #${id}`, texture, snapshot,
-        file, evidence });
+        file, evidence, unavailableReason: role === '绑定输入' ? evidenceOverride : null });
     };
     for (const draw of draws) {
       for (const group of list(draw.bindGroups)) for (const entry of list(group?.resources)) {
-        if (entry?.resource?.textureId != null) add(entry.resource.textureId, '绑定输入', entry.resource.label);
+        if (entry?.resource?.textureId != null) add(entry.resource.textureId, '绑定输入', entry.resource.label,
+          null, undefined, entry.resource.type === 'TextureView' ? entry.resource.id : null);
       }
     }
     for (const target of list(pass?.targets || event?.targets)) {
@@ -975,9 +1066,13 @@
       select.style.maxWidth = 'none';
       select.style.width = '100%';
       for (const item of options) {
-        const evidence = item.evidence === 'upstream-pass' ? `上游 Pass #${item.snapshot.passIndex}` :
+        const evidence = item.evidence === 'upstream-pass-candidate' ? `上游 Pass #${item.snapshot.passIndex} 候选` :
           item.evidence === 'post-draw' ? `Draw #${item.snapshot.drawCommandIndex} 后` :
-          item.evidence === 'this-pass' ? '本 Pass 结束' : item.evidence === 'later-write' ? '最终状态已变化' :
+          item.evidence === 'this-pass' ? '本 Pass 结束' :
+          item.evidence === 'capture-final-unverified' ? '帧末快照，非 Draw 输入实拍' :
+          item.evidence === 'view-unavailable' ? '视图范围未捕获' :
+          item.evidence === 'pass-aggregate' ? '请选具体 Draw' :
+          item.evidence === 'later-write' ? '最终状态已变化' :
           item.file ? '捕获最终' : '无图像';
         const option = make('option', `${item.role} · #${item.id} ${item.label} [${evidence}]`);
         option.value = item.key;
@@ -995,16 +1090,71 @@
     const selected = options.find(item => item.key === state.selectedTextureKey);
     el('texture-note').textContent = !selected ? '选择 Pass 或 Draw 后检查绑定纹理。' :
       !selected.file && !selected.snapshot?.rawFile ?
-        `#${selected.id} ${selected.texture.format || ''} · ${selected.texture.width} × ${selected.texture.height}。${selected.evidence === 'later-write' ? '该纹理随后被写入，最终图不能代表此刻输入。' : selected.evidence === 'upstream-unavailable' ? '最近一次上游写入无读回图，不能还原此刻输入。' : `没有图像：${selected.texture.imageReason || '捕获未提供纹理字节'}。`}` :
-        (selected.evidence === 'upstream-pass' ?
-          `当前 Pass 输入来自上游 Pass #${selected.snapshot.passIndex} 的结束 GPU 读回（命令 #${selected.snapshot.afterCommandIndex}）。` : selected.snapshot ?
+        `#${selected.id} ${selected.texture.format || ''} · ${selected.texture.width} × ${selected.texture.height}。${selected.evidence === 'later-write' ? '该纹理随后被写入，最终图不能代表此刻输入。' :
+          selected.evidence === 'upstream-unavailable' ? '最近一次写入无当时读回，不能还原此刻输入。' :
+          selected.evidence === 'view-unavailable' ? `${selected.unavailableReason}。` :
+          selected.evidence === 'pass-aggregate' ? '此 Pass 有多个 Draw，请选具体 Draw 查看当时输入。' :
+          `没有图像：${selected.texture.imageReason || '捕获未提供纹理字节'}。`}` :
+        (selected.evidence === 'upstream-pass-candidate' ?
+          `显示上游 Pass #${selected.snapshot.passIndex} 的结束 GPU 读回；这是输入候选，未在所选 Draw 绑定时直接捕获，不能证明纹理当时内容。` : selected.snapshot ?
             `${selected.evidence === 'post-draw' ? `真实 Draw #${selected.snapshot.drawCommandIndex} 后` : '真实 Pass 结束'}读回：第 ${selected.snapshot.frameOrdinal} 帧 Pass #${selected.snapshot.passIndex}（${selected.snapshot.label || ''}），结束命令 #${selected.snapshot.afterCommandIndex}；来源 ${selected.snapshot.source}；格式 ${selected.snapshot.format || selected.texture.format || '未知'}。` :
-            `Inspector 纹理 mip0 最终状态快照，非所选 Draw / Pass 当时的输入。${selected.texture.imagePreviewTransform || ''}`) +
+            selected.evidence === 'capture-final-unverified' ?
+              `这里只是捕获帧末的 mip0 纹理快照，未在所选 Draw 读取时抓取，不能证明是当时输入。${selected.texture.imagePreviewTransform || ''}` :
+              `Inspector 纹理 mip0 最终状态快照，非所选 Draw / Pass 当时的输入。${selected.texture.imagePreviewTransform || ''}`) +
           (!selected.file && selected.snapshot?.rawFile ? 'PNG 未生成；画布尝试按可见区域读取原始 RT。' : '');
     if (hasRawFloat(selected?.snapshot)) el('texture-note').textContent +=
       'HDR 预览从原始 float 值先应用曝光、再色调映射；PNG 仅供导出。';
   }
 
+  function uniformValue(value) {
+    if (Array.isArray(value)) return `[${value.map(uniformValue).join(', ')}]`;
+    return typeof value === 'number' && Number.isFinite(value) ?
+      String(Number(value.toPrecision(7))) : String(value);
+  }
+  function renderUniformFields(event, item, bytes) {
+    const holder = el('buffer-uniform-fields');
+    if (!holder) return;
+    clear(holder);
+    if (item?.kind !== 'bind-group' || item.slot == null || item.binding == null) {
+      holder.appendChild(make('p', '顶点 / 索引 Buffer 没有可核实的 WGSL Uniform 字段布局。', 'muted small'));
+      return;
+    }
+    const group = list(event?.bindGroups).find(value => Number(value.slot) === Number(item.slot));
+    const entry = list(group?.resources).find(value => Number(value.binding) === Number(item.binding) &&
+      value?.resource?.type === 'Buffer' && String(value.resource.id) === String(item.bufferId));
+    if (!entry) {
+      holder.appendChild(make('p', '选中 Draw 的绑定记录与字节文件不匹配，无法解码参数。', 'muted small'));
+      return;
+    }
+    const result = window.GameDraftUniformInspector?.inspectBinding({
+      shaders: resourceArray('shaders'), pipeline: pipelineForEvent(event),
+      group: Number(item.slot), binding: Number(item.binding), bytes,
+      declaredSize: entry.resource.size == null ? null : Number(entry.resource.size),
+    }) || { status: 'unavailable', reason: 'Uniform 解码器未加载' };
+    if (result.status !== 'ok') {
+      holder.appendChild(make('p', `参数不可解码：${result.reason}`, 'muted small'));
+      return;
+    }
+    holder.appendChild(make('h3', `${result.variable} · ${result.structName} · ${result.size} B`, 'section-caption'));
+    const grid = make('table', undefined, 'binding-table uniform-table');
+    const head = make('thead');
+    const title = make('tr');
+    for (const label of ['字段', 'WGSL 类型', '偏移', '绑定时的值']) title.appendChild(make('th', label));
+    head.appendChild(title);
+    grid.appendChild(head);
+    const body = make('tbody');
+    for (const field of result.fields) {
+      const row = make('tr');
+      for (const [index, value] of [field.name, field.type, `+${field.offset} B`, uniformValue(field.value)].entries()) {
+        const cell = make('td', value);
+        if (index === 3) cell.title = JSON.stringify(field.value);
+        row.appendChild(cell);
+      }
+      body.appendChild(row);
+    }
+    grid.appendChild(body);
+    holder.appendChild(grid);
+  }
   function renderBufferInspector() {
     const event = state.events[state.selectedEvent];
     const bound = event && ['draw', 'dispatch'].includes(eventKind(String(event.method || ''))) ?
@@ -1016,6 +1166,8 @@
     const loadFull = el('buffer-load-full');
     const hex = el('buffer-hex');
     const table = el('buffer-table-wrap');
+    const uniformFields = el('buffer-uniform-fields');
+    if (uniformFields) clear(uniformFields);
     save.hidden = loadFull.hidden = hex.hidden = table.hidden = true;
     el('buffer-page-status').textContent = '';
     if (!bound.length) {
@@ -1045,12 +1197,13 @@
     el('buffer-note').textContent = `Buffer #${item.bufferId} ${item.bufferLabel || ''} · ${payload.bytes} 字节，来源绑定命令 #${item.sourceCommandIndex}，用于 Draw #${event.commandIndex}。这是绑定时捕获的字节，不是 Draw 后回读。` +
       (payload.bufferFile ? `下方显示指定偏移的 256 字节；二进制文件包含全部。` :
         `自动导出省略：${payload.bufferExportReason || '没有可用二进制文件'}。`);
-    if (!payload.bufferFile) return;
+    if (!payload.bufferFile && !payload.previewBase64) return;
     let bytes;
     try { bytes = bufferCache.get(payload.id) || Uint8Array.from(atob(payload.previewBase64 || ''), char => char.charCodeAt(0)); }
     catch { el('buffer-note').textContent += ' 预览字节解码失败。'; return; }
+    renderUniformFields(event, item, bytes);
     const allLoaded = bytes.byteLength >= payload.bytes;
-    loadFull.hidden = allLoaded;
+    loadFull.hidden = allLoaded || !payload.bufferFile;
     const requested = Number(el('buffer-offset').value);
     const offset = Number.isFinite(requested) ? Math.max(0, Math.min(payload.bytes - 1, Math.floor(requested / 4) * 4)) : 0;
     if (offset >= bytes.length) {
@@ -1253,9 +1406,10 @@
       file: selected.file, snapshot: selected.snapshot,
       label: `${selected.role} · ${selected.label}`,
       format: selected.snapshot?.format || selected.texture?.format,
-      source: selected.evidence === 'upstream-pass' ? `上游 Pass #${selected.snapshot.passIndex} 结束 GPU 读回` :
+      source: selected.evidence === 'upstream-pass-candidate' ? `上游 Pass #${selected.snapshot.passIndex} 读回 · Draw 输入未验证` :
         selected.evidence === 'post-draw' ? `Draw #${selected.snapshot.drawCommandIndex} 后 GPU 读回` :
-        selected.snapshot ? '本 Pass 结束 GPU 读回' : '捕获最终状态快照',
+        selected.snapshot ? '本 Pass 结束 GPU 读回' :
+        selected.evidence === 'capture-final-unverified' ? '帧末快照 · Draw 输入未验证' : '捕获最终状态快照',
       width: selected.snapshot?.width || selected.texture?.width,
       height: selected.snapshot?.height || selected.texture?.height,
       id: selected.id,
@@ -1387,6 +1541,9 @@
     state.report = report;
     state.events = list(report.events);
     state.resources = report.resources && typeof report.resources === 'object' ? report.resources : {};
+    const textureTimeline = buildTextureWriteTimeline(report);
+    state.textureWrites = textureTimeline.writes;
+    state.textureViews = textureTimeline.views;
     const frames = list(report.frames);
     state.selectedFrame = frames.length && finite(Number(frames[frames.length - 1]?.frameOrdinal)) ?
       Number(frames[frames.length - 1].frameOrdinal) : null;

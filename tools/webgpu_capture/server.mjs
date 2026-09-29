@@ -307,7 +307,8 @@ export function createWebGpuCaptureController(projectRoot) {
     const analysis = await job.analysisPromise;
     const report = analysis.report;
     const allowed = new Set([
-      'viewer.html', 'viewer.js', 'viewer_surface.js', 'viewer_surface.css', 'viewer-data.js', 'report.json',
+      'viewer.html', 'viewer.js', 'viewer_surface.js', 'viewer_surface.css', 'viewer_uniforms.js',
+      'viewer-data.js', 'report.json',
       report.frameImage,
       ...(report.frames || []).map(frame => frame.imageFile),
       ...(report.passSnapshots || []).map(snapshot => snapshot.imageFile),

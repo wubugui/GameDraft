@@ -182,8 +182,125 @@
     .gpu-table td:last-child,.gpu-table th:last-child { text-align:right; }
     .gpu-table tbody tr:hover { background:#354554; }
     .filter-defs { position:absolute; width:0; height:0; overflow:hidden; }
-    @media (max-width:780px) { .frame-workspace { --tree-width:33%; } .top-meta span:nth-child(n+4) { display:none; } .resource-grid { grid-template-columns:1fr; } }
-    @media (max-width:620px) { body { overflow:auto; } .topbar-main { flex-wrap:wrap; } .brand { min-width:120px; } .frame-workspace { display:block; flex:none; overflow:visible; } .events-pane { height:220px; border-right:0; border-bottom:1px solid #10151b; } .frame-main { display:block; } .preview-pane { height:310px; } .inspector-pane { height:360px; } .splitter { display:none; } .gpu-workspace { display:grid; flex:none; min-height:520px; grid-template-rows:minmax(210px,45%) minmax(0,1fr); } }
+
+    /* Frame Debugger workspace: event playback above a hierarchy and one Event Information pane. */
+    :root { color:#dedede; background:#202020; --surface:#292929; --line:#404040; --muted:#aaa; --accent:#79bce9; --selection:#325b79; }
+    .topbar { position:relative; z-index:5; background:#2b2b2b; border-bottom-color:#151515; }
+    .topbar-main { min-height:34px; gap:14px; padding:3px 9px; }
+    .brand { display:flex; align-items:baseline; gap:9px; min-width:0; white-space:nowrap; }
+    .brand .eyebrow { color:#a8a8a8; font-size:10px; letter-spacing:0; }
+    .brand h1 { font-size:13px; font-weight:650; }
+    .mode-switch { gap:0; }
+    .mode-button { min-height:24px; padding:3px 10px; border-color:#414141; border-radius:0; background:#343434; }
+    .mode-button:first-child { border-radius:3px 0 0 3px; }
+    .mode-button:last-child { border-radius:0 3px 3px 0; }
+    .mode-button.active,.mode-button[aria-selected=true] { border-color:#39769b; background:#315a75; }
+    .capture-details { position:relative; margin-left:auto; color:#bbb; }
+    .capture-details>summary { list-style:none; min-width:87px; padding:4px 8px; border:1px solid #454545; border-radius:3px; background:#363636; cursor:pointer; text-align:center; }
+    .capture-details>summary::-webkit-details-marker { display:none; }
+    .capture-details>summary::after { content:' ▾'; color:#aaa; }
+    .capture-details[open]>summary { background:#414141; }
+    .capture-details-body { position:absolute; top:calc(100% + 5px); right:0; z-index:20; width:min(600px,calc(100vw - 18px)); padding:8px; border:1px solid #525252; border-radius:3px; background:#303030; box-shadow:0 8px 24px #0009; }
+    .capture-details-body .top-meta { display:flex; flex-wrap:wrap; gap:4px 12px; padding:0; border:0; color:#ccc; white-space:normal; }
+    .capture-details-body .top-meta span { overflow:visible; text-overflow:clip; }
+    .capture-details-body .timing-note { padding:7px 0 0; color:#e5c184; white-space:normal; }
+    .event-toolbar { display:flex; align-items:center; gap:6px; min-height:34px; padding:3px 9px; border-top:1px solid #414141; background:#333; }
+    .event-toolbar label { flex:none; }
+    .event-toolbar #frame-select { flex:none; width:clamp(130px,15vw,220px); max-width:none; }
+    .event-toolbar #event-range { flex:1 1 auto; width:auto; min-width:100px; margin:0 8px; }
+    .event-toolbar #event-position { min-width:70px; color:#d2d2d2; }
+    .event-toolbar .nav-button { width:27px; min-height:24px; }
+    body:has(#gpu-workspace:not([hidden])) .event-toolbar { display:none; }
+    input,select { border-color:#505050; background:#242424; }
+    .plain-button,.tab { border-color:#505050; background:#333; }
+    .frame-workspace { --tree-width:28%; grid-template-columns:minmax(270px,var(--tree-width)) 5px minmax(0,1fr); }
+    .frame-main { --preview-height:69%; grid-template-rows:minmax(330px,var(--preview-height)) 5px minmax(175px,1fr); }
+    .events-pane,.preview-pane,.inspector-pane,.gpu-chart-pane,.gpu-table-pane { background:var(--surface); }
+    .pane-head { min-height:27px; padding:3px 9px; border-bottom-color:#414141; background:#303030; }
+    .event-controls { gap:3px; padding:5px 7px; border-bottom-color:#444; }
+    .event-controls .control-row:last-child { min-height:22px; }
+    .event-tree { scrollbar-color:#666 #292929; }
+    .tree-frame { background:#343434; border-bottom-color:#292929; }
+    .tree-category-head { background:#383838; }
+    .tree-batch-head { background:#303030; }
+    .tree-category-head,.tree-batch-head { overflow:hidden; white-space:nowrap; }
+    .tree-pass-head { background:#2d2d2d; }
+    .tree-frame:hover,.tree-category-head:hover,.tree-batch-head:hover,.tree-pass-head:hover,.tree-event:hover { background:#424242; }
+    .tree-pass-head.active,.tree-event.active,.tree-event[aria-selected=true],.list-button.active { background:var(--selection); }
+    .list-footer { background:#292929; }
+    .preview-pane { border-bottom-color:#151515; }
+    .preview-toolbar { display:flex; align-items:center; min-height:32px; overflow:hidden; border-bottom:1px solid var(--line); background:#303030; }
+    .preview-source-row { flex:1 1 40%; min-width:0; min-height:31px; gap:4px; padding:2px 5px 2px 8px; border:0; }
+    .preview-source-row .plain-button { padding:2px 6px; }
+    #texture-scope { max-width:76px; }
+    .texture-choices { min-width:120px; }
+    .texture-choices select { max-width:none; }
+    .inspector-controls { flex:none; min-height:31px; gap:4px; overflow:visible; padding:2px 7px; border:0; border-left:1px solid #474747; }
+    .inspector-controls label { color:#b8b8b8; }
+    .inspector-controls select { max-width:80px; }
+    #texture-exposure { width:62px; }
+    #texture-zoom { width:66px; margin-right:0; }
+    .inspector-controls .plain-button { min-height:23px; padding:2px 6px; }
+    .preview-stage { background:#1a1a1a; }
+    .pixel-readout { min-height:23px; padding:3px 8px; border-color:#414141; background:#252525; }
+    .preview-evidence { flex:none; min-height:22px; border-top:1px solid #404040; background:#2d2d2d; }
+    .preview-evidence>summary { display:flex; align-items:center; gap:9px; min-height:22px; padding:3px 8px; color:#bdbdbd; cursor:pointer; list-style:none; font-size:10px; }
+    .preview-evidence>summary::-webkit-details-marker { display:none; }
+    .preview-evidence>summary::before { content:'▸'; flex:none; color:#b3b3b3; }
+    .preview-evidence[open]>summary::before { content:'▾'; }
+    .preview-evidence>summary strong { flex:none; color:#dedede; font-weight:550; }
+    .preview-evidence>summary .frame-note,.preview-evidence>summary .inspect-note { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .preview-evidence[open]>summary { align-items:flex-start; }
+    .preview-evidence[open]>summary .frame-note,.preview-evidence[open]>summary .inspect-note { white-space:normal; }
+    .preview-evidence>summary [hidden] { display:none; }
+    .inspector-head { flex:none; }
+    .inspector-head #detail-index { max-width:65%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #inspector-scroll { background:#292929; scrollbar-color:#666 #292929; }
+    .inspector-accordion { border-bottom:1px solid #414141; }
+    .inspector-accordion>summary { display:flex; align-items:center; gap:6px; min-height:26px; padding:4px 10px; background:#343434; color:#dedede; cursor:pointer; list-style:none; font-weight:600; }
+    .inspector-accordion>summary::-webkit-details-marker { display:none; }
+    .inspector-accordion>summary::before { content:'▸'; flex:none; width:10px; color:#aaa; font-size:10px; }
+    .inspector-accordion[open]>summary::before { content:'▾'; }
+    .inspector-accordion>summary:hover { background:#414141; }
+    .inspector-page { padding:5px 10px 10px; }
+    .detail-grid { grid-template-columns:minmax(115px,150px) minmax(0,1fr); }
+    .detail-grid dt,.detail-grid dd { padding:3px 4px; border-bottom-color:#3d3d3d; }
+    .resource-jumps { margin-top:8px; }
+    .section-caption { margin:6px 0 5px; }
+    .uniform-fields:empty { display:none; }
+    .uniform-fields:not(:empty) { margin:10px 0; padding-top:4px; border-top:1px solid var(--line); }
+    .uniform-fields .section-caption { margin:0 0 6px; color:#b6d8f0; }
+    .uniform-table { width:100%; table-layout:fixed; }
+    .uniform-table th:nth-child(1),.uniform-table td:nth-child(1) { width:24%; }
+    .uniform-table th:nth-child(2),.uniform-table td:nth-child(2) { width:22%; }
+    .uniform-table th:nth-child(3),.uniform-table td:nth-child(3) { width:85px; }
+    .uniform-table td:last-child { font:11px/1.45 Consolas,monospace; white-space:normal; word-break:break-word; }
+    .binding-table th { background:#343434; }
+    .flow-node { border-color:#555; background:#303943; }
+    @media (max-width:1350px) {
+      .inspector-controls { gap:3px; padding-inline:5px; }
+      .inspector-controls label[for="texture-zoom"] { display:none; }
+      .preview-source-row { gap:3px; }
+      #texture-scope { display:none; }
+    }
+    @media (max-width:950px) {
+      .frame-workspace { --tree-width:34%; grid-template-columns:minmax(220px,var(--tree-width)) 5px minmax(0,1fr); }
+      .preview-toolbar { overflow:auto hidden; }
+      .preview-source-row { min-width:250px; }
+      .resource-grid { grid-template-columns:1fr; }
+    }
+    @media (max-width:620px) {
+      body { overflow:auto; }
+      .topbar-main { flex-wrap:wrap; }
+      .event-toolbar #frame-select { width:100px; }
+      .frame-workspace { display:block; flex:none; overflow:visible; }
+      .events-pane { height:220px; border-right:0; border-bottom:1px solid #10151b; }
+      .frame-main { display:block; }
+      .preview-pane { height:370px; }
+      .inspector-pane { height:360px; }
+      .splitter { display:none; }
+      .gpu-workspace { display:grid; flex:none; min-height:520px; grid-template-rows:minmax(210px,45%) minmax(0,1fr); }
+    }
   </style>
 </head>
 <body>
@@ -200,9 +317,18 @@
         <button id="mode-frame" class="mode-button active" type="button" aria-pressed="true">帧调试器</button>
         <button id="mode-gpu" class="mode-button" type="button" aria-pressed="false">GPU Profiler</button>
       </nav>
+      <details class="capture-details"><summary>捕获信息</summary><div class="capture-details-body">
+        <div id="top-meta" class="top-meta" aria-live="polite"></div>
+        <div id="timing-note" class="timing-note" role="note">正在读取报告…</div>
+      </div></details>
     </div>
-    <div id="top-meta" class="top-meta" aria-live="polite"></div>
-    <div id="timing-note" class="timing-note" role="note">正在读取报告…</div>
+    <div class="event-toolbar" aria-label="帧事件导航">
+      <label for="frame-select" class="muted small">帧</label><select id="frame-select" aria-label="选择帧"></select>
+      <button id="event-prev" class="plain-button nav-button" type="button" title="上一事件" aria-label="上一事件">‹</button>
+      <button id="event-next" class="plain-button nav-button" type="button" title="下一事件" aria-label="下一事件">›</button>
+      <input id="event-range" type="range" min="0" max="0" value="0" aria-label="当前帧事件位置">
+      <span id="event-position">0 / 0</span>
+    </div>
   </header>
   <div id="fatal" role="alert"></div>
   <section id="summary" aria-label="捕获统计" hidden></section>
@@ -210,13 +336,6 @@
     <aside class="events-pane" aria-labelledby="events-title">
       <div class="pane-head"><h2 id="events-title">事件层级</h2><h2 id="passes-title" hidden>Pass</h2><span class="small muted"><span id="pass-count"></span> Pass · <span id="event-count"></span> 事件</span></div>
       <div class="event-controls">
-        <div class="control-row"><label for="frame-select" class="muted small">帧</label><select id="frame-select" aria-label="选择帧" style="flex:1;max-width:none"></select></div>
-        <div class="control-row" aria-label="事件导航">
-          <button id="event-prev" class="plain-button nav-button" type="button" title="上一事件" aria-label="上一事件">‹</button>
-          <button id="event-next" class="plain-button nav-button" type="button" title="下一事件" aria-label="下一事件">›</button>
-          <input id="event-range" type="range" min="0" max="0" value="0" aria-label="当前帧事件位置">
-          <span id="event-position">0 / 0</span>
-        </div>
         <div class="control-row"><input id="event-search" type="search" placeholder="搜索事件或管线" aria-label="搜索事件"><select id="event-kind" aria-label="事件类型">
           <option value="visual" selected>绘制/派发</option>
           <option value="all">全部命令</option>
@@ -236,50 +355,53 @@
     <div id="hierarchy-splitter" class="splitter vertical" role="separator" aria-label="调整事件层级宽度" aria-orientation="vertical" tabindex="0"></div>
     <div class="frame-main">
       <section class="preview-pane" aria-labelledby="frame-title">
-        <div class="pane-head"><h2 id="frame-title">输出 / 纹理预览</h2><div class="preview-head-meta"><span id="frame-size"></span><span id="texture-count"></span></div></div>
-        <div class="preview-source-row">
-          <button id="preview-frame-button" class="plain-button active" type="button" aria-pressed="true">Pass 输出</button>
-          <button id="preview-texture-button" class="plain-button" type="button" aria-pressed="false">选中纹理</button>
-          <span id="texture-scope" class="muted small"></span>
-          <div id="texture-choices" class="texture-choices" aria-label="绑定纹理及渲染目标"></div>
-        </div>
-        <div class="inspector-controls">
-          <label for="texture-channel">通道</label><select id="texture-channel"><option value="rgba">RGBA</option><option value="red">R</option><option value="green">G</option><option value="blue">B</option><option value="alpha">A</option></select>
-          <label for="texture-exposure">曝光</label><input id="texture-exposure" type="range" min="-4" max="4" step="0.25" value="0"><span id="texture-exposure-value" class="small">0 EV</span>
-          <label for="texture-zoom">缩放</label><select id="texture-zoom"><option value="fit">适合</option><option value="25">25%</option><option value="50">50%</option><option value="100">100%</option><option value="200">200%</option><option value="400">400%</option></select>
-          <a id="texture-save" class="plain-button" download hidden>导出 PNG</a>
-          <a id="texture-save-raw" class="plain-button" download hidden>导出原始 RT</a>
+        <div class="pane-head"><h2 id="frame-title">Render Target</h2><div class="preview-head-meta"><span id="frame-size"></span><span id="texture-count"></span></div></div>
+        <div class="preview-toolbar">
+          <div class="preview-source-row">
+            <button id="preview-frame-button" class="plain-button active" type="button" aria-pressed="true">输出</button>
+            <button id="preview-texture-button" class="plain-button" type="button" aria-pressed="false">纹理</button>
+            <span id="texture-scope" class="muted small"></span>
+            <div id="texture-choices" class="texture-choices" aria-label="绑定纹理及渲染目标"></div>
+          </div>
+          <div class="inspector-controls">
+            <label for="texture-channel">通道</label><select id="texture-channel"><option value="rgba">RGBA</option><option value="red">R</option><option value="green">G</option><option value="blue">B</option><option value="alpha">A</option></select>
+            <label for="texture-exposure">曝光</label><input id="texture-exposure" type="range" min="-4" max="4" step="0.25" value="0"><span id="texture-exposure-value" class="small">0 EV</span>
+            <label for="texture-zoom">缩放</label><select id="texture-zoom"><option value="fit">适合</option><option value="25">25%</option><option value="50">50%</option><option value="100">100%</option><option value="200">200%</option><option value="400">400%</option></select>
+            <a id="texture-save" class="plain-button" download hidden>PNG</a>
+            <a id="texture-save-raw" class="plain-button" download hidden>原始 RT</a>
+          </div>
         </div>
         <div class="preview-stage"><div id="surface-mount"></div></div>
         <div id="pixel-readout" class="pixel-readout" aria-live="polite"><strong>像素</strong><span id="pixel-value">点击画面查看坐标和 RGBA 值；Ctrl+滚轮缩放，滚轮平移，拖动平移。</span></div>
-        <div class="preview-notes"><p id="frame-note" class="frame-note">选择 Draw 查看逐步输出；只有通过单 Draw 物理 Pass 校验的读回才标为 Draw 后画面。</p><p id="texture-note" class="inspect-note"></p></div>
+        <details class="preview-evidence"><summary><strong>读回依据</strong><span id="frame-note" class="frame-note">选择 Draw 查看逐步输出；只有通过单 Draw 物理 Pass 校验的读回才标为 Draw 后画面。</span><span id="texture-note" class="inspect-note"></span></summary></details>
       </section>
       <div id="preview-splitter" class="splitter horizontal" role="separator" aria-label="调整输出预览高度" aria-orientation="horizontal" tabindex="0"></div>
       <section class="inspector-pane" aria-labelledby="detail-title">
-        <div class="pane-head"><h2 id="detail-title">事件信息</h2><span id="detail-index" class="muted small"></span></div>
-        <nav id="inspector-tabs" class="inspector-tabs" aria-label="事件检查器"><button type="button" data-page="detail" class="active">概览</button><button type="button" data-page="pipeline">管线</button><button type="button" data-page="inputs">输入 / 输出</button><button type="button" data-page="buffers">Buffers</button><button type="button" data-page="resources">资源</button><button type="button" data-page="errors">错误</button></nav>
+        <div class="pane-head inspector-head"><h2 id="detail-title">事件信息</h2><span id="detail-index" class="muted small"></span></div>
+        <nav id="inspector-tabs" class="inspector-tabs" aria-label="事件检查器" hidden><button type="button" data-page="detail" class="active">详情</button><button type="button" data-page="pipeline">管线</button><button type="button" data-page="inputs">输入 / 输出</button><button type="button" data-page="buffers">Buffers</button><button type="button" data-page="resources">资源</button><button type="button" data-page="errors">错误</button></nav>
         <div id="inspector-scroll">
-          <section id="page-detail" class="inspector-page"><div id="event-detail"></div></section>
-          <section id="page-pipeline" class="inspector-page" hidden><div id="pipeline-detail"></div></section>
-          <section id="page-inputs" class="inspector-page" hidden><div id="binding-detail"></div></section>
-          <section id="page-buffers" class="inspector-page" hidden><h3 class="section-caption">绑定时 Buffer 内容 <span id="buffer-count" class="small muted"></span></h3>
+          <details id="page-detail" class="inspector-accordion" data-page="detail" open><summary>Details</summary><div class="inspector-page"><div id="event-detail"></div></div></details>
+          <details id="page-inputs" class="inspector-accordion" data-page="inputs"><summary>Textures / 输入与输出</summary><div class="inspector-page"><div id="binding-detail"></div></div></details>
+          <details id="page-pipeline" class="inspector-accordion" data-page="pipeline"><summary>Pipeline / 着色器</summary><div class="inspector-page"><div id="pipeline-detail"></div></div></details>
+          <details id="page-buffers" class="inspector-accordion" data-page="buffers"><summary>Buffers / 常量</summary><div class="inspector-page"><h3 class="section-caption">绑定时 Buffer 内容 <span id="buffer-count" class="small muted"></span></h3>
             <div class="panel-body">
               <select id="buffer-select" class="buffer-select" aria-label="选择缓冲 Payload"></select>
               <p id="buffer-note" class="inspect-note"></p>
+              <div id="buffer-uniform-fields" class="uniform-fields"></div>
               <a id="buffer-save" class="plain-button" download hidden>保存完整二进制</a>
               <button id="buffer-load-full" class="plain-button" type="button" hidden>载入完整字节</button>
               <div class="control-row data-section"><label for="buffer-offset">字节偏移</label><input id="buffer-offset" type="number" min="0" step="16" value="0" style="width:88px;flex:none"><span id="buffer-page-status" class="muted small"></span></div>
               <pre id="buffer-hex" hidden></pre>
               <div id="buffer-table-wrap" class="buffer-table-wrap" hidden><table id="buffer-table" class="buffer-table"><thead><tr><th>偏移</th><th>4 字节 Hex</th><th>uint32 LE</th><th>float32 LE</th></tr></thead><tbody id="buffer-rows"></tbody></table></div>
             </div>
-          </section>
-          <section id="page-resources" class="inspector-page" hidden><h3 class="section-caption">资源 <span id="resource-count" class="small muted"></span></h3><div id="resource-panel">
+          </div></details>
+          <details id="page-resources" class="inspector-accordion" data-page="resources"><summary>Resources / 资源</summary><div class="inspector-page"><h3 class="section-caption">资源 <span id="resource-count" class="small muted"></span></h3><div id="resource-panel">
             <div class="panel-body resource-grid">
               <div><div id="resource-tabs" class="resource-tabs" role="group" aria-label="资源类型"></div><input id="resource-search" type="search" placeholder="搜索 ID、标签或代码" aria-label="搜索资源"><div id="resource-list" class="resource-list" aria-label="资源列表"></div></div>
               <div><h3 id="resource-detail-title" class="small muted">资源详情</h3><div id="resource-detail"></div></div>
             </div>
-          </div></section>
-          <section id="page-errors" class="inspector-page" hidden><h3 class="section-caption">验证错误 / Sidecar <span id="error-count" class="small muted"></span></h3><div id="errors" class="panel-body"></div></section>
+          </div></div></details>
+          <details id="page-errors" class="inspector-accordion" data-page="errors"><summary>Errors / 验证</summary><div class="inspector-page"><h3 class="section-caption">验证错误 / Sidecar <span id="error-count" class="small muted"></span></h3><div id="errors" class="panel-body"></div></div></details>
         </div>
       </section>
     </div>
@@ -314,7 +436,7 @@
         script.onerror = function () { document.getElementById('fatal').textContent = '无法加载 ' + name + '。请检查分析输出目录或开发服务器。'; };
         document.body.appendChild(script);
       }
-      load('viewer_surface.js', function () { load('viewer.js'); });
+      load('viewer_surface.js', function () { load('viewer_uniforms.js', function () { load('viewer.js'); }); });
     }());
   </script>
 </body>
