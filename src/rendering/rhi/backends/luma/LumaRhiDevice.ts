@@ -890,6 +890,7 @@ class LumaBindingPlan {
 // ───────────────────────────── 命令
 
 class LumaCommandList implements RhiCommandList {
+  readonly frameDebugCaptureActive: boolean;
   /**
    * 原生命令编码器,finish 后直接交原生队列提交。luma 的 CommandEncoder / CommandBuffer 各是一个带资源统计的 Resource
    * (每批一建一拆),提交时的错误作用域关调试时是空操作,对原生命令没有作用,所以热路径(每帧的 render pass)不经它
@@ -916,6 +917,7 @@ class LumaCommandList implements RhiCommandList {
     this.native = device.gpuDevice.createCommandEncoder({ label });
     this.timing = device.gpuProfiler.start(kind, frame, label);
     this.captureHooks = device._takeFrameCapture(kind);
+    this.frameDebugCaptureActive = this.captureHooks !== null;
   }
 
   private get encoder(): CommandEncoder {

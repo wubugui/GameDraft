@@ -357,6 +357,9 @@ export async function analyzeCapture(path, options = {}) {
   report.sidecarErrors = sidecars.errors;
   report.sidecarManifest = sidecars.manifest;
   report.passSnapshots = sidecars.passSnapshots;
+  report.imageNote = sidecars.passSnapshots.some(snapshot => snapshot.captureMoment === 'post-draw') ?
+    'Verified frame-debug one-Draw physical Pass readbacks show the output after that Draw. Other Pass readbacks show only Pass-end state; Inspector texture mip images show capture-final state.' :
+    'Texture PNGs are capture-final texture-state snapshots. Pass sidecars show Pass-end state, not output after individual Draws. Per-frame sidecars come from game canvas readback.';
   report.passUnavailable = sidecars.passUnavailable;
   report.gpuProfilerStatus = sidecars.gpuProfilerStatus;
   report.passCaptureWarning = sidecars.passCaptureWarning;

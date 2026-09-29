@@ -12,7 +12,7 @@ const MAX_FRAMES = 120;
 const MAX_CAPTURE_BYTES = 512 * 1024 * 1024;
 const MAX_FRAME_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_FRAME_IMAGES_BYTES = 512 * 1024 * 1024;
-const MAX_PASS_RAW_BYTES = 256 * 1024 * 1024;
+const MAX_PASS_RAW_BYTES = 512 * 1024 * 1024;
 const MAX_DIAGNOSTIC_ENTRIES = 512;
 const RAW_FORMAT_BYTES = new Map([
   ['r8unorm', 1], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4],
@@ -194,7 +194,9 @@ export function createWebGpuCaptureController(projectRoot) {
   function expireJobs() {
     const now = Date.now();
     for (const job of jobs.values()) {
-      if (['pending', 'capturing', 'uploading'].includes(job.state) && now - job.createdAt > JOB_TTL_MS) {
+      // A split Draw frame can contain hundreds of sequential sidecar uploads.
+      // Expire stalled work, not a job that is still making upload progress.
+      if (['pending', 'capturing', 'uploading'].includes(job.state) && now - job.updatedAt > JOB_TTL_MS) {
         job.state = 'failed';
         job.error = 'capture timed out';
         job.updatedAt = now;
@@ -440,7 +442,7 @@ export function createWebGpuCaptureController(projectRoot) {
     if (job.passRaw.has(key) || job.passRawInProgress.has(key)) throw new Error('raw pass output already uploaded');
     if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') throw new Error('raw pass output stream is required');
     if (expected > MAX_PASS_RAW_BYTES - job.passRawBytes - job.reservedPassRawBytes) {
-      throw new Error('raw pass outputs exceed 256 MiB capture limit');
+      throw new Error('raw pass outputs exceed 512 MiB capture limit');
     }
     const name = `pass-raw-${String(pass).padStart(4, '0')}-color-${color}.bin`;
     const file = join(job.outputDir, name);
@@ -506,11 +508,13 @@ export function createWebGpuCaptureController(projectRoot) {
         throw new Error('invalid pass diagnostic');
       }
       const image = job.passImages.get(`${item.passOrdinal}:${item.colorIndex}`);
-      if (!item.reason && !image) throw new Error('pass diagnostic refers to an image that was not uploaded');
+      const raw = job.passRaw.get(`${item.passOrdinal}:${item.colorIndex}`);
+      if (!item.reason && !image && !raw) {
+        throw new Error('pass diagnostic refers to an output that was not uploaded');
+      }
       if (image && (image.width !== item.width || image.height !== item.height)) {
         throw new Error('pass image dimensions differ from diagnostic');
       }
-      const raw = job.passRaw.get(`${item.passOrdinal}:${item.colorIndex}`);
       if (item.rawBytesPerRow !== undefined || item.rawByteLength !== undefined) {
         if (!raw || raw.width !== item.width || raw.height !== item.height ||
             raw.format !== item.format || raw.bytesPerRow !== item.rawBytesPerRow ||
@@ -579,6 +583,22 @@ export function createWebGpuCaptureController(projectRoot) {
             { rawReason: item.rawReason || 'Pass raw pixels were not saved' }),
           width: item.width, height: item.height,
           format: item.format, label: item.label, source: 'RHI pass-end GPU readback' });
+      }
+    }
+    // The RHI record count is intentionally bounded. Preserve an explicit unavailable
+    // entry for every color output beyond that cap instead of silently omitting Draws.
+    if (detail) {
+      const recorded = new Set(detail.passes.map(item => `${item.passOrdinal}:${item.colorIndex}`));
+      for (let ordinal = 0; ordinal < renderPasses.length; ordinal++) {
+        const pass = renderPasses[ordinal];
+        for (const target of pass.targets?.filter(value => value.kind === 'color') ?? []) {
+          if (recorded.has(`${ordinal}:${target.slot}`)) continue;
+          passUnavailable.push({ frameOrdinal: targetOrdinal, passIndex: pass.index,
+            label: pass.label, colorIndex: target.slot,
+            reason: ordinal >= MAX_DIAGNOSTIC_ENTRIES || detail.passes.length >= MAX_DIAGNOSTIC_ENTRIES ?
+              `RHI diagnostic record limit (${MAX_DIAGNOSTIC_ENTRIES} color outputs) reached` :
+              'RHI did not emit a color output diagnostic for this pass' });
+        }
       }
     }
     for (const item of detail?.gpuPasses ?? []) {

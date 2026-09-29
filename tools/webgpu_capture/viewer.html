@@ -248,10 +248,11 @@
           <label for="texture-exposure">曝光</label><input id="texture-exposure" type="range" min="-4" max="4" step="0.25" value="0"><span id="texture-exposure-value" class="small">0 EV</span>
           <label for="texture-zoom">缩放</label><select id="texture-zoom"><option value="fit">适合</option><option value="25">25%</option><option value="50">50%</option><option value="100">100%</option><option value="200">200%</option><option value="400">400%</option></select>
           <a id="texture-save" class="plain-button" download hidden>导出 PNG</a>
+          <a id="texture-save-raw" class="plain-button" download hidden>导出原始 RT</a>
         </div>
         <div class="preview-stage"><div id="surface-mount"></div></div>
         <div id="pixel-readout" class="pixel-readout" aria-live="polite"><strong>像素</strong><span id="pixel-value">点击画面查看坐标和 RGBA 值；Ctrl+滚轮缩放，滚轮平移，拖动平移。</span></div>
-        <div class="preview-notes"><p id="frame-note" class="frame-note">显示画布或 Pass 结束时的真实读回；逐 Draw 输出未捕获。</p><p id="texture-note" class="inspect-note"></p></div>
+        <div class="preview-notes"><p id="frame-note" class="frame-note">选择 Draw 查看逐步输出；只有通过单 Draw 物理 Pass 校验的读回才标为 Draw 后画面。</p><p id="texture-note" class="inspect-note"></p></div>
       </section>
       <div id="preview-splitter" class="splitter horizontal" role="separator" aria-label="调整输出预览高度" aria-orientation="horizontal" tabindex="0"></div>
       <section class="inspector-pane" aria-labelledby="detail-title">

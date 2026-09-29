@@ -138,6 +138,43 @@ describe('建坏的管线只丢它自己的 draw(D7)', () => {
   });
 });
 
+describe('一次性逐 Draw 抓帧状态', () => {
+  it('只标记命中种类的那次命令提交，其他帧和后续提交仍走普通路径', () => {
+    const { dev } = setup();
+    const seen: Array<boolean | undefined> = [];
+    dev.frameDebugCapture.captureNextSubmission({ kind: 'submit', onPassEnd: () => {} });
+    expect(dev.runFrame((frame) => seen.push(frame.commands.frameDebugCaptureActive))).toBe(true);
+    expect(dev.submit('captured', (commands) => seen.push(commands.frameDebugCaptureActive))).toBe(true);
+    expect(dev.submit('ordinary', (commands) => seen.push(commands.frameDebugCaptureActive))).toBe(true);
+    expect(seen).toEqual([false, true, false]);
+    dev.destroy();
+  });
+
+  it('原生 Pass 每次 end 后立即回调，物理 Pass 顺序与抓帧 ordinal 一致', () => {
+    const { dev } = setup();
+    const texture = dev.rootScope.createTexture({
+      label: 'draw-step-rt', width: 4, height: 4, format: 'bgra8unorm',
+      usage: RhiTextureUsage.RENDER_TARGET | RhiTextureUsage.COPY_SRC,
+    });
+    const target = dev.rootScope.createRenderTarget({ label: 'draw-step-target', colors: [texture] });
+    const events: Array<{ ordinal: number; label: string }> = [];
+    dev.frameDebugCapture.captureNextSubmission({ kind: 'submit', onPassEnd: (pass) => {
+      events.push({ ordinal: pass.passOrdinal, label: pass.label });
+    } });
+    expect(dev.submit('draw-step', (commands) => {
+      commands.beginRenderPass({ label: 'scene / frame-debug draw 1/2', target }).end();
+      expect(events.map((event) => event.ordinal)).toEqual([0]);
+      commands.beginRenderPass({ label: 'scene / frame-debug draw 2/2', target, colorOps: [{ load: 'load' }] }).end();
+      expect(events.map((event) => event.ordinal)).toEqual([0, 1]);
+    })).toBe(true);
+    expect(events).toEqual([
+      { ordinal: 0, label: 'scene / frame-debug draw 1/2' },
+      { ordinal: 1, label: 'scene / frame-debug draw 2/2' },
+    ]);
+    dev.destroy();
+  });
+});
+
 describe('bind group 按资源身份缓存(D12)', () => {
   function boundSetup() {
     const s = setup();

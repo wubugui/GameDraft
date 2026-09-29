@@ -335,6 +335,14 @@ export class WebGPURenderer extends RendererBase {
   }
 
   private record(state: RenderState, cmds: readonly VirtualCommand[], commands: RhiCommandList, frame: RhiFrame | null): void {
+    if (commands.frameDebugCaptureActive) this.recordFrameDebugDraws(state, cmds, commands, frame);
+    else this.recordOrdinary(state, cmds, commands, frame);
+    if (frame && this.canvasFlip && cmds.some((c) => c.t === 'pass' && c.target === 'canvas')) {
+      this.presentCanvasFlip(commands, frame, this.canvasFlip);
+    }
+  }
+
+  private recordOrdinary(state: RenderState, cmds: readonly VirtualCommand[], commands: RhiCommandList, frame: RhiFrame | null): void {
     let pass: RhiRenderPassEncoder | null = null;
     let stencilRef = 0;
     for (const cmd of cmds) {
@@ -369,15 +377,78 @@ export class WebGPURenderer extends RendererBase {
       }
     }
     pass?.end();
-    if (frame && this.canvasFlip && cmds.some((c) => c.t === 'pass' && c.target === 'canvas')) {
-      this.presentCanvasFlip(commands, frame, this.canvasFlip);
+  }
+
+  /** 抓帧命中的提交才把逻辑 pass 拆为逐 Draw 原生 pass，pass.end 钩子因此读到真实的中间 RT。 */
+  private recordFrameDebugDraws(state: RenderState, cmds: readonly VirtualCommand[], commands: RhiCommandList, frame: RhiFrame | null): void {
+    const totals = new Map<PassCmd, number>();
+    let logical: PassCmd | null = null;
+    for (const cmd of cmds) {
+      if (cmd.t === 'pass') {
+        logical = cmd;
+        totals.set(cmd, 0);
+      } else if (logical) {
+        totals.set(logical, totals.get(logical)! + 1);
+      }
+    }
+
+    let target: RhiRenderTarget | null = null;
+    let drawOrdinal = 0;
+    for (const cmd of cmds) {
+      if (cmd.t === 'pass') {
+        logical = cmd;
+        target = this.passTarget(cmd, frame);
+        drawOrdinal = 0;
+        if (totals.get(cmd) === 0) {
+          // 清屏但没有 Draw 的 pass 依然执行一次，保留原语义与原标签。
+          const empty = commands.beginRenderPass({
+            label: cmd.debugLabel,
+            target,
+            colorOps: [cmd.load === 'clear' ? { load: 'clear', clearValue: cmd.clearColor } : { load: 'load' }],
+            depthOp: { load: 'clear', clearValue: 1 },
+            stencilOp: cmd.stencilLoad === 'clear' ? { load: 'clear', clearValue: 0 } : { load: 'load' },
+          });
+          empty.setViewport(cmd.viewport[0], cmd.viewport[1], cmd.viewport[2], cmd.viewport[3]);
+          empty.end();
+        }
+        continue;
+      }
+      if (!logical || !target) throw new Error('[engine2d] 绘制命令之前没有 pass');
+      const first = drawOrdinal++ === 0;
+      const pass = commands.beginRenderPass({
+        label: `${logical.debugLabel} / frame-debug draw ${drawOrdinal}/${totals.get(logical)!}`,
+        target,
+        colorOps: [first
+          ? logical.load === 'clear' ? { load: 'clear', clearValue: logical.clearColor } : { load: 'load' }
+          : { load: 'load' }],
+        depthOp: first ? { load: 'clear', clearValue: 1 } : { load: 'load' },
+        stencilOp: first
+          ? logical.stencilLoad === 'clear' ? { load: 'clear', clearValue: 0 } : { load: 'load' }
+          : { load: 'load' },
+      });
+      pass.setViewport(logical.viewport[0], logical.viewport[1], logical.viewport[2], logical.viewport[3]);
+      pass.setPipeline(this.pipelines.get(cmd.pipeline));
+      pass.setBindings(cmd.bindings as RhiBindings);
+      for (const s of cmd.streams) pass.setVertexBuffer(s.name, s.buffer === 'batch' ? state.vertexBuffer! : s.buffer);
+      // 新原生 pass 的模板参考值自动归零；只给非零值显式重设。
+      if (cmd.pipeline.depthFormat && cmd.stencilRef !== 0) pass.setStencilReference(cmd.stencilRef);
+      if (cmd.index) {
+        pass.setIndexBuffer(cmd.index === 'batch' ? state.indexBuffer! : cmd.index);
+        pass.drawIndexed(cmd.count, cmd.instances, cmd.first);
+      } else {
+        pass.setIndexBuffer(null);
+        pass.draw(cmd.count, cmd.instances, cmd.first);
+      }
+      pass.end();
     }
   }
 
   /** 帧末:画布中间纹理翻回正向写进交换链(整屏覆盖写) */
   private presentCanvasFlip(commands: RhiCommandList, frame: RhiFrame, src: RhiTexture): void {
     const pass = commands.beginRenderPass({
-      label: 'canvas / 画布 / 翻转上屏',
+      label: commands.frameDebugCaptureActive
+        ? 'canvas / 画布 / 翻转上屏 / frame-debug draw 1/1'
+        : 'canvas / 画布 / 翻转上屏',
       target: frame.swapchain,
       colorOps: [{ load: 'clear', clearValue: [0, 0, 0, 0] }],
     });

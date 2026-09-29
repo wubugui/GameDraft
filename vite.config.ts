@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import { resolve, dirname } from 'path';
+import { createReadStream } from 'fs';
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises';
 // 场景索引生成器与打包脚本共用（同一份形状）；见 sceneIndexApi()
 import { SCENE_INDEX_REL, buildSceneIndex } from './scripts/lib/scene_index.mjs';
@@ -12,6 +13,7 @@ import { runtimeBreathingApi } from './src/dev/runtimeBreathingApiPlugin';
 import { runtimeTerrainApi } from './src/dev/runtimeTerrainApiPlugin';
 import { createCaptureController } from './tools/renderdoc_capture/server.mjs';
 import { createWebGpuCaptureController } from './tools/webgpu_capture/server.mjs';
+import { parseViewerByteRange } from './tools/webgpu_capture/viewer_range.mjs';
 
 /** DEV 专用：在第一份 WebGPU 对象创建前装入 Inspector，抓帧文件由服务端写到项目外。 */
 function webgpuCaptureApi(): Plugin {
@@ -63,6 +65,28 @@ function webgpuCaptureApi(): Plugin {
               file.endsWith('.json') ? 'application/json; charset=utf-8' :
               file.endsWith('.wgsl') ? 'text/plain; charset=utf-8' :
               file.endsWith('.bin') ? 'application/octet-stream' : 'text/html; charset=utf-8');
+            if (file.endsWith('.bin')) {
+              const size = (await stat(path)).size;
+              res.setHeader('Accept-Ranges', 'bytes');
+              const requested = req.headers.range;
+              const range = requested === undefined ? null : parseViewerByteRange(requested, size);
+              if (requested !== undefined && !range) {
+                res.statusCode = 416;
+                res.setHeader('Content-Range', `bytes */${size}`);
+                res.setHeader('Content-Length', '0');
+                res.end();
+                return;
+              }
+              if (range) {
+                res.statusCode = 206;
+                res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
+                res.setHeader('Content-Length', String(range.length));
+              } else res.setHeader('Content-Length', String(size));
+              const stream = createReadStream(path, range ? { start: range.start, end: range.end } : undefined);
+              stream.on('error', error => res.destroy(error));
+              stream.pipe(res);
+              return;
+            }
             res.end(await readFile(path));
           } catch (error) {
             res.statusCode = 404;

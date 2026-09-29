@@ -1,7 +1,8 @@
 import type { RhiDevice, RhiGpuSubmissionProfile, RhiRenderPassEndCapture } from '../rendering/rhi/RhiDevice';
 
-const MAX_RAW_BYTES = 256 * 1024 * 1024;
+const MAX_RAW_BYTES = 512 * 1024 * 1024;
 const MAX_PASS_RECORDS = 512;
+const MAX_PNG_RGBA_BYTES = 128 * 1024 * 1024;
 const MAP_TIMEOUT_MS = 30_000;
 const PROFILE_TIMEOUT_MS = 10_000;
 
@@ -14,7 +15,6 @@ export interface CapturedPassPixels {
   height: number;
   format: string;
   reason?: string;
-  pixels?: Uint8ClampedArray;
   /** 原始 GPU copyTextureToBuffer 字节；保留每行 256 字节对齐和纹理原生通道顺序。 */
   rawPixels?: Uint8Array;
   rawBytesPerRow?: number;
@@ -93,6 +93,15 @@ function visualize(raw: Uint8Array, width: number, height: number, bytesPerRow: 
   return rgba;
 }
 
+/** Decode one Pass for PNG only when it is about to be uploaded. Raw native bytes remain authoritative. */
+export function visualizeCapturedPassPixels(pass: CapturedPassPixels): Uint8ClampedArray {
+  if (!pass.rawPixels || !pass.rawBytesPerRow) throw new Error('Pass 没有可回读的原始像素');
+  if (pass.width * pass.height * 4 > MAX_PNG_RGBA_BYTES) {
+    throw new Error('Pass PNG 预览超过 128 MiB 解码上限，原始 RT 字节仍会导出');
+  }
+  return visualize(pass.rawPixels, pass.width, pass.height, pass.rawBytesPerRow, pass.format);
+}
+
 async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: number | undefined;
   try {
@@ -112,7 +121,8 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
   const device = rhi.native.device;
   const pending: PendingPass[] = [];
   let allocated = 0;
-  let omittedPasses = 0;
+  let omittedReadbacks = 0;
+  let omittedTimings = 0;
   let finished = false;
   let cancelled = false;
   let expectedFrame: number | null = null;
@@ -141,7 +151,7 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
     expectedLabel = event.submissionLabel;
     if (event.colorIndex === null) return;
     if (pending.length >= MAX_PASS_RECORDS || event.passOrdinal >= MAX_PASS_RECORDS) {
-      omittedPasses++;
+      omittedReadbacks++;
       return;
     }
     const format = event.format ?? '';
@@ -159,9 +169,10 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
     } else {
       const bytesPerRow = Math.ceil(event.width * bpp / 256) * 256;
       const size = bytesPerRow * event.height;
-      if (!Number.isSafeInteger(size) || size > device.limits.maxBufferSize ||
-          size > MAX_RAW_BYTES - allocated) {
-        info.reason = '本帧中间画面回读达到 256 MiB 上限';
+      if (!Number.isSafeInteger(size) || size > device.limits.maxBufferSize) {
+        info.reason = '此颜色输出超过 GPU 单缓冲回读上限';
+      } else if (size > MAX_RAW_BYTES - allocated) {
+        info.reason = '本帧中间画面回读达到 512 MiB 上限';
       } else {
         let buffer: GPUBuffer | undefined;
         try {
@@ -197,6 +208,7 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
     for (const record of pending) {
       record.buffer?.destroy();
       record.buffer = undefined;
+      record.info.rawPixels = undefined;
     }
     submittedResolve();
   };
@@ -214,11 +226,10 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
           if (!buffer || record.info.reason) continue;
           try {
             await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU 画面回读超时');
+            if (cancelled) continue;
             const raw = new Uint8Array(buffer.getMappedRange()).slice();
             record.info.rawPixels = raw;
             record.info.rawBytesPerRow = record.bytesPerRow;
-            record.info.pixels = visualize(raw, record.info.width, record.info.height,
-              record.bytesPerRow!, record.info.format);
           } catch (error) {
             record.info.reason = `GPU 画面回读失败：${String(error)}`;
           } finally {
@@ -234,7 +245,7 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
           gpuPasses = profile.passes.slice(0, MAX_PASS_RECORDS).map((pass, ordinal) => ({
             ordinal, kind: pass.kind, label: pass.label, durationMs: pass.gpuMs,
           }));
-          if (profile.passes.length > MAX_PASS_RECORDS) omittedPasses += profile.passes.length - MAX_PASS_RECORDS;
+          if (profile.passes.length > MAX_PASS_RECORDS) omittedTimings = profile.passes.length - MAX_PASS_RECORDS;
           gpuProfilerStatus = { state: 'enabled' };
         } catch (error) {
           gpuProfilerStatus = { state: 'unsupported', reason: String(error) };
@@ -249,8 +260,12 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
         record.buffer = undefined;
       }
     }
+    const omitted = [
+      omittedReadbacks ? `${omittedReadbacks} 个颜色输出超过 ${MAX_PASS_RECORDS} 条回读记录上限` : '',
+      omittedTimings ? `${omittedTimings} 个 GPU 计时结果超过 ${MAX_PASS_RECORDS} 条记录上限` : '',
+    ].filter(Boolean).join('；');
     return { passes: pending.map(record => record.info), gpuPasses, gpuProfilerStatus,
-      ...(omittedPasses ? { warning: `${omittedPasses} 个诊断记录超过 512 个 Pass 上限` } : {}) };
+      ...(omitted ? { warning: omitted } : {}) };
   };
   return { finish, cancel };
 }

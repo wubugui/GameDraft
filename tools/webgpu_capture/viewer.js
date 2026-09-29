@@ -35,6 +35,7 @@
     expandedPasses: new Set(),
     expandedCategories: new Set(),
     expandedBatches: new Set(),
+    expandedSteps: new Set(),
   };
   const el = id => document.getElementById(id);
   const list = value => Array.isArray(value) ? value : [];
@@ -82,6 +83,34 @@
     const label = pass && typeof pass.label === 'string' && pass.label ? pass.label : `${pass?.type || 'pass'} pass`;
     return `#${printable(pass?.index)} ${label}`;
   }
+  function treePassLabel(pass, withinEffect) {
+    const label = pass?.frameDebugStep?.logicalLabel || pass?.label || `${pass?.type || 'pass'} pass`;
+    if (passCategory(pass).key === 'unlabeled') return label;
+    const parts = label.split(' / ');
+    return parts.length >= 3 ? parts.slice(withinEffect ? 2 : 1).join(' / ') :
+      parts.length === 2 ? parts[1] : label;
+  }
+  function postDrawSnapshots(pass, event) {
+    if (!pass?.frameDebugStep || !event || eventKind(String(event.method || '')) !== 'draw' ||
+        Number(pass.frameDebugStep.drawCommandIndex) !== Number(event.commandIndex) ||
+        Number(event.passIndex) !== Number(pass.index)) return [];
+    return list(pass.snapshots).filter(snapshot => snapshot?.captureMoment === 'post-draw' &&
+      Number(snapshot.drawCommandIndex) === Number(event.commandIndex) &&
+      Number(snapshot.passIndex) === Number(pass.index) &&
+      Number(snapshot.frameOrdinal) === Number(pass.frameOrdinal));
+  }
+  function hasRawFloat(snapshot) {
+    const bytesPerPixel = snapshot?.rawFormat === 'rgba16float' ? 8 :
+      snapshot?.rawFormat === 'rgba32float' ? 16 : 0;
+    return !!assetUrl(snapshot?.rawFile) && !!bytesPerPixel &&
+      Number.isSafeInteger(snapshot.width) && snapshot.width > 0 &&
+      Number.isSafeInteger(snapshot.height) && snapshot.height > 0 &&
+      Number.isSafeInteger(snapshot.rawBytesPerRow) &&
+      snapshot.rawBytesPerRow >= snapshot.width * bytesPerPixel &&
+      Number.isSafeInteger(snapshot.rawByteLength) &&
+      snapshot.rawByteLength === snapshot.rawBytesPerRow * snapshot.height &&
+      snapshot.rawByteLength <= 512 * 1024 * 1024;
+  }
   const PASS_CATEGORIES = { canvas: '画布合成', offscreen: '离屏渲染', filter: '滤镜', mask: '遮罩' };
   function passCategory(pass) {
     if (pass?.type === 'compute') return { key: 'compute', label: 'Compute' };
@@ -120,7 +149,6 @@
     empty(el('resource-detail'), '暂无资源详情');
   }
 
-  const rawCache = new Map();
   const bufferCache = new Map();
   const surface = window.createGameDraftSurfaceInspector(el('surface-mount'), onPixelPicked);
   function setInspectorPage(page) {
@@ -169,64 +197,33 @@
       setPosition((vertical ? rect.left : rect.top) + delta);
     });
   }
-  function halfFloat(bits) {
-    const sign = bits & 0x8000 ? -1 : 1;
-    const exponent = (bits >> 10) & 31;
-    const mantissa = bits & 1023;
-    if (!exponent) return sign * 2 ** -14 * mantissa / 1024;
-    if (exponent === 31) return mantissa ? NaN : sign * Infinity;
-    return sign * 2 ** (exponent - 15) * (1 + mantissa / 1024);
-  }
-  async function readNativePixel(snapshot, x, y) {
-    const url = assetUrl(snapshot?.rawFile);
-    if (!url || !Number.isInteger(snapshot.rawBytesPerRow) || !Number.isInteger(snapshot.width) ||
-        !Number.isInteger(snapshot.height) || x >= snapshot.width || y >= snapshot.height) return null;
-    const format = snapshot.rawFormat || snapshot.format;
-    const bpp = /^(bgra8unorm|rgba8unorm|bgra8unorm-srgb|rgba8unorm-srgb)$/.test(format) ? 4 :
-      format === 'rgba16float' ? 8 : format === 'rgba32float' ? 16 : 0;
-    if (!bpp || snapshot.rawBytesPerRow < snapshot.width * bpp) return null;
-    let promise = rawCache.get(url);
-    if (!promise) {
-      promise = fetch(url).then(response => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.arrayBuffer();
-      });
-      rawCache.set(url, promise);
-      if (rawCache.size > 3) rawCache.delete(rawCache.keys().next().value);
-    }
-    const bytes = await promise;
-    const offset = y * snapshot.rawBytesPerRow + x * bpp;
-    if (offset + bpp > bytes.byteLength) return null;
-    const view = new DataView(bytes, offset, bpp);
-    let channels;
-    if (bpp === 4) {
-      channels = [view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)];
-      if (format.startsWith('bgra')) channels = [channels[2], channels[1], channels[0], channels[3]];
-      return { values: channels.map(value => value / 255), raw8: channels, format };
-    }
-    channels = Array.from({ length: 4 }, (_, index) => bpp === 8 ? halfFloat(view.getUint16(index * 2, true)) :
-      view.getFloat32(index * 4, true));
-    return { values: channels, format };
-  }
   function onPixelPicked(pixel) {
     const marker = `${pixel.x}, ${pixel.y}`;
-    const png = pixel.rgba8 ? `PNG RGBA8 ${pixel.rgba8.join(', ')}` : `PNG 像素不可读：${pixel.reason || '未知原因'}`;
+    const png = pixel.nativeRtBytes ? '原始 RT 可见区域' :
+      pixel.rgba8 ? `PNG RGBA8 ${pixel.rgba8.join(', ')}` :
+        `PNG 像素不可读：${pixel.reason || '未知原因'}`;
     const snapshot = state.activeSurface?.snapshot;
-    const at = state.activeSurface?.url;
+    const at = state.activeSurface?.signature;
     const display = el('pixel-value');
+    const formatNative = native => `${marker} · RT ${native.format} RGBA (${native.values.map(value =>
+      Number.isFinite(value) ? Number(value.toPrecision(7)) : String(value)).join(', ')})${native.raw8 ?
+      ` · bytes ${native.raw8.join(', ')}` : ''} · ${png}`;
+    if (pixel.nativeRtBytes) {
+      display.textContent = pixel.native ? formatNative(pixel.native) :
+        `${marker} · ${pixel.reason || '原始 RT 像素不可读'}`;
+      return;
+    }
     display.textContent = `${marker} · ${png} · 读取原始 RT…`;
     if (!snapshot?.rawFile) {
       display.textContent = `${marker} · ${png} · ${snapshot ? '此捕获无原始 RT sidecar' : '仅 PNG 显示值'}`;
       return;
     }
-    readNativePixel(snapshot, pixel.x, pixel.y).then(native => {
-      if (state.activeSurface?.url !== at || surface.getState().pixel?.x !== pixel.x ||
+    surface.readNativePixel(pixel.x, pixel.y).then(native => {
+      if (state.activeSurface?.signature !== at || surface.getState().pixel?.x !== pixel.x ||
           surface.getState().pixel?.y !== pixel.y) return;
-      display.textContent = native ? `${marker} · RT ${native.format} RGBA (${native.values.map(value =>
-        Number.isFinite(value) ? Number(value.toPrecision(7)) : String(value)).join(', ')})${native.raw8 ?
-        ` · bytes ${native.raw8.join(', ')}` : ''} · ${png}` : `${marker} · ${png} · 原始 RT 格式不可读`;
+      display.textContent = native ? formatNative(native) : `${marker} · ${png} · 原始 RT 格式不可读`;
     }, error => {
-      if (state.activeSurface?.url === at) display.textContent = `${marker} · ${png} · 原始 RT 读取失败：${error.message}`;
+      if (state.activeSurface?.signature === at) display.textContent = `${marker} · ${png} · 原始 RT 读取失败：${error.message}`;
     });
   }
 
@@ -310,8 +307,10 @@
     if (state.frameFilter !== null && (event?.frameOrdinal === null || event?.frameOrdinal === undefined ||
         Number(event.frameOrdinal) !== Number(state.frameFilter))) return false;
     if (!query) return true;
+    const pass = event?.passIndex == null ? null : passFor(event.passIndex);
     const head = [method, event?.commandIndex, event?.pipelineId, event?.pipelineLabel,
-      event?.passIndex, event?.frameOrdinal].map(printable).join(' ').toLocaleLowerCase();
+      event?.passIndex, event?.frameOrdinal, pass?.label,
+      pass?.frameDebugStep?.logicalLabel].map(printable).join(' ').toLocaleLowerCase();
     if (head.includes(query)) return true;
     return safeJson([event?.args, event?.bindGroups], 12000).toLocaleLowerCase().includes(query);
   }
@@ -371,8 +370,6 @@
         !passIds.has(String(state.events[index].passIndex)));
       const nodes = passes.filter(pass => (byPass.get(String(pass.index)) || []).length || !query)
         .map(pass => ({ type: 'pass', value: pass, order: Number(pass.beginCommand) || 0 }));
-      nodes.push(...ungrouped.map(index => ({ type: 'event', value: index,
-        order: Number(state.events[index]?.commandIndex) || index })));
       nodes.sort((a, b) => a.order - b.order);
       let categoryContainer = null;
       let categoryKey = null;
@@ -383,17 +380,10 @@
       let batchSubject = null;
       let batchCount = null;
       let batchLength = 0;
+      let stepContainer = null;
+      let stepGroupKey = null;
+      let stepOrdinal = 0;
       for (const node of nodes) {
-        if (node.type === 'event') {
-          categoryContainer = null;
-          categoryKey = null;
-          batchContainer = null;
-          batchSubject = null;
-          const group = make('div', undefined, 'tree-children');
-          appendEvents(group, [node.value]);
-          holder.appendChild(group);
-          continue;
-        }
         const pass = node.value;
         const category = passCategory(pass);
         if (category.key !== categoryKey) {
@@ -401,6 +391,8 @@
           categoryLength = 0;
           batchContainer = null;
           batchSubject = null;
+          stepContainer = null;
+          stepGroupKey = null;
           const categoryGroup = make('details', undefined, 'tree-category');
           categoryGroup.open = state.expandedCategories.has(category.key) || !!query;
           const summary = make('summary', undefined, 'tree-category-head');
@@ -420,12 +412,15 @@
         categoryCount.textContent = `${categoryLength} Pass`;
         let passContainer = categoryContainer;
         if (category.key === 'filter' || category.key === 'mask') {
-          const segments = typeof pass.label === 'string' ? pass.label.split(' / ') : [];
+          const segments = (pass.frameDebugStep?.logicalLabel || pass.label || '').split(' / ');
           const subject = (segments[1] || category.label).replace(/gaussian-blur-(horizontal|vertical)-kernel-\d+/g, 'gaussian-blur');
-          const begins = String(segments[2] || '').startsWith('input') || String(segments[2] || '').startsWith('raster');
+          const begins = (!pass.frameDebugStep || pass.frameDebugStep.drawOrdinal === 1) &&
+            (String(segments[2] || '').startsWith('input') || String(segments[2] || '').startsWith('raster'));
           if (!batchContainer || begins || subject !== batchSubject) {
             batchSubject = subject;
             batchLength = 0;
+            stepContainer = null;
+            stepGroupKey = null;
             const batchKey = `${ordinal ?? 'all'}:${pass.index}`;
             batchGroup = make('details', undefined, 'tree-batch');
             batchGroup.open = state.expandedBatches.has(batchKey) || !!query;
@@ -448,14 +443,43 @@
           if (Number(state.selectedPass) === Number(pass.index)) batchGroup.open = true;
           passContainer = batchContainer;
         }
+        const step = pass.frameDebugStep;
+        if (step?.totalDraws > 1) {
+          const logicalKey = `${ordinal ?? 'all'}:${category.key}:${step.logicalLabel}:${step.totalDraws}`;
+          if (!stepContainer || stepGroupKey !== logicalKey || step.drawOrdinal !== stepOrdinal + 1) {
+            stepGroupKey = logicalKey;
+            const expansionKey = `${ordinal ?? 'all'}:${pass.index}`;
+            const group = make('details', undefined, 'tree-batch tree-step-group');
+            group.open = state.expandedSteps.has(expansionKey) || !!query;
+            const summary = make('summary', undefined, 'tree-batch-head');
+            summary.appendChild(make('span', treePassLabel(pass, passContainer === batchContainer && !!batchContainer), 'tree-label'));
+            summary.appendChild(make('span', `${step.totalDraws} Draw · 逐步输出`, 'tree-meta'));
+            group.appendChild(summary);
+            stepContainer = make('div', undefined, 'tree-batch-children');
+            group.appendChild(stepContainer);
+            group.addEventListener('toggle', () => {
+              if (group.open) state.expandedSteps.add(expansionKey);
+              else state.expandedSteps.delete(expansionKey);
+            });
+            passContainer.appendChild(group);
+          }
+          stepOrdinal = step.drawOrdinal;
+          if (Number(state.selectedPass) === Number(pass.index)) stepContainer.parentElement.open = true;
+          passContainer = stepContainer;
+        } else {
+          stepContainer = null;
+          stepGroupKey = null;
+          stepOrdinal = 0;
+        }
         const key = String(pass.index);
         const group = make('details', undefined, 'tree-pass');
         group.open = state.expandedPasses.has(key);
         const head = make('summary', undefined, 'tree-pass-head');
-        head.appendChild(make('span', describePass(pass), 'tree-label'));
+        head.appendChild(make('span', step?.totalDraws > 1 ? `Draw ${step.drawOrdinal}/${step.totalDraws}` :
+          treePassLabel(pass, passContainer === batchContainer && !!batchContainer), 'tree-label'));
         const gpuMs = pass.gpuTiming?.source === 'webgpu-timestamp-query' && finite(pass.gpuTiming.durationMs) ?
           compactGpuMs(pass.gpuTiming.durationMs) : '';
-        head.appendChild(make('span', `${pass.type === 'compute' ? pass.dispatches ?? 0 : pass.draws ?? 0} ${pass.type === 'compute' ? 'dispatch' : 'draw'}${gpuMs ? ` · ${gpuMs}` : ''}`, 'tree-meta'));
+        head.appendChild(make('span', `#${pass.index} · ${pass.type === 'compute' ? pass.dispatches ?? 0 : pass.draws ?? 0} ${pass.type === 'compute' ? 'dispatch' : 'draw'}${gpuMs ? ` · ${gpuMs}` : ''}`, 'tree-meta'));
         head.classList.toggle('active', state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index));
         head.addEventListener('click', event => {
           event.preventDefault();
@@ -472,6 +496,18 @@
         appendEvents(children, byPass.get(key) || []);
         group.appendChild(children);
         passContainer.appendChild(group);
+      }
+      if (ungrouped.length) {
+        const loose = make('details', undefined, 'tree-category');
+        loose.open = !!query;
+        const summary = make('summary', undefined, 'tree-category-head');
+        summary.appendChild(make('span', '帧级命令 · 不属于 Pass', 'tree-label'));
+        summary.appendChild(make('span', `${ungrouped.length} 条`, 'tree-meta'));
+        loose.appendChild(summary);
+        const children = make('div', undefined, 'tree-category-children');
+        appendEvents(children, ungrouped);
+        loose.appendChild(children);
+        holder.appendChild(loose);
       }
     }
     holder.scrollTop = previousScroll;
@@ -609,12 +645,18 @@
       addDetailRow(grid, '帧 / 命令', `${printable(pass.frameOrdinal)} / ${printable(pass.beginCommand)}–${printable(pass.endCommand)}`);
       addDetailRow(grid, 'Draw / Dispatch', `${pass.draws ?? 0} / ${pass.dispatches ?? 0}`);
       addDetailRow(grid, 'GPU 时间', pass.gpuTiming?.source === 'webgpu-timestamp-query' && finite(pass.gpuTiming.durationMs) ?
-        `${pass.gpuTiming.durationMs.toFixed(6)} ms` : '未测量');
+        `${pass.gpuTiming.durationMs.toFixed(6)} ms${pass.frameDebugStep ? '（单 Draw 物理 Pass，含 Pass 开销）' : ''}` : '未测量');
       addDetailRow(grid, 'Pass 输出', list(pass.snapshots).length ? `${pass.snapshots.length} 张 GPU 结束读回` :
         `无读回${pass.outputUnavailableReason ? `：${pass.outputUnavailableReason}` : ''}`);
     }
     if (event) {
       addDetailRow(grid, '选中命令', `#${printable(event.commandIndex)} ${printable(event.method)}`);
+      if (eventKind(String(event.method || '')) === 'draw') {
+        const output = postDrawSnapshots(pass, event);
+        addDetailRow(grid, '逐 Draw 输出', output.length ?
+          `${output.length} 张真实 GPU 读回 · ${pass.frameDebugStep.drawOrdinal}/${pass.frameDebugStep.totalDraws}` :
+          '未捕获；若有 Pass 结束图，它不能代表此 Draw 后画面');
+      }
       addDetailRow(grid, '调用参数', list(event.args).join(', ') || '—');
       addDetailRow(grid, '管线', event.pipelineId == null ? '未绑定' : `#${event.pipelineId} ${event.pipelineLabel || ''}`);
     }
@@ -873,14 +915,14 @@
     const seen = new Set();
     const writersFor = id => list(state.report?.passes).filter(item =>
       list(item.targets).some(target => String(target.outputTextureId ?? target.textureId) === String(id)));
-    const add = (id, role, label, snapshot) => {
+    const add = (id, role, label, snapshot, evidenceOverride) => {
       if (id == null) return;
       const texture = resourceArray('textures').find(item => String(item.id) === String(id));
       if (!texture) return;
       const key = `${role}:${id}`;
       if (seen.has(key)) return;
       seen.add(key);
-      let evidence = snapshot ? 'this-pass' : 'capture-final';
+      let evidence = evidenceOverride || (snapshot ? 'this-pass' : 'capture-final');
       let file = snapshot ? snapshot.imageFile : texture.imageFile;
       if (role === '绑定输入' && pass) {
         const writers = writersFor(id);
@@ -908,8 +950,9 @@
     for (const target of list(pass?.targets || event?.targets)) {
       const outputId = target.outputTextureId ?? target.textureId;
       const snapshot = list(pass?.snapshots).find(item => String(item.textureId) === String(outputId));
-      add(outputId, snapshot ? 'Pass 结束读回' : '渲染目标',
-        target.outputTextureLabel || target.textureLabel, snapshot);
+      const postDraw = drawSelected && postDrawSnapshots(pass, event).includes(snapshot);
+      add(outputId, postDraw ? 'Draw 后输出' : snapshot ? 'Pass 结束读回' : '渲染目标',
+        target.outputTextureLabel || target.textureLabel, snapshot, postDraw ? 'post-draw' : undefined);
     }
     return { options, pass, drawSelected };
   }
@@ -933,6 +976,7 @@
       select.style.width = '100%';
       for (const item of options) {
         const evidence = item.evidence === 'upstream-pass' ? `上游 Pass #${item.snapshot.passIndex}` :
+          item.evidence === 'post-draw' ? `Draw #${item.snapshot.drawCommandIndex} 后` :
           item.evidence === 'this-pass' ? '本 Pass 结束' : item.evidence === 'later-write' ? '最终状态已变化' :
           item.file ? '捕获最终' : '无图像';
         const option = make('option', `${item.role} · #${item.id} ${item.label} [${evidence}]`);
@@ -949,11 +993,16 @@
       holder.appendChild(select);
     }
     const selected = options.find(item => item.key === state.selectedTextureKey);
-    el('texture-note').textContent = !selected ? '选择 Pass 或 Draw 后检查绑定纹理。' : !selected.file ?
-      `#${selected.id} ${selected.texture.format || ''} · ${selected.texture.width} × ${selected.texture.height}。${selected.evidence === 'later-write' ? '该纹理随后被写入，最终图不能代表此刻输入。' : selected.evidence === 'upstream-unavailable' ? '最近一次上游写入无读回图，不能还原此刻输入。' : `没有图像：${selected.texture.imageReason || '捕获未提供纹理字节'}。`}` : selected.evidence === 'upstream-pass' ?
-      `当前 Pass 输入来自上游 Pass #${selected.snapshot.passIndex} 的结束 GPU 读回（命令 #${selected.snapshot.afterCommandIndex}）。` : selected.snapshot ?
-      `真实 Pass 结束读回：第 ${selected.snapshot.frameOrdinal} 帧 Pass #${selected.snapshot.passIndex}（${selected.snapshot.label || ''}），结束命令 #${selected.snapshot.afterCommandIndex}；来源 ${selected.snapshot.source}；格式 ${selected.snapshot.format || selected.texture.format || '未知'}。` :
-      `Inspector 纹理 mip0 最终状态快照，非所选 Draw / Pass 当时的输入。${selected.texture.imagePreviewTransform || ''}`;
+    el('texture-note').textContent = !selected ? '选择 Pass 或 Draw 后检查绑定纹理。' :
+      !selected.file && !selected.snapshot?.rawFile ?
+        `#${selected.id} ${selected.texture.format || ''} · ${selected.texture.width} × ${selected.texture.height}。${selected.evidence === 'later-write' ? '该纹理随后被写入，最终图不能代表此刻输入。' : selected.evidence === 'upstream-unavailable' ? '最近一次上游写入无读回图，不能还原此刻输入。' : `没有图像：${selected.texture.imageReason || '捕获未提供纹理字节'}。`}` :
+        (selected.evidence === 'upstream-pass' ?
+          `当前 Pass 输入来自上游 Pass #${selected.snapshot.passIndex} 的结束 GPU 读回（命令 #${selected.snapshot.afterCommandIndex}）。` : selected.snapshot ?
+            `${selected.evidence === 'post-draw' ? `真实 Draw #${selected.snapshot.drawCommandIndex} 后` : '真实 Pass 结束'}读回：第 ${selected.snapshot.frameOrdinal} 帧 Pass #${selected.snapshot.passIndex}（${selected.snapshot.label || ''}），结束命令 #${selected.snapshot.afterCommandIndex}；来源 ${selected.snapshot.source}；格式 ${selected.snapshot.format || selected.texture.format || '未知'}。` :
+            `Inspector 纹理 mip0 最终状态快照，非所选 Draw / Pass 当时的输入。${selected.texture.imagePreviewTransform || ''}`) +
+          (!selected.file && selected.snapshot?.rawFile ? 'PNG 未生成；画布尝试按可见区域读取原始 RT。' : '');
+    if (hasRawFloat(selected?.snapshot)) el('texture-note').textContent +=
+      'HDR 预览从原始 float 值先应用曝光、再色调映射；PNG 仅供导出。';
   }
 
   function renderBufferInspector() {
@@ -1166,18 +1215,26 @@
   function renderFrame() {
     const frame = state.selectedFrame === null ? null : selectedFrame();
     const pass = state.selectedPass === null ? null : passFor(state.selectedPass);
-    const snapshot = list(pass?.snapshots)[0];
+    const event = state.focusScope === 'draw' || pass?.frameDebugStep ? state.events[state.selectedEvent] : null;
+    const drawSnapshots = postDrawSnapshots(pass, event);
+    const postDraw = drawSnapshots.find(item => item.imageFile) || drawSnapshots[0] || null;
+    const snapshot = postDraw || list(pass?.snapshots).find(item => item.imageFile) || list(pass?.snapshots)[0];
     const file = snapshot ? snapshot.imageFile : frame ? frame.imageFile : state.report?.frameImage;
     state.frameChoice = { file, snapshot, frame, pass,
-      label: snapshot ? describePass(pass) : frame ? `第 ${frame.frameOrdinal} 帧画布` : '捕获保存时画布',
+      label: postDraw ? `Draw ${pass.frameDebugStep.drawOrdinal}/${pass.frameDebugStep.totalDraws} · 命令 #${event.commandIndex} 后输出` :
+        snapshot ? describePass(pass) : frame ? `第 ${frame.frameOrdinal} 帧画布` : '捕获保存时画布',
       format: snapshot?.format || frame?.format || null,
-      source: snapshot ? 'Pass 结束 GPU 读回' : frame ? frame.imageSource || '帧画布' : '捕获最终画布',
+      source: postDraw ? '单 Draw 物理 Pass 结束 GPU 读回' :
+        snapshot ? 'Pass 结束 GPU 读回' : frame ? frame.imageSource || '帧画布' : '捕获最终画布',
       width: snapshot?.width || frame?.width || null,
       height: snapshot?.height || frame?.height || null };
-    el('frame-note').textContent = snapshot ?
-      `这张图是 Pass #${snapshot.passIndex}（${snapshot.label || ''}）结束后真实 GPU 读回（命令 #${snapshot.afterCommandIndex}，来源 ${snapshot.source}）。逐 Draw 输出未捕获。` :
-      frame ? `帧边界按 queue.submit 推断。${frame.imageSource ? `图像来源：${frame.imageSource}。` : ''}${pass ? `该 Pass 没有独立读回${pass.outputUnavailableReason ? `：${pass.outputUnavailableReason}` : ''}；这里显示整帧画布。` : ''}逐 Draw 输出未捕获。` :
-        `这里显示捕获保存时的最终画布状态；多帧时不代表每一帧。${pass?.outputUnavailableReason ? `该 Pass 输出未读回：${pass.outputUnavailableReason}。` : ''}逐 Draw 输出未捕获。`;
+    el('frame-note').textContent = postDraw ?
+      `真实 Draw #${event.commandIndex} 后输出：第 ${snapshot.frameOrdinal} 帧、逻辑 Pass「${pass.frameDebugStep.logicalLabel}」的第 ${pass.frameDebugStep.drawOrdinal}/${pass.frameDebugStep.totalDraws} 个 Draw；物理 Pass #${snapshot.passIndex} 结束读回，来源 ${snapshot.source}。${snapshot.imageFile ? '' : snapshot.rawFile ? 'PNG 缺失；画布尝试按可见区域读取原始 RT。' : 'PNG 和原始 RT 均缺失。'}` :
+      snapshot ? `这是 Pass #${snapshot.passIndex} 结束后的真实 GPU 读回（命令 #${snapshot.afterCommandIndex}）。${event && eventKind(String(event.method || '')) === 'draw' ? '该 Pass 未逐 Draw 拆分，不能将此图认作选中 Draw 后的画面。' : ''}` :
+        frame ? `帧边界按 queue.submit 推断。${frame.imageSource ? `图像来源：${frame.imageSource}。` : ''}${pass ? `该 Pass 没有独立读回${pass.outputUnavailableReason ? `：${pass.outputUnavailableReason}` : ''}；这里显示整帧画布。` : ''}` :
+          `这里显示捕获保存时的最终画布状态；多帧时不代表每一帧。${pass?.outputUnavailableReason ? `该 Pass 输出未读回：${pass.outputUnavailableReason}。` : ''}`;
+    if (hasRawFloat(snapshot)) el('frame-note').textContent +=
+      'HDR 预览从原始 float 值先应用曝光、再色调映射；PNG 仅供导出。';
   }
 
   function renderPreviewMode() {
@@ -1197,6 +1254,7 @@
       label: `${selected.role} · ${selected.label}`,
       format: selected.snapshot?.format || selected.texture?.format,
       source: selected.evidence === 'upstream-pass' ? `上游 Pass #${selected.snapshot.passIndex} 结束 GPU 读回` :
+        selected.evidence === 'post-draw' ? `Draw #${selected.snapshot.drawCommandIndex} 后 GPU 读回` :
         selected.snapshot ? '本 Pass 结束 GPU 读回' : '捕获最终状态快照',
       width: selected.snapshot?.width || selected.texture?.width,
       height: selected.snapshot?.height || selected.texture?.height,
@@ -1204,21 +1262,45 @@
     } : state.frameChoice;
     const url = assetUrl(choice?.file);
     const save = el('texture-save');
+    const saveRaw = el('texture-save-raw');
     save.hidden = !url;
+    const rawUrl = assetUrl(choice?.snapshot?.rawFile);
+    saveRaw.hidden = !rawUrl;
+    if (rawUrl) {
+      saveRaw.href = rawUrl;
+      saveRaw.download = `pass-${choice.snapshot.passIndex}-texture-${choice.snapshot.textureId}-${choice.snapshot.rawFormat || 'raw'}.bin`;
+    }
     if (url) {
       save.href = url;
-      save.download = texture ? `texture-${selected.id}${selected.snapshot ? '-pass-end' : '-capture-final'}.png` :
-        choice.snapshot ? `pass-${choice.snapshot.passIndex}-output.png` : 'frame-output.png';
+      save.download = texture ? `texture-${selected.id}${selected.evidence === 'post-draw' ? `-draw-${selected.snapshot.drawCommandIndex}` :
+        selected.snapshot ? '-pass-end' : '-capture-final'}.png` :
+        choice.snapshot?.captureMoment === 'post-draw' ? `draw-${choice.snapshot.drawCommandIndex}-output.png` :
+          choice.snapshot ? `pass-${choice.snapshot.passIndex}-output.png` : 'frame-output.png';
     }
-    const signature = `${url || ''}|${choice?.label || ''}|${choice?.source || ''}`;
+    const signature = `${url || ''}|${rawUrl || ''}|${choice?.label || ''}|${choice?.source || ''}`;
     if (state.activeSurface?.signature !== signature || state.activeSurface?.snapshot !== choice?.snapshot) {
-      state.activeSurface = { url, signature, snapshot: choice?.snapshot || null };
-      el('texture-zoom').value = 'fit';
+      const priorZoom = surface.getState();
+      state.activeSurface = { url: url || rawUrl, signature, snapshot: choice?.snapshot || null };
       el('pixel-value').textContent = '点击画面查看坐标和 RGBA 值；Ctrl+滚轮缩放，滚轮平移，拖动平移。';
-      surface.setSource(url ? { url, label: choice.label, format: choice.format,
+      surface.setSource(url || rawUrl ? { url, rawUrl, label: choice.label, format: choice.format,
+        rawFormat: choice?.snapshot?.rawFormat, rawBytesPerRow: choice?.snapshot?.rawBytesPerRow,
+        rawByteLength: choice?.snapshot?.rawByteLength,
         source: choice.source, width: choice.width, height: choice.height } : null).then(result => {
-        if (state.activeSurface?.url === url) el('frame-size').textContent = result.imageWidth ?
-          `${result.imageWidth} × ${result.imageHeight} · ${choice.format || 'PNG'}` : '';
+        if (state.activeSurface?.signature !== signature) return;
+        el('frame-size').textContent = result.imageWidth ?
+          `${result.imageWidth} × ${result.imageHeight} · ${!url && rawUrl ? choice?.snapshot?.rawFormat || '原始 RT' : choice.format || 'PNG'}${hasRawFloat(choice?.snapshot) && result.nativeRtBytes ? ' · 原始 HDR' : ''}` : '';
+        if (result.imageWidth && priorZoom.zoomMode !== 'fit') {
+          const zoom = surface.setZoom(priorZoom.zoomPercent);
+          const select = el('texture-zoom');
+          const match = [...select.options].find(option => Number(option.value) === Math.round(zoom.zoomPercent));
+          if (match) select.value = match.value;
+          else {
+            let custom = select.querySelector('option[value="custom"]');
+            if (!custom) { custom = make('option'); custom.value = 'custom'; select.appendChild(custom); }
+            custom.textContent = `${Math.round(zoom.zoomPercent)}% 自定义`;
+            select.value = 'custom';
+          }
+        } else if (result.imageWidth) el('texture-zoom').value = 'fit';
       });
     }
   }
@@ -1246,8 +1328,10 @@
     clear(bars);
     clear(rows);
     const note = el('gpu-note');
-    if (note) note.textContent = frame ? `第 ${frame.frameOrdinal} 帧 · Pass 实测时间戳；未测项留空。没有逐 Draw GPU 时间和历史曲线。` :
-      '捕获中的 Pass 实测时间戳；未测项留空。没有逐 Draw GPU 时间和历史曲线。';
+    const hasDrawSteps = measured.some(pass => pass.frameDebugStep);
+    if (note) note.textContent = `${frame ? `第 ${frame.frameOrdinal} 帧` : '捕获'} · GPU Pass 实测时间戳；未测项留空。` +
+      (hasDrawSteps ? '逐 Draw 阶段计的是单 Draw 物理 Pass（含 Pass 开销），没有独立的 Draw 指令计时。' :
+        '没有逐 Draw GPU 时间和历史曲线。');
     if (!measured.length) {
       bars.appendChild(make('p', '此帧没有可用的 GPU Pass 时间戳。', 'empty'));
     }

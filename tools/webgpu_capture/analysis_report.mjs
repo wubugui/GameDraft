@@ -2,6 +2,7 @@
 // Texture images are attached separately by analysis_png.mjs.
 const DRAW = new Set(['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect']);
 const DISPATCH = new Set(['dispatchWorkgroups', 'dispatchWorkgroupsIndirect']);
+const FRAME_DEBUG_STEP = /^(.*?) \/ frame-debug draw ([1-9]\d*)\/([1-9]\d*)$/;
 
 function objectList(metadata) {
   return Array.isArray(metadata.objects) ? metadata.objects :
@@ -295,6 +296,34 @@ export function buildCaptureDetails(metadata, passes) {
     // Only the last frame may inherit a texture snapshot without a recorded
     // getCurrentTexture command; earlier frame images would be invented.
     if (frameTextureId !== null && frames.length) frames.at(-1).frameTextureId = frameTextureId;
+  }
+  // The renderer splits a logical render pass into one physical pass per Draw
+  // only during a requested frame-debug capture. A matching name alone does
+  // not prove that a Pass output is the selected Draw's output: require the
+  // complete ordered run and exactly one real Draw in each physical pass.
+  for (let start = 0; start < passes.length;) {
+    const match = typeof passes[start].label === 'string' ? passes[start].label.match(FRAME_DEBUG_STEP) : null;
+    if (!match || !match[1] || Number(match[2]) !== 1) { start++; continue; }
+    const total = Number(match[3]);
+    if (!Number.isSafeInteger(total) || total < 1 || total > passes.length - start) { start++; continue; }
+    const run = passes.slice(start, start + total);
+    const valid = run.every((pass, offset) => {
+      const step = typeof pass.label === 'string' ? pass.label.match(FRAME_DEBUG_STEP) : null;
+      const drawCommandIndex = pass.drawCommandIndexes?.[0];
+      return step && step[1] === match[1] && Number(step[2]) === offset + 1 &&
+        Number(step[3]) === total && pass.type === 'render' && pass.draws === 1 &&
+        pass.drawCommandIndexes?.length === 1 && Number.isSafeInteger(drawCommandIndex) &&
+        pass.frameOrdinal === run[0].frameOrdinal &&
+        events[drawCommandIndex]?.passIndex === pass.index && DRAW.has(events[drawCommandIndex]?.method);
+    });
+    if (!valid) { start++; continue; }
+    for (const [offset, pass] of run.entries()) {
+      pass.frameDebugStep = {
+        logicalLabel: match[1], drawOrdinal: offset + 1, totalDraws: total,
+        drawCommandIndex: pass.drawCommandIndexes[0],
+      };
+    }
+    start += total;
   }
   return { events, resources, frames, frameTextureId };
 }

@@ -1,6 +1,7 @@
 /** WebGPU Inspector's local capture, driven by the dev server for both F2 and agents. */
 import type { RhiDevice } from '../rendering/rhi/RhiDevice';
-import { captureFrameDiagnostics, type CapturedFrameDiagnostics } from './webgpuFrameDiagnostics';
+import { captureFrameDiagnostics, visualizeCapturedPassPixels,
+  type CapturedFrameDiagnostics } from './webgpuFrameDiagnostics';
 
 const API = '/__gamedraft-api/webgpu-capture';
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -466,50 +467,60 @@ export class WebGpuCaptureClient {
     const passes: Array<{ passOrdinal: number; label: string; targetLabel: string;
       colorIndex: number; width: number; height: number; format: string; reason?: string;
       rawBytesPerRow?: number; rawByteLength?: number; rawReason?: string }> = [];
-    for (const item of diagnostics.passes) {
+    let pngBytes = this.frameImages?.jobId === job.id ? this.frameImages.bytes : 0;
+    try {
+      for (const item of diagnostics.passes) {
+        if (!this.isCurrentJob(job)) return;
+        let reason = item.reason?.slice(0, 500);
+        if (item.rawPixels && item.rawBytesPerRow) {
+          try {
+            const pixels = visualizeCapturedPassPixels(item);
+            const png = await this.encodeFrameImage({ pixels,
+              width: item.width, height: item.height }, false);
+            if (png.size > MAX_FRAME_IMAGE_BYTES) throw new Error('PNG 超过 32 MiB');
+            if (pngBytes + png.size > MAX_FRAME_IMAGES_BYTES) {
+              throw new Error('本帧 PNG 总量达到 512 MiB 上限');
+            }
+            await api('PUT', {
+              action: 'pass-image', jobId: job.id, targetBootId: this.bootId,
+              frameIndex: '1', passOrdinal: String(item.passOrdinal), colorIndex: String(item.colorIndex),
+            }, png);
+            pngBytes += png.size;
+          } catch (error) { reason = `Pass PNG 导出失败：${String(error)}`.slice(0, 500); }
+        } else if (!reason) reason = 'Pass 没有可读回的颜色输出';
+        let rawReason: string | undefined;
+        let rawByteLength: number | undefined;
+        if (item.rawPixels && item.rawBytesPerRow) {
+          try {
+            const raw = new Blob([item.rawPixels as BlobPart], { type: 'application/octet-stream' });
+            item.rawPixels = undefined;
+            await api('PUT', {
+              action: 'pass-raw', jobId: job.id, targetBootId: this.bootId,
+              frameIndex: '1', passOrdinal: String(item.passOrdinal), colorIndex: String(item.colorIndex),
+              format: item.format, width: String(item.width), height: String(item.height),
+              bytesPerRow: String(item.rawBytesPerRow),
+            }, raw);
+            rawByteLength = raw.size;
+          } catch (error) { rawReason = `Pass 原始像素导出失败：${String(error)}`.slice(0, 500); }
+          finally { item.rawPixels = undefined; }
+        } else rawReason = item.reason?.slice(0, 500) || 'Pass 没有可回读的原始像素';
+        passes.push({
+          passOrdinal: item.passOrdinal, label: item.label, targetLabel: item.targetLabel,
+          colorIndex: item.colorIndex, width: item.width, height: item.height,
+          format: item.format, ...(reason ? { reason } : {}),
+          ...(rawByteLength === undefined ? { rawReason } : {
+            rawBytesPerRow: item.rawBytesPerRow, rawByteLength,
+          }),
+        });
+      }
       if (!this.isCurrentJob(job)) return;
-      let reason = item.reason;
-      if (item.pixels) {
-        try {
-          const png = await this.encodeFrameImage({ pixels: item.pixels,
-            width: item.width, height: item.height }, false);
-          item.pixels = undefined;
-          if (png.size > MAX_FRAME_IMAGE_BYTES) throw new Error('PNG 超过 32 MiB');
-          await api('PUT', {
-            action: 'pass-image', jobId: job.id, targetBootId: this.bootId,
-            frameIndex: '1', passOrdinal: String(item.passOrdinal), colorIndex: String(item.colorIndex),
-          }, png);
-        } catch (error) { reason = `Pass PNG 导出失败：${String(error)}`; }
-      } else if (!reason) reason = 'Pass 没有可读回的颜色输出';
-      let rawReason: string | undefined;
-      let rawByteLength: number | undefined;
-      if (item.rawPixels && item.rawBytesPerRow) {
-        try {
-          const raw = new Blob([item.rawPixels as BlobPart], { type: 'application/octet-stream' });
-          await api('PUT', {
-            action: 'pass-raw', jobId: job.id, targetBootId: this.bootId,
-            frameIndex: '1', passOrdinal: String(item.passOrdinal), colorIndex: String(item.colorIndex),
-            format: item.format, width: String(item.width), height: String(item.height),
-            bytesPerRow: String(item.rawBytesPerRow),
-          }, raw);
-          rawByteLength = raw.size;
-        } catch (error) { rawReason = `Pass 原始像素导出失败：${String(error)}`.slice(0, 500); }
-        item.rawPixels = undefined;
-      } else rawReason = item.reason || 'Pass 没有可回读的原始像素';
-      passes.push({
-        passOrdinal: item.passOrdinal, label: item.label, targetLabel: item.targetLabel,
-        colorIndex: item.colorIndex, width: item.width, height: item.height,
-        format: item.format, ...(reason ? { reason } : {}),
-        ...(rawByteLength === undefined ? { rawReason } : {
-          rawBytesPerRow: item.rawBytesPerRow, rawByteLength,
-        }),
-      });
+      await api('POST', {}, { action: 'diagnostics', jobId: job.id, targetBootId: this.bootId,
+        passes, gpuPasses: diagnostics.gpuPasses,
+        gpuProfilerStatus: diagnostics.gpuProfilerStatus,
+        ...(diagnostics.warning ? { warning: diagnostics.warning } : {}) });
+    } finally {
+      for (const item of diagnostics.passes) item.rawPixels = undefined;
     }
-    if (!this.isCurrentJob(job)) return;
-    await api('POST', {}, { action: 'diagnostics', jobId: job.id, targetBootId: this.bootId,
-      passes, gpuPasses: diagnostics.gpuPasses,
-      gpuProfilerStatus: diagnostics.gpuProfilerStatus,
-      ...(diagnostics.warning ? { warning: diagnostics.warning } : {}) });
   }
 
   private leaveActiveJob(): void {

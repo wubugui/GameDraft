@@ -1,13 +1,14 @@
 // The standalone Electron dev package serves the same capture controller as
 // Vite. Game requests use gamedraft://; local agents use a loopback HTTP port.
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { createReadStream, existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createWebGpuCaptureController } from './server.mjs';
+import { parseViewerByteRange } from './viewer_range.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CAPTURE = '/__gamedraft-api/webgpu-capture';
@@ -60,6 +61,23 @@ async function handleRequest(request, controller) {
         file.endsWith('.json') ? 'application/json; charset=utf-8' :
         file.endsWith('.wgsl') ? 'text/plain; charset=utf-8' :
         file.endsWith('.bin') ? 'application/octet-stream' : 'text/html; charset=utf-8';
+      if (file.endsWith('.bin')) {
+        const size = (await stat(physical)).size;
+        const requested = request.headers.get('range');
+        const range = requested === null ? null : parseViewerByteRange(requested, size);
+        if (requested !== null && !range) return new Response(null, {
+          status: 416,
+          headers: { ...NO_STORE, 'Content-Type': contentType,
+            'Accept-Ranges': 'bytes', 'Content-Range': `bytes */${size}`, 'Content-Length': '0' },
+        });
+        return new Response(Readable.toWeb(createReadStream(physical,
+          range ? { start: range.start, end: range.end } : undefined)), {
+          status: range ? 206 : 200,
+          headers: { ...NO_STORE, 'Content-Type': contentType,
+            'Accept-Ranges': 'bytes', 'Content-Length': String(range?.length ?? size),
+            ...(range ? { 'Content-Range': `bytes ${range.start}-${range.end}/${size}` } : {}) },
+        });
+      }
       return new Response(await readFile(physical), {
         headers: { ...NO_STORE, 'Content-Type': contentType },
       });

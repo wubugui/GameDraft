@@ -197,7 +197,7 @@ function devCaptureFiles(stageApp) {
   const source = join(ROOT, 'tools', 'webgpu_capture');
   const target = join(stageApp, 'webgpu_capture');
   for (const name of [
-    'electron_broker.mjs', 'server.mjs', 'cli.mjs', 'analyze.mjs',
+    'electron_broker.mjs', 'server.mjs', 'viewer_range.mjs', 'cli.mjs', 'analyze.mjs',
     'analysis_report.mjs', 'analysis_png.mjs', 'analysis_sidecars.mjs',
     'viewer.html', 'viewer.js', 'viewer_surface.js', 'viewer_surface.css',
   ]) copyTree(join(source, name), join(target, name));

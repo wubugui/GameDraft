@@ -146,6 +146,8 @@ export interface RhiComputePassEncoder {
 
 export interface RhiCommandList {
   readonly label: string;
+  /** 仅本次提交命中一次性抓帧钩子时为 true；录制方可据此暴露逐 Draw 的中间结果。 */
+  readonly frameDebugCaptureActive?: boolean;
   beginRenderPass(desc: RhiRenderPassDesc): RhiRenderPassEncoder;
   beginComputePass(label: string): RhiComputePassEncoder;
   copyBufferToBuffer(src: RhiBuffer, srcOffset: number, dst: RhiBuffer, dstOffset: number, size: number): void;

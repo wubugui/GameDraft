@@ -1,5 +1,5 @@
-// Reusable, plain-browser PNG surface inspector for the frame viewer.
-// Pixel values are decoded PNG display RGBA bytes, never native GPU RT bytes.
+// Reusable PNG/native-RT surface inspector for the frame viewer.
+// A raw-only viewport fetches bounded byte ranges and never decodes a full RT image.
 (function () {
   'use strict';
 
@@ -7,12 +7,109 @@
   const MAX_CACHE_ITEMS = 8;
   const MAX_CACHE_RAW_BYTES = 96 * 1024 * 1024;
   const MAX_SAMPLE_BYTES = 64 * 1024 * 1024;
+  const MAX_RAW_RANGE_BYTES = 8 * 1024 * 1024;
+  const MAX_RAW_CACHE_BYTES = 64 * 1024 * 1024;
+  const MAX_RAW_FILE_BYTES = 512 * 1024 * 1024;
+  const MAX_VIEWPORT_PIXELS = 8 * 1024 * 1024;
+  const RAW_BYTES_PER_PIXEL = new Map([
+    ['r8unorm', 1], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4],
+    ['bgra8unorm', 4], ['bgra8unorm-srgb', 4],
+    ['rgba16float', 8], ['rgba32float', 16],
+  ]);
+  const FLOAT_RT_FORMATS = new Set(['rgba16float', 'rgba32float']);
   const MIN_SCALE = 0.001;
   const MAX_SCALE = 4096;
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const finite = value => typeof value === 'number' && Number.isFinite(value);
   const byte = value => clamp(Math.round(value), 0, 255);
+  function exposedColorByte(value, factor, floatRt) {
+    const exposed = value * factor;
+    if (!floatRt) return byte(exposed * 255);
+    // Match the capture PNG's Reinhard curve, but apply EV before mapping HDR values.
+    const positive = Number.isFinite(exposed) ? Math.max(0, exposed) : 0;
+    return byte(255 * positive / (1 + positive));
+  }
+
+  function halfFloat(bits) {
+    const sign = bits & 0x8000 ? -1 : 1;
+    const exponent = (bits >> 10) & 31;
+    const mantissa = bits & 1023;
+    if (!exponent) return sign * 2 ** -14 * mantissa / 1024;
+    if (exponent === 31) return mantissa ? NaN : sign * Infinity;
+    return sign * 2 ** (exponent - 15) * (1 + mantissa / 1024);
+  }
+
+  function makeRawReader(next) {
+    const format = next.rawFormat || next.format;
+    const bpp = RAW_BYTES_PER_PIXEL.get(format);
+    if (!bpp) throw new Error(`无法直接预览原始 RT 格式：${format || '未知'}`);
+    const width = next.width;
+    const height = next.height;
+    const stride = next.rawBytesPerRow;
+    const length = next.rawByteLength;
+    if (!Number.isSafeInteger(width) || width <= 0 || !Number.isSafeInteger(height) || height <= 0 ||
+        !Number.isSafeInteger(stride) || stride < width * bpp ||
+        !Number.isSafeInteger(length) || length !== stride * height || length > MAX_RAW_FILE_BYTES) {
+      throw new Error('原始 RT 尺寸或行跨度无效');
+    }
+    return { url: next.rawUrl, format, bpp, width, height, stride, length,
+      rows: new Map(), cachedBytes: 0 };
+  }
+
+  function decodeRawPixel(reader, view, offset, out) {
+    if (reader.format === 'r8unorm') {
+      out[0] = view.getUint8(offset) / 255;
+      out[1] = out[2] = 0;
+      out[3] = 1;
+    } else if (reader.bpp === 4) {
+      const bgra = reader.format.startsWith('bgra');
+      out[0] = view.getUint8(offset + (bgra ? 2 : 0)) / 255;
+      out[1] = view.getUint8(offset + 1) / 255;
+      out[2] = view.getUint8(offset + (bgra ? 0 : 2)) / 255;
+      out[3] = view.getUint8(offset + 3) / 255;
+    } else {
+      for (let i = 0; i < 4; i++) out[i] = reader.bpp === 8 ?
+        halfFloat(view.getUint16(offset + i * 2, true)) : view.getFloat32(offset + i * 4, true);
+    }
+    return out;
+  }
+
+  async function fetchRawRange(reader, start, end, signal) {
+    const length = end - start + 1;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 ||
+        end >= reader.length || length <= 0 || length > MAX_RAW_RANGE_BYTES) {
+      throw new RangeError('原始 RT 读取范围无效');
+    }
+    const response = await fetch(reader.url, { headers: { Range: `bytes=${start}-${end}` }, signal });
+    const range = response.headers.get('content-range');
+    if (response.status !== 206 || range !== `bytes ${start}-${end}/${reader.length}`) {
+      void response.body?.cancel().catch(() => {});
+      throw new Error(response.status === 200 ? '抓帧文件服务不支持按范围读取原始 RT' :
+        `原始 RT 范围读取失败：HTTP ${response.status}`);
+    }
+    const declared = Number(response.headers.get('content-length'));
+    if (declared !== length) {
+      void response.body?.cancel().catch(() => {});
+      throw new Error('原始 RT 范围长度不匹配');
+    }
+    const result = new Uint8Array(length);
+    const stream = response.body?.getReader();
+    if (!stream) throw new Error('原始 RT 响应没有字节流');
+    let received = 0;
+    while (true) {
+      const { done, value } = await stream.read();
+      if (done) break;
+      if (received + value.byteLength > length) {
+        await stream.cancel();
+        throw new Error('原始 RT 响应超出声明范围');
+      }
+      result.set(value, received);
+      received += value.byteLength;
+    }
+    if (received !== length) throw new Error('原始 RT 响应不完整');
+    return result;
+  }
 
   function createGameDraftSurfaceInspector(mount, onPixel) {
     if (!(mount instanceof HTMLElement)) throw new TypeError('surface inspector mount must be an HTMLElement');
@@ -48,6 +145,9 @@
 
     const cache = new Map();
     let asset = null;
+    let rawReader = null;
+    let rawRenderAbort = null;
+    let rawRenderToken = 0;
     let source = null;
     let channel = 'rgba';
     let exposureEV = 0;
@@ -89,7 +189,8 @@
         imageWidth: asset?.width ?? 0, imageHeight: asset?.height ?? 0,
         pixelError: asset?.readError ?? null,
         pixel: pixel ? { ...pixel } : null,
-        byteSource: 'decoded-png-display', nativeRtBytes: false,
+        byteSource: asset?.raw ? 'native-raw-rt' : 'decoded-png-display',
+        nativeRtBytes: !!asset?.raw,
       };
     }
 
@@ -102,7 +203,10 @@
       if (!asset) { hud.textContent = ''; return; }
       const zoom = `${Math.round(scale * 100)}%`;
       const name = source?.label || '纹理';
-      const position = pixel ? ` · (${pixel.x}, ${pixel.y}) ${pixel.rgba8 ? pixel.rgba8.join(', ') : '像素不可读'}` : '';
+      const values = pixel?.native?.values?.map(value => Number.isFinite(value) ?
+        Number(value.toPrecision(6)) : String(value));
+      const position = pixel ? ` · (${pixel.x}, ${pixel.y}) ${values ?
+        `RT ${values.join(', ')}` : pixel.rgba8 ? pixel.rgba8.join(', ') : pixel.reason || '读取中'}` : '';
       hud.textContent = `${name} · ${asset.width}×${asset.height} · ${zoom}${position}`;
     }
 
@@ -175,6 +279,10 @@
     }
 
     function displayImage(item) {
+      if (FLOAT_RT_FORMATS.has(source?.rawFormat || source?.format) && !rawReader) {
+        displayMessage('原始 float RT 不可用；PNG 只供固定色调映射预览，曝光调整不可用。');
+        return item.image;
+      }
       if (channel === 'rgba' && exposureEV === 0) return item.image;
       const key = `${channel}:${exposureEV}`;
       if (item.processed?.key === key) return item.processed.canvas;
@@ -230,10 +338,150 @@
       ctx.restore();
     }
 
+    function cachedRawRow(reader, y, minX, maxX) {
+      const row = reader.rows.get(y);
+      if (!row || row.minX > minX || row.maxX < maxX) return null;
+      reader.rows.delete(y);
+      reader.rows.set(y, row);
+      return row;
+    }
+
+    function rememberRawRow(reader, y, minX, maxX, bytes) {
+      if (bytes.byteLength > MAX_RAW_CACHE_BYTES) return;
+      const previous = reader.rows.get(y);
+      if (previous) reader.cachedBytes -= previous.bytes.byteLength;
+      reader.rows.delete(y);
+      reader.rows.set(y, { minX, maxX, bytes });
+      reader.cachedBytes += bytes.byteLength;
+      while (reader.cachedBytes > MAX_RAW_CACHE_BYTES) {
+        const oldest = reader.rows.keys().next().value;
+        reader.cachedBytes -= reader.rows.get(oldest).bytes.byteLength;
+        reader.rows.delete(oldest);
+      }
+    }
+
+    function paintNative(reader, values, dest, index, factor) {
+      const floatRt = FLOAT_RT_FORMATS.has(reader.format);
+      if (channel === 'rgba') {
+        dest[index] = exposedColorByte(values[0], factor, floatRt);
+        dest[index + 1] = exposedColorByte(values[1], factor, floatRt);
+        dest[index + 2] = exposedColorByte(values[2], factor, floatRt);
+        dest[index + 3] = byte(values[3] * 255);
+      } else {
+        const component = channel === 'red' ? 0 : channel === 'green' ? 1 : channel === 'blue' ? 2 : 3;
+        const shade = component === 3 ? byte(values[3] * 255 * factor) :
+          exposedColorByte(values[component], factor, floatRt);
+        dest[index] = dest[index + 1] = dest[index + 2] = shade;
+        dest[index + 3] = 255;
+      }
+    }
+
+    async function renderRawViewport(reader, width, height, signal) {
+      const imageData = ctx.createImageData(width, height);
+      const sourceXs = new Int32Array(width);
+      let minX = reader.width;
+      let maxX = -1;
+      for (let x = 0; x < width; x++) {
+        const sourceX = Math.floor((((x + 0.5) / width) * viewWidth - offsetX) / scale);
+        sourceXs[x] = sourceX >= 0 && sourceX < reader.width ? sourceX : -1;
+        if (sourceXs[x] >= 0) {
+          minX = Math.min(minX, sourceX);
+          maxX = Math.max(maxX, sourceX);
+        }
+      }
+      if (maxX < minX) return imageData;
+
+      const rows = new Map();
+      for (let y = 0; y < height; y++) {
+        const sourceY = Math.floor((((y + 0.5) / height) * viewHeight - offsetY) / scale);
+        if (sourceY < 0 || sourceY >= reader.height) continue;
+        if (!rows.has(sourceY)) rows.set(sourceY, []);
+        rows.get(sourceY).push(y);
+      }
+      const sourceRows = [...rows.keys()].sort((a, b) => a - b);
+      const rowBytes = (maxX - minX + 1) * reader.bpp;
+      if (rowBytes > MAX_RAW_RANGE_BYTES) throw new Error('单行可见 RT 字节超过 8 MiB 范围读取上限');
+      const runs = [];
+      for (const y of sourceRows) {
+        const last = runs[runs.length - 1];
+        if (last && y === last.endY + 1 && (y - last.startY) * reader.stride + rowBytes <= MAX_RAW_RANGE_BYTES) {
+          last.endY = y;
+        } else runs.push({ startY: y, endY: y });
+      }
+
+      const values = [0, 0, 0, 0];
+      const factor = 2 ** exposureEV;
+      let runIndex = 0;
+      const workers = Array.from({ length: Math.min(8, runs.length) }, async () => {
+        while (runIndex < runs.length) {
+          const run = runs[runIndex++];
+          if (signal.aborted) return;
+          let rawRows = [];
+          for (let y = run.startY; y <= run.endY; y++) {
+            rawRows.push(cachedRawRow(reader, y, minX, maxX));
+          }
+          if (rawRows.some(row => !row)) {
+            const start = run.startY * reader.stride + minX * reader.bpp;
+            const end = run.endY * reader.stride + (maxX + 1) * reader.bpp - 1;
+            const bytes = await fetchRawRange(reader, start, end, signal);
+            if (signal.aborted) return;
+            rawRows = [];
+            for (let y = run.startY; y <= run.endY; y++) {
+              const byteOffset = (y - run.startY) * reader.stride;
+              const rowBytesCopy = bytes.slice(byteOffset, byteOffset + rowBytes);
+              const row = { minX, maxX, bytes: rowBytesCopy };
+              rememberRawRow(reader, y, minX, maxX, rowBytesCopy);
+              rawRows.push(row);
+            }
+          }
+          for (let y = run.startY; y <= run.endY; y++) {
+            const row = rawRows[y - run.startY];
+            const view = new DataView(row.bytes.buffer, row.bytes.byteOffset, row.bytes.byteLength);
+            const painted = new Uint8ClampedArray(width * 4);
+            for (let x = 0; x < width; x++) {
+              if (sourceXs[x] < 0) continue;
+              decodeRawPixel(reader, view, (sourceXs[x] - row.minX) * reader.bpp, values);
+              paintNative(reader, values, painted, x * 4, factor);
+            }
+            for (const destY of rows.get(y)) imageData.data.set(painted, destY * width * 4);
+          }
+        }
+      });
+      await Promise.all(workers);
+      return imageData;
+    }
+
+    function renderRaw(reader, dpr) {
+      rawRenderAbort?.abort();
+      const controller = new AbortController();
+      rawRenderAbort = controller;
+      const token = ++rawRenderToken;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      loading = true;
+      displayMessage('正在读取原始 RT 的可见区域…');
+      renderRawViewport(reader, canvas.width, canvas.height, controller.signal).then(imageData => {
+        if (destroyed || token !== rawRenderToken || controller.signal.aborted) return;
+        ctx.putImageData(imageData, 0, 0);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        drawPixelGrid();
+        loading = false;
+        error = null;
+        displayMessage('');
+      }, cause => {
+        if (destroyed || token !== rawRenderToken || controller.signal.aborted) return;
+        loading = false;
+        error = cause?.message || String(cause);
+        ctx.clearRect(0, 0, viewWidth, viewHeight);
+        displayMessage(error);
+      });
+    }
+
     function render() {
       raf = 0;
       if (destroyed) return;
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const dpr = Math.min(Math.max(1, window.devicePixelRatio || 1),
+        Math.sqrt(MAX_VIEWPORT_PIXELS / Math.max(1, viewWidth * viewHeight)));
       const pixelWidth = Math.max(1, Math.round(viewWidth * dpr));
       const pixelHeight = Math.max(1, Math.round(viewHeight * dpr));
       if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
@@ -241,6 +489,7 @@
         canvas.height = pixelHeight;
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (asset?.raw) { renderRaw(rawReader, dpr); return; }
       ctx.clearRect(0, 0, viewWidth, viewHeight);
       if (!asset) return;
       const image = displayImage(asset);
@@ -300,7 +549,14 @@
     async function setSource(next) {
       if (destroyed) return state();
       const token = ++loadToken;
-      if (!next || typeof next.url !== 'string' || !next.url) {
+      rawRenderAbort?.abort();
+      rawRenderToken++;
+      rawReader = null;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const imageUrl = typeof next?.url === 'string' && next.url ? next.url : null;
+      const rawUrl = typeof next?.rawUrl === 'string' && next.rawUrl ? next.rawUrl : null;
+      if (!imageUrl && !rawUrl) {
         source = null;
         asset = null;
         pixel = null;
@@ -312,22 +568,43 @@
         return state();
       }
       source = {
-        url: next.url,
+        url: imageUrl,
+        rawUrl,
         label: typeof next.label === 'string' ? next.label : '',
         format: typeof next.format === 'string' ? next.format : null,
+        rawFormat: typeof next.rawFormat === 'string' ? next.rawFormat : null,
+        rawBytesPerRow: next.rawBytesPerRow,
+        rawByteLength: next.rawByteLength,
         source: typeof next.source === 'string' ? next.source : null,
         declaredWidth: finite(next.width) ? next.width : null,
         declaredHeight: finite(next.height) ? next.height : null,
       };
+      let rawError = null;
+      if (rawUrl) {
+        try { rawReader = makeRawReader(next); }
+        catch (cause) { rawError = cause?.message || String(cause); }
+      }
       asset = null;
       pixel = null;
       loading = true;
       error = null;
-      displayMessage('正在加载图像…');
+      displayMessage(imageUrl ? '正在加载图像…' : '正在准备原始 RT…');
       updateHud();
       schedule();
+      if (!imageUrl || (rawReader && FLOAT_RT_FORMATS.has(rawReader.format))) {
+        if (!rawReader) {
+          loading = false;
+          error = rawError || '没有可查看的原始 RT';
+          displayMessage(error);
+          return state();
+        }
+        asset = { raw: true, width: rawReader.width, height: rawReader.height };
+        if (imageUrl) displayMessage('正在从原始 float RT 绘制 HDR 预览…');
+        fit();
+        return state();
+      }
       try {
-        const loaded = await loadImage(next.url);
+        const loaded = await loadImage(imageUrl);
         if (destroyed || token !== loadToken) return state();
         asset = loaded;
         loading = false;
@@ -338,11 +615,35 @@
         if (destroyed || token !== loadToken) return state();
         loading = false;
         error = cause?.message || String(cause);
-        cache.delete(next.url);
+        cache.delete(imageUrl);
+        if (rawReader) {
+          asset = { raw: true, width: rawReader.width, height: rawReader.height };
+          error = null;
+          loading = true;
+          displayMessage('PNG 无法读取，正在显示原始 RT…');
+          fit();
+          return state();
+        }
         displayMessage(error);
         schedule();
         return state();
       }
+    }
+
+    async function readNativePixel(x, y) {
+      const reader = rawReader;
+      if (!reader || !Number.isInteger(x) || !Number.isInteger(y) ||
+          x < 0 || y < 0 || x >= reader.width || y >= reader.height) return null;
+      const cached = cachedRawRow(reader, y, x, x);
+      const bytes = cached?.bytes || await fetchRawRange(reader,
+        y * reader.stride + x * reader.bpp,
+        y * reader.stride + (x + 1) * reader.bpp - 1);
+      const offset = cached ? (x - cached.minX) * reader.bpp : 0;
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const values = [...decodeRawPixel(reader, view, offset, [0, 0, 0, 0])];
+      const raw8 = reader.bpp === 1 ? [bytes[offset]] : reader.bpp === 4 ?
+        values.map(value => byte(value * 255)) : null;
+      return { values, raw8, format: reader.format };
     }
 
     function setChannel(value) {
@@ -397,6 +698,29 @@
       const x = Math.floor((point.x - offsetX) / scale);
       const y = Math.floor((point.y - offsetY) / scale);
       if (x < 0 || y < 0 || x >= asset.width || y >= asset.height) return;
+      if (asset.raw) {
+        const token = loadToken;
+        pixel = { x, y, rgba8: null, displayRgba8: null, available: false,
+          reason: '正在读取原始 RT 像素', byteSource: 'native-raw-rt', nativeRtBytes: true,
+          format: rawReader?.format || null, source: source?.source ?? null,
+          label: source?.label ?? '', url: source?.rawUrl ?? null,
+          width: asset.width, height: asset.height, channel, exposureEV };
+        updateHud();
+        readNativePixel(x, y).then(native => {
+          if (destroyed || token !== loadToken || pixel?.x !== x || pixel?.y !== y) return;
+          pixel.native = native;
+          pixel.available = !!native;
+          pixel.reason = native ? null : '原始 RT 格式不可读';
+          updateHud();
+          if (onPixel) onPixel({ ...pixel });
+        }, cause => {
+          if (destroyed || token !== loadToken || pixel?.x !== x || pixel?.y !== y) return;
+          pixel.reason = `原始 RT 像素读取失败：${cause?.message || String(cause)}`;
+          updateHud();
+          if (onPixel) onPixel({ ...pixel });
+        });
+        return;
+      }
       const rgba = readPixels(asset);
       const index = (y * asset.width + x) * 4;
       const original = rgba ? Array.from(rgba.subarray(index, index + 4)) : null;
@@ -494,6 +818,8 @@
       if (destroyed) return;
       destroyed = true;
       loadToken++;
+      rawRenderAbort?.abort();
+      rawReader?.rows.clear();
       if (raf) cancelAnimationFrame(raf);
       if (observer) observer.disconnect();
       else window.removeEventListener('resize', measure);
@@ -514,7 +840,8 @@
       }
     }
 
-    return { setSource, setChannel, setExposure, setZoom, reset, getState: state, destroy };
+    return { setSource, setChannel, setExposure, setZoom, reset, readNativePixel,
+      getState: state, destroy };
   }
 
   window.createGameDraftSurfaceInspector = createGameDraftSurfaceInspector;

@@ -8,7 +8,7 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const MAX_SIDECAR_BYTES = 128 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
-const MAX_PASS_RAW_BYTES = 256 * 1024 * 1024;
+const MAX_PASS_RAW_BYTES = 512 * 1024 * 1024;
 const RAW_FORMAT_BYTES = new Map([
   ['r8unorm', 1], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4],
   ['bgra8unorm', 4], ['bgra8unorm-srgb', 4], ['rgba16float', 8], ['rgba32float', 16],
@@ -232,6 +232,15 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
         }
       } else snapshot.rawReason = item.rawReason || 'Pass raw pixels were not saved';
       if (!snapshot.imageFile && !snapshot.rawFile) continue;
+      // A pass-end readback is a post-Draw image only for a verified one-Draw
+      // physical step pass. Ordinary multi-Draw passes retain pass-end scope.
+      if (pass.frameDebugStep && pass.frameDebugStep.drawCommandIndex > pass.beginCommand &&
+          pass.frameDebugStep.drawCommandIndex < pass.endCommand) {
+        snapshot.captureMoment = 'post-draw';
+        snapshot.drawCommandIndex = pass.frameDebugStep.drawCommandIndex;
+        snapshot.drawOrdinal = pass.frameDebugStep.drawOrdinal;
+        snapshot.totalDraws = pass.frameDebugStep.totalDraws;
+      } else snapshot.captureMoment = 'pass-end';
       (pass.snapshots ??= []).push(snapshot);
       passSnapshots.push(snapshot);
     } catch (error) {
