@@ -315,6 +315,7 @@ export class DebugTools {
       bootId: this.deps.getCaptureBootId(),
       sceneId: () => this.deps.getCurrentSceneId(),
       isGpuReady: () => this.deps.renderer.rhi !== null,
+      getRhi: () => this.deps.renderer.rhi,
       setFrameHook: (hook) => this.deps.renderer.app.setFrameCaptureHook(hook),
       readFramePixels: () => this.deps.renderer.app.renderer.readCanvasPixels(),
       onChange: () => this.paintWebGpuViews(),
@@ -2124,6 +2125,10 @@ export class DebugTools {
       completed: '已完成', failed: '失败', stopped: '已停止',
     };
     const lines = [`本窗口：${current?.ready ? '可抓帧' : `尚不可抓帧（${current?.reason || '等待 Inspector、WebGPU 和 RHI 就绪'}）`}`];
+    const gpuTimer = this.deps.renderer.rhi?.gpuProfiler?.status();
+    lines.push(`GPU Pass 计时：${!gpuTimer || gpuTimer.state === 'unsupported'
+      ? `不可用（${gpuTimer?.state === 'unsupported' ? gpuTimer.reason : 'RHI 未就绪'}）`
+      : gpuTimer.state === 'enabled' ? '已启用' : '可用，单帧抓取时启用'}`);
     if (job) {
       lines.push(`任务：${job.id} · ${names[job.state]}`);
       const progress = job.state === 'capturing' || job.state === 'uploading'
@@ -2203,7 +2208,7 @@ export class DebugTools {
     const view = { root, status, input, single, burst, stop, view: viewButton };
     this.webgpuViews.add(view);
     this.paintWebGpuView(view);
-    return { text: '按需抓当前游戏的 WebGPU 帧；完成后可查看画面、绘制事件和资源。', extra: root };
+    return { text: '单帧抓逐 Pass 输出、绑定纹理、Buffer 和 GPU 耗时；连续帧抓画布与命令。', extra: root };
   }
 
   private setupDebugPanelSections(): void {
@@ -2307,7 +2312,7 @@ export class DebugTools {
     debugPanelUI.addSection(LIGHTING_DEBUG_SECTION_ID, () => this.lightingSection!.build());
 
     // WebGPU 捕获由 F2 和 agent 共用同一开发服任务队列。
-    debugPanelUI.addSection('WebGPU 抓帧（.wgpuc）', () => this.buildWebGpuCaptureSection());
+    debugPanelUI.addSection('WebGPU 帧调试器 / GPU Profiler（.wgpuc）', () => this.buildWebGpuCaptureSection());
     debugPanelUI.addSection('RenderDoc 抓帧', () =>
       '原生 .rdc 抓帧尚未接入。上方 WebGPU 抓帧仅在点击后抓取指定帧数，可查看画面、绘制事件和资源；已有 .rdc 可由 agent 离线分析。');
 

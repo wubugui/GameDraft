@@ -183,6 +183,63 @@ export interface RhiFrameStats {
   skippedDraws: number;
 }
 
+/** WebGPU timestamp-query 的真实 GPU 耗时；数值单位是毫秒。 */
+export interface RhiGpuPassTiming {
+  kind: 'render' | 'compute';
+  label: string;
+  gpuMs: number;
+}
+
+/** 一次 runFrame 或 submit 的异步 GPU 查询结果。totalGpuMs 是各 pass 耗时之和。 */
+export interface RhiGpuSubmissionProfile {
+  kind: 'frame' | 'submit';
+  frame: number | null;
+  label: string;
+  passes: readonly RhiGpuPassTiming[];
+  totalGpuMs: number;
+}
+
+export type RhiGpuProfilerStatus =
+  | { state: 'unsupported'; reason: string }
+  | { state: 'disabled' | 'enabled' };
+
+/** 可选诊断能力；没有 WebGPU timestamp-query 的设备不得用 CPU 计时冒充。 */
+export interface RhiGpuProfiler {
+  status(): RhiGpuProfilerStatus;
+  setEnabled(enabled: boolean): void;
+  onResult(listener: (profile: RhiGpuSubmissionProfile) => void): () => void;
+}
+
+/** 一次性抓帧诊断钩子，在 render pass.end() 后同一命令编码器内调用。 */
+export interface RhiRenderPassEndCapture {
+  readonly encoder: GPUCommandEncoder;
+  readonly texture: GPUTexture | null;
+  readonly copyable: boolean;
+  readonly reason?: string;
+  readonly submissionKind: 'frame' | 'submit';
+  readonly frame: number | null;
+  readonly submissionLabel: string;
+  readonly label: string;
+  /** 本次提交内的 render pass 顺序，从 0 开始。 */
+  readonly passOrdinal: number;
+  readonly targetLabel: string;
+  /** 多颜色附件分别回调；无颜色附件时为 null。 */
+  readonly colorIndex: number | null;
+  readonly width: number;
+  readonly height: number;
+  readonly format: RhiColorFormat | null;
+}
+
+export interface RhiFrameDebugCapture {
+  /** 只拦截下一次匹配的命令提交，回调同步执行；onSubmitted 后可以异步 map 回读缓冲。 */
+  captureNextSubmission(hooks: {
+    kind?: 'frame' | 'submit' | 'any';
+    onPassEnd: (pass: RhiRenderPassEndCapture) => void;
+    onSubmitted?: () => void;
+    onAborted?: () => void;
+  }): () => void;
+}
+
 export interface RhiTextureReadback {
   width: number;
   height: number;
@@ -233,6 +290,10 @@ export interface RhiDevice {
   readonly lost: Promise<string>;
   /** 最近一帧的统计 */
   readonly lastFrameStats: RhiFrameStats;
+  /** 后端可选的真实 GPU pass 计时；空后端可不提供。 */
+  readonly gpuProfiler?: RhiGpuProfiler;
+  /** WebGPU 专用的一次性诊断抓帧能力；空后端可不提供。 */
+  readonly frameDebugCapture?: RhiFrameDebugCapture;
   /** 迁移期互通口,见 `RhiNativeInterop` */
   readonly native: RhiNativeInterop;
 

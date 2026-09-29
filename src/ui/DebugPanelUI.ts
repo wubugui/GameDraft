@@ -780,7 +780,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     // 默认折叠：工具页 + 游戏画面常驻卡（常驻卡默认折叠只留标题条，不挡画面；
     // 用户手动展开的状态仍记在 sectionOpenState 里，本次会话内的重建不会丢）
     const defaultOpen = (ctx !== 'tools' && ctx !== 'screen') ||
-      (ctx === 'tools' && (id === 'WebGPU 抓帧（.wgpuc）' || id === 'RenderDoc 抓帧'));
+      (ctx === 'tools' && (id === 'WebGPU 帧调试器 / GPU Profiler（.wgpuc）' || id === 'RenderDoc 抓帧'));
     details.open = this.sectionOpenState.get(stateKey) ?? defaultOpen;
     details.addEventListener('toggle', () => {
       this.sectionOpenState.set(stateKey, details.open);

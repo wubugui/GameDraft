@@ -79,7 +79,23 @@
     .tab { padding: 5px 8px; border-radius: 6px; font-size: 12px; }
     .tab.active { border-color: var(--accent); background: #18364b; }
     .resource-preview img { display: block; max-width: 100%; max-height: 310px; margin: 9px auto; border: 1px solid var(--line); background: repeating-conic-gradient(#252d39 0% 25%, #384250 0% 50%) 50% / 20px 20px; }
-    .resource-jumps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .resource-jumps, .texture-choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .texture-choices .active { border-color: var(--accent); background: #18364b; }
+    .inspector-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 10px 0; }
+    .inspector-controls label { color: var(--muted); font-size: 12px; }
+    .inspector-controls select { max-width: none; }
+    .inspector-controls input[type=range] { width: 110px; padding: 0; }
+    .inspector-stage { min-height: 155px; max-height: 48vh; overflow: auto; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 7px; background: repeating-conic-gradient(#252d39 0% 25%, #384250 0% 50%) 50% / 20px 20px; }
+    .inspector-stage img { display: block; max-width: none; image-rendering: pixelated; }
+    .inspector-stage img.fit { max-width: 100%; max-height: 48vh; width: auto !important; height: auto; image-rendering: auto; }
+    .inspect-note { margin-top: 8px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .buffer-select { width: 100%; max-width: none; }
+    .buffer-table-wrap { max-height: 300px; overflow: auto; margin-top: 8px; border: 1px solid var(--line); border-radius: 7px; }
+    .buffer-table { border-collapse: collapse; width: 100%; font: 12px/1.4 Consolas, monospace; }
+    .buffer-table th, .buffer-table td { padding: 4px 7px; border-bottom: 1px solid #253344; text-align: left; white-space: nowrap; }
+    .buffer-table th { position: sticky; top: 0; background: #1b2636; }
+    .hex-dump { max-height: 200px; }
+    .filter-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
     .error-item { margin: 0 0 7px; padding: 9px; border-left: 3px solid var(--danger); border-radius: 4px; background: #30212b; overflow-wrap: anywhere; }
     .inline-link { border: 0; padding: 0; background: none; color: var(--accent); text-decoration: underline; }
     .empty { color: var(--muted); padding: 12px; }
@@ -99,10 +115,16 @@
   </style>
 </head>
 <body>
+  <svg class="filter-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <filter id="texture-red" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="1 0 0 0 0  1 0 0 0 0  1 0 0 0 0  0 0 0 0 1"/></filter>
+    <filter id="texture-green" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 1 0 0 0  0 1 0 0 0  0 1 0 0 0  0 0 0 0 1"/></filter>
+    <filter id="texture-blue" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 1 0 0  0 0 1 0 0  0 0 1 0 0  0 0 0 0 1"/></filter>
+    <filter id="texture-alpha" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 1 0  0 0 0 1 0  0 0 0 1 0  0 0 0 0 1"/></filter>
+  </svg>
   <header class="topbar">
     <div class="eyebrow">GameDraft / WebGPU Capture</div>
     <h1>帧分析</h1>
-    <p class="muted small">查看 WebGPU Inspector 捕获的命令、资源和导出的最终帧。</p>
+    <p class="muted small">按帧 → Pass → Draw 检查绑定、纹理和缓冲；图像来源在每处单独标明。</p>
     <div id="top-meta" class="top-meta" aria-live="polite"></div>
   </header>
   <div id="fatal" role="alert"></div>
@@ -136,8 +158,33 @@
       </section>
     </div>
     <div class="column">
+      <section class="panel" aria-labelledby="texture-title">
+        <div class="panel-head"><h2 id="texture-title">所选 Pass / Draw 的纹理</h2><span id="texture-count" class="muted small"></span></div>
+        <div class="panel-body">
+          <p id="texture-scope" class="muted small"></p>
+          <div id="texture-choices" class="texture-choices" aria-label="绑定纹理及目标"></div>
+          <div class="inspector-controls">
+            <label for="texture-channel">通道</label><select id="texture-channel"><option value="rgba">RGBA</option><option value="red">R</option><option value="green">G</option><option value="blue">B</option><option value="alpha">A</option></select>
+            <label for="texture-exposure">预览曝光</label><input id="texture-exposure" type="range" min="-4" max="4" step="0.25" value="0"><span id="texture-exposure-value" class="small">0 EV</span>
+            <label for="texture-zoom">缩放</label><select id="texture-zoom"><option value="fit">适合</option><option value="25">25%</option><option value="50">50%</option><option value="100">100%</option><option value="200">200%</option><option value="400">400%</option></select>
+            <a id="texture-save" class="plain-button" download hidden>保存原始预览 PNG</a>
+          </div>
+          <div id="texture-stage" class="inspector-stage"><img id="texture-image" alt="选中纹理的捕获预览" hidden><p id="texture-empty" class="empty">选择 Pass 或 Draw 查看纹理。</p></div>
+          <p id="texture-note" class="inspect-note"></p>
+        </div>
+      </section>
+      <section class="panel" aria-labelledby="buffer-title">
+        <div class="panel-head"><h2 id="buffer-title">Draw 当时的缓冲 Payload</h2><span id="buffer-count" class="muted small"></span></div>
+        <div class="panel-body">
+          <select id="buffer-select" class="buffer-select" aria-label="选择缓冲 Payload"></select>
+          <p id="buffer-note" class="inspect-note"></p>
+          <a id="buffer-save" class="plain-button" download hidden>保存完整二进制</a>
+          <pre id="buffer-hex" class="hex-dump" hidden></pre>
+          <div id="buffer-table-wrap" class="buffer-table-wrap" hidden><table id="buffer-table" class="buffer-table"><thead><tr><th>偏移</th><th>4 字节 Hex</th><th>uint32 LE</th><th>float32 LE</th></tr></thead><tbody id="buffer-rows"></tbody></table></div>
+        </div>
+      </section>
       <section class="panel" aria-labelledby="frame-title">
-        <div class="panel-head"><h2 id="frame-title">帧图像</h2><span id="frame-size" class="muted small"></span></div>
+        <div class="panel-head"><h2 id="frame-title">画布 / Pass 实际读回</h2><span id="frame-size" class="muted small"></span></div>
         <div class="frame-box"><img id="frame-image" alt="捕获导出的最终帧" hidden><p id="frame-empty" class="empty">正在读取图像…</p></div>
         <p id="frame-note" class="frame-note">帧边界按 queue.submit 推断；只显示有可导出图像的帧。选中事件显示记录状态，不会生成该 draw 单独的输出图。</p>
       </section>
@@ -146,7 +193,7 @@
         <div id="event-detail" class="panel-body"></div>
       </section>
       <section class="panel" aria-labelledby="errors-title">
-        <div class="panel-head"><h2 id="errors-title">验证错误</h2><span id="error-count" class="muted small"></span></div>
+        <div class="panel-head"><h2 id="errors-title">验证错误 / Sidecar</h2><span id="error-count" class="muted small"></span></div>
         <div id="errors" class="panel-body"></div>
       </section>
     </div>

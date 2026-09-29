@@ -60,7 +60,8 @@ function webgpuCaptureApi(): Plugin {
             res.setHeader('Content-Type', file.endsWith('.png') ? 'image/png' :
               file.endsWith('.js') ? 'text/javascript; charset=utf-8' :
               file.endsWith('.json') ? 'application/json; charset=utf-8' :
-              file.endsWith('.wgsl') ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8');
+              file.endsWith('.wgsl') ? 'text/plain; charset=utf-8' :
+              file.endsWith('.bin') ? 'application/octet-stream' : 'text/html; charset=utf-8');
             res.end(await readFile(path));
           } catch (error) {
             res.statusCode = 404;
@@ -99,7 +100,7 @@ function webgpuCaptureApi(): Plugin {
             for await (const chunk of req) {
               const bytes = chunk as Buffer;
               size += bytes.length;
-              if (size > 8192) throw new Error('request too large');
+              if (size > 1024 * 1024) throw new Error('request too large');
               chunks.push(bytes);
             }
             const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
@@ -110,6 +111,7 @@ function webgpuCaptureApi(): Plugin {
             else if (body.action === 'request') result = await controller.request({ targetBootId: body.targetBootId, frames: body.frames });
             else if (body.action === 'fail') result = controller.fail({ jobId: body.jobId, targetBootId: body.targetBootId, error: body.error });
             else if (body.action === 'stop') result = controller.stop({ jobId: body.jobId, targetBootId: body.targetBootId });
+            else if (body.action === 'diagnostics') result = controller.diagnostics(body);
             else throw new Error('unknown action');
           } else if (req.method === 'PUT') {
             const length = Number(req.headers['content-length']);
@@ -118,6 +120,13 @@ function webgpuCaptureApi(): Plugin {
               result = await controller.uploadFrameImage({
                 jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
                 frameIndex: Number(qs.get('frameIndex')), stream: req, contentLength,
+              });
+            } else if (action === 'pass-image') {
+              result = await controller.uploadPassImage({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: Number(qs.get('frameIndex')),
+                passOrdinal: Number(qs.get('passOrdinal')), colorIndex: Number(qs.get('colorIndex')),
+                stream: req, contentLength,
               });
             } else {
               result = await controller.upload({

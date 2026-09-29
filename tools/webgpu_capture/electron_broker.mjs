@@ -21,14 +21,14 @@ function json(value, status = 200) {
   });
 }
 
-async function smallJson(request) {
+async function smallJson(request, maxBytes = 8192) {
   if (!request.body) throw new Error('request body is required');
   const chunks = [];
   let size = 0;
   for await (const part of request.body) {
     const bytes = Buffer.from(part);
     size += bytes.length;
-    if (size > 8192) throw new Error('request too large');
+    if (size > maxBytes) throw new Error('request too large');
     chunks.push(bytes);
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -57,7 +57,8 @@ async function handleRequest(request, controller) {
       const contentType = file.endsWith('.png') ? 'image/png' :
         file.endsWith('.js') ? 'text/javascript; charset=utf-8' :
         file.endsWith('.json') ? 'application/json; charset=utf-8' :
-        file.endsWith('.wgsl') ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8';
+        file.endsWith('.wgsl') ? 'text/plain; charset=utf-8' :
+        file.endsWith('.bin') ? 'application/octet-stream' : 'text/html; charset=utf-8';
       return new Response(await readFile(physical), {
         headers: { ...NO_STORE, 'Content-Type': contentType },
       });
@@ -74,11 +75,12 @@ async function handleRequest(request, controller) {
       });
       else throw new Error('unknown action');
     } else if (request.method === 'POST') {
-      const body = await smallJson(request);
+      const body = await smallJson(request, 1024 * 1024);
       if (body.action === 'register') result = controller.register(body);
       else if (body.action === 'request') result = await controller.request(body);
       else if (body.action === 'fail') result = controller.fail(body);
       else if (body.action === 'stop') result = controller.stop(body);
+      else if (body.action === 'diagnostics') result = controller.diagnostics(body);
       else throw new Error('unknown action');
     } else if (request.method === 'PUT') {
       const common = {
@@ -87,6 +89,10 @@ async function handleRequest(request, controller) {
       };
       if (action === 'frame-image') result = await controller.uploadFrameImage({
         ...common, frameIndex: Number(qs.get('frameIndex')),
+      });
+      else if (action === 'pass-image') result = await controller.uploadPassImage({
+        ...common, frameIndex: Number(qs.get('frameIndex')),
+        passOrdinal: Number(qs.get('passOrdinal')), colorIndex: Number(qs.get('colorIndex')),
       });
       else result = await controller.upload({ ...common, actualFrames: Number(qs.get('actualFrames')) });
     } else return json({ error: 'method not allowed' }, 405);

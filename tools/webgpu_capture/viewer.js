@@ -20,6 +20,9 @@
     eventLimit: PAGE_SIZE,
     resourceKind: 'textures',
     selectedResource: null,
+    selectedTextureKey: null,
+    textureChoices: [],
+    selectedBufferPayloadId: null,
   };
   const el = id => document.getElementById(id);
   const list = value => Array.isArray(value) ? value : [];
@@ -68,6 +71,9 @@
   }
   function passFor(index) {
     return list(state.report?.passes).find(pass => Number(pass?.index) === Number(index));
+  }
+  function payloadFor(id) {
+    return list(state.report?.payloads).find(item => item.id === id);
   }
   function selectedFrame() {
     return list(state.report?.frames).find(frame => Number(frame?.frameOrdinal) === Number(state.selectedFrame));
@@ -127,9 +133,11 @@
     }
 
     const timing = report.gpuTiming;
-    el('timing-note').textContent = timing && finite(timing.sumPassDurationMs)
-      ? `报告包含 ${printable(timing.timedPasses)} 个 pass 的时长字段，合计 ${timing.sumPassDurationMs} ms；具体计时来源和精度以捕获工具为准。这里不推算逐 draw GPU 耗时。`
-      : '捕获中没有 GPU 时间戳。这里可检查命令和资源，不能用 Draw 数或 Pass 数推断 GPU 耗时。';
+    const profiler = report.gpuProfilerStatus;
+    el('timing-note').textContent = (timing?.source === 'webgpu-timestamp-query' && finite(timing.sumPassDurationMs)
+      ? `WebGPU timestamp query sidecar：${printable(timing.timedPasses)} 个 Pass，记录时长合计 ${timing.sumPassDurationMs} ms。未测量的 Pass 和 Draw 不显示估算值。`
+      : `这份捕获没有有效的 WebGPU GPU 时间戳。${profiler?.state ? `Profiler 状态：${profiler.state}。` : ''}${profiler?.reason || 'Draw 数和 Pass 数不能推算 GPU 耗时。'}`) +
+      (report.passCaptureWarning ? ` 中间画面限制：${report.passCaptureWarning}` : '');
   }
 
   function renderFrameSelector() {
@@ -172,13 +180,26 @@
       button.classList.toggle('active', state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index));
       button.appendChild(make('span', describePass(pass)));
       const count = pass.type === 'compute' ? `${pass.dispatches ?? 0} dispatch` : `${pass.draws ?? 0} draw`;
-      const timing = finite(pass.durationMs) ? ` · 记录时长 ${pass.durationMs} ms` : '';
-      button.appendChild(make('span', `${count} · 命令 ${printable(pass.beginCommand)}–${printable(pass.endCommand)}${timing}`, 'sub'));
+      const timing = pass.gpuTiming?.source === 'webgpu-timestamp-query' ? ` · GPU ${pass.gpuTiming.durationMs} ms` :
+        finite(pass.inspectorDurationMs) ? ` · Inspector duration ${pass.inspectorDurationMs} ms（来源未验证）` : '';
+      const unavailable = pass.outputUnavailableReason ? ` · 无 Pass 图：${pass.outputUnavailableReason}` :
+        pass.partialOutputUnavailableReason ? ` · 部分输出未读回：${pass.partialOutputUnavailableReason}` : '';
+      button.appendChild(make('span', `${count} · 命令 ${printable(pass.beginCommand)}–${printable(pass.endCommand)}${timing}${unavailable}`, 'sub'));
       button.addEventListener('click', () => {
         state.selectedPass = pass.index;
+        state.selectedEvent = state.events.findIndex(event => Number(event?.passIndex) === Number(pass.index) &&
+          ['draw', 'dispatch'].includes(eventKind(String(event?.method || ''))));
+        if (state.selectedEvent < 0) state.selectedEvent = state.events.findIndex(event => Number(event?.passIndex) === Number(pass.index));
+        if (state.selectedEvent < 0) state.selectedEvent = null;
+        state.selectedTextureKey = null;
+        state.selectedBufferPayloadId = null;
         state.eventLimit = PAGE_SIZE;
         renderPasses();
         renderEvents();
+        renderEventDetail();
+        renderTextureInspector();
+        renderBufferInspector();
+        renderFrame();
       });
       holder.appendChild(button);
     }
@@ -221,8 +242,12 @@
       button.appendChild(make('span', pipeline ? `${pass} · ${pipeline}` : pass, 'sub'));
       button.addEventListener('click', () => {
         state.selectedEvent = index;
+        state.selectedTextureKey = null;
+        state.selectedBufferPayloadId = null;
         renderEvents();
         renderEventDetail();
+        renderTextureInspector();
+        renderBufferInspector();
       });
       holder.appendChild(button);
     }
@@ -290,7 +315,16 @@
     if (event.frameOrdinal !== undefined && event.frameOrdinal !== null) addDetailRow(grid, '推断帧', event.frameOrdinal);
     const pass = event.passIndex === null || event.passIndex === undefined ? null : passFor(event.passIndex);
     addDetailRow(grid, 'Pass', pass ? describePass(pass) : event.passIndex ?? '帧级');
-    addDetailRow(grid, '管线', event.pipelineLabel || event.pipelineId);
+    addDetailRow(grid, '管线', event.pipelineId == null ? '未绑定' : `#${event.pipelineId} ${event.pipelineLabel || ''}`);
+    const pipeline = resourceArray('pipelines').find(item => String(item.id) === String(event.pipelineId));
+    if (pipeline) {
+      addDetailRow(grid, 'WGSL 模块', list(pipeline.shaderIds).map(id => `#${id}`).join(', ') || '未记录');
+      const entryPoints = [pipeline.descriptor?.vertex?.entryPoint, pipeline.descriptor?.fragment?.entryPoint,
+        pipeline.descriptor?.compute?.entryPoint].filter(Boolean);
+      if (entryPoints.length) addDetailRow(grid, '入口', entryPoints.join(' / '));
+    }
+    if (list(event.targets).length) addDetailRow(grid, '渲染目标', event.targets.map(target =>
+      `${target.kind} ${target.slot}: #${target.textureId} ${target.textureLabel || ''} ${target.format || ''}`).join('；'));
     holder.appendChild(grid);
     if (event.pipelineId !== undefined && event.pipelineId !== null &&
         resourceIndexById('pipelines', event.pipelineId) >= 0) {
@@ -312,6 +346,160 @@
     addDataSection(holder, '视口', event.viewport);
     addDataSection(holder, '裁剪区域', event.scissorRect);
     addDataSection(holder, '模板参考值', event.stencilReference);
+  }
+
+  function textureOptions() {
+    const event = state.events[state.selectedEvent];
+    const pass = state.selectedPass !== null ? passFor(state.selectedPass) :
+      event?.passIndex != null ? passFor(event.passIndex) : null;
+    const drawSelected = event && ['draw', 'dispatch'].includes(eventKind(String(event.method || ''))) &&
+      (state.selectedPass === null || Number(event.passIndex) === Number(state.selectedPass));
+    const draws = drawSelected ? [event] : pass ? state.events.filter(item =>
+      Number(item?.passIndex) === Number(pass.index) && ['draw', 'dispatch'].includes(eventKind(String(item?.method || '')))) : [];
+    const options = [];
+    const seen = new Set();
+    const add = (id, role, label, snapshot) => {
+      if (id == null) return;
+      const texture = resourceArray('textures').find(item => String(item.id) === String(id));
+      if (!texture) return;
+      const key = `${role}:${id}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      options.push({ key, id, role, label: label || texture.label || `纹理 #${id}`, texture, snapshot,
+        file: snapshot?.imageFile || texture.imageFile });
+    };
+    for (const draw of draws) {
+      for (const group of list(draw.bindGroups)) for (const entry of list(group?.resources)) {
+        if (entry?.resource?.textureId != null) add(entry.resource.textureId, '绑定输入', entry.resource.label);
+      }
+    }
+    for (const target of list(pass?.targets || event?.targets)) {
+      const outputId = target.outputTextureId ?? target.textureId;
+      const snapshot = list(pass?.snapshots).find(item => String(item.textureId) === String(outputId));
+      add(outputId, snapshot ? 'Pass 结束读回' : '渲染目标',
+        target.outputTextureLabel || target.textureLabel, snapshot);
+    }
+    return { options, pass, drawSelected };
+  }
+
+  function applyTextureControls() {
+    const img = el('texture-image');
+    const channel = el('texture-channel').value;
+    const exposure = Number(el('texture-exposure').value);
+    const filters = [];
+    if (channel !== 'rgba') filters.push(`url(#texture-${channel})`);
+    if (exposure !== 0) filters.push(`brightness(${2 ** exposure})`);
+    img.style.filter = filters.join(' ') || 'none';
+    el('texture-exposure-value').textContent = `${exposure > 0 ? '+' : ''}${exposure} EV`;
+    const zoom = el('texture-zoom').value;
+    img.classList.toggle('fit', zoom === 'fit');
+    img.style.width = zoom === 'fit' || !img.naturalWidth ? '' : `${Math.round(img.naturalWidth * Number(zoom) / 100)}px`;
+  }
+
+  function renderTextureInspector() {
+    const { options, pass, drawSelected } = textureOptions();
+    state.textureChoices = options;
+    el('texture-count').textContent = `${options.length} 张`;
+    el('texture-scope').textContent = drawSelected ?
+      `命令 #${state.events[state.selectedEvent].commandIndex} 的绑定输入和渲染目标。${pass?.outputUnavailableReason ? `Pass 输出未读回：${pass.outputUnavailableReason}` : pass?.partialOutputUnavailableReason ? `部分输出未读回：${pass.partialOutputUnavailableReason}` : ''}` :
+      pass ? `${describePass(pass)} 全部 Draw 的绑定输入和 Pass 目标。${pass.outputUnavailableReason ? `Pass 输出未读回：${pass.outputUnavailableReason}` : pass.partialOutputUnavailableReason ? `部分输出未读回：${pass.partialOutputUnavailableReason}` : ''}` : '选择 Pass 或 Draw 查看绑定纹理。';
+    const holder = el('texture-choices');
+    clear(holder);
+    if (!options.length) holder.appendChild(make('p', pass ? '这个 Pass 没有可识别的纹理资源。' : '尚未选择绘制事件。', 'muted small'));
+    if (!options.some(item => item.key === state.selectedTextureKey)) {
+      state.selectedTextureKey = (options.find(item => item.snapshot) || options.find(item => item.file) || options[0])?.key ?? null;
+    }
+    for (const item of options) {
+      const evidence = item.snapshot ? 'Pass 结束实读回' : item.file ? '最终状态快照' : '无图像';
+      const button = make('button', `${item.role} · #${item.id} ${item.label} · ${evidence}`, 'plain-button');
+      button.type = 'button';
+      button.classList.toggle('active', item.key === state.selectedTextureKey);
+      button.addEventListener('click', () => { state.selectedTextureKey = item.key; renderTextureInspector(); });
+      holder.appendChild(button);
+    }
+    const selected = options.find(item => item.key === state.selectedTextureKey);
+    const img = el('texture-image');
+    const placeholder = el('texture-empty');
+    const save = el('texture-save');
+    const url = assetUrl(selected?.file);
+    save.hidden = !url;
+    if (url) { save.href = url; save.download = `texture-${selected.id}${selected.snapshot ? '-pass-end' : '-capture-final'}.png`; }
+    if (!selected || !url) {
+      img.hidden = true;
+      img.removeAttribute('src');
+      placeholder.hidden = false;
+      placeholder.textContent = selected ? `没有可预览的 payload。${selected.texture.imageReason || '捕获未提供纹理字节。'}` : '选择 Pass 或 Draw 查看纹理。';
+      el('texture-note').textContent = selected ? `#${selected.id} ${selected.texture.format || ''} · ${selected.texture.width} × ${selected.texture.height}。该资源没有逐 Draw 输出图。` : '';
+      return;
+    }
+    img.onload = () => { img.hidden = false; placeholder.hidden = true; applyTextureControls(); };
+    img.onerror = () => { img.hidden = true; placeholder.hidden = false; placeholder.textContent = '纹理预览文件无法读取。'; };
+    if (img.src !== url) img.src = url;
+    else { img.hidden = false; placeholder.hidden = true; applyTextureControls(); }
+    el('texture-note').textContent = selected.snapshot ?
+      `真实 Pass 结束读回：第 ${selected.snapshot.frameOrdinal} 帧 Pass #${selected.snapshot.passIndex}（${selected.snapshot.label || ''}），结束命令 #${selected.snapshot.afterCommandIndex}；来源 ${selected.snapshot.source}；格式 ${selected.snapshot.format || selected.texture.format || '未知'}。` :
+      `Inspector 纹理 mip0 最终状态快照，非所选 Draw / Pass 的输出。${selected.texture.imagePreviewTransform || ''} 曝光与通道只调整 PNG 预览显示。`;
+  }
+
+  function renderBufferInspector() {
+    const event = state.events[state.selectedEvent];
+    const bound = event && ['draw', 'dispatch'].includes(eventKind(String(event.method || ''))) ?
+      list(event.bufferPayloads) : [];
+    const selector = el('buffer-select');
+    clear(selector);
+    el('buffer-count').textContent = `${bound.length} 份`;
+    const save = el('buffer-save');
+    const hex = el('buffer-hex');
+    const table = el('buffer-table-wrap');
+    save.hidden = hex.hidden = table.hidden = true;
+    if (!bound.length) {
+      selector.disabled = true;
+      const hasBuffer = event && (list(event.vertexBuffers).length || event.indexBuffer ||
+        list(event.bindGroups).some(group => list(group.resources).some(entry => entry?.resource?.type === 'Buffer')));
+      el('buffer-note').textContent = hasBuffer ?
+        '这个 Draw 有缓冲绑定，但 Inspector 没有捕获对应字节；无法显示或导出其当时内容。' :
+        '选择有缓冲 payload 的 Draw 查看当时绑定的字节。';
+      return;
+    }
+    selector.disabled = false;
+    if (!bound.some(item => item.payloadId === state.selectedBufferPayloadId)) state.selectedBufferPayloadId = bound[0].payloadId;
+    for (const item of bound) {
+      const option = make('option', `#${item.payloadId} ${item.bufferLabel || `Buffer #${item.bufferId}`} · ${item.kind}${item.slot == null ? '' : ` ${item.slot}`}`);
+      option.value = String(item.payloadId);
+      selector.appendChild(option);
+    }
+    selector.value = String(state.selectedBufferPayloadId);
+    const item = bound.find(value => value.payloadId === state.selectedBufferPayloadId);
+    const payload = payloadFor(item.payloadId);
+    if (!payload) { el('buffer-note').textContent = '报告中找不到这份 payload。'; return; }
+    const url = assetUrl(payload.bufferFile);
+    if (url) { save.hidden = false; save.href = url; save.download = `buffer-${item.bufferId}-draw-${event.commandIndex}-payload-${item.payloadId}.bin`; }
+    el('buffer-note').textContent = `Buffer #${item.bufferId} ${item.bufferLabel || ''} · ${payload.bytes} 字节，来源绑定命令 #${item.sourceCommandIndex}，用于 Draw #${event.commandIndex}。这是绑定时捕获的字节，不是 Draw 后回读。` +
+      (payload.bufferFile ? `下方仅显示前 ${payload.previewBytes ?? 0} 字节；二进制文件包含全部。` :
+        `自动导出省略：${payload.bufferExportReason || '没有可用二进制文件'}。`);
+    if (!payload.bufferFile) return;
+    let bytes;
+    try { bytes = Uint8Array.from(atob(payload.previewBase64 || ''), char => char.charCodeAt(0)); }
+    catch { el('buffer-note').textContent += ' 预览字节解码失败。'; return; }
+    const lines = [];
+    for (let offset = 0; offset < bytes.length; offset += 16) {
+      const row = bytes.slice(offset, offset + 16);
+      lines.push(`${offset.toString(16).padStart(8, '0')}  ${[...row].map(byte => byte.toString(16).padStart(2, '0')).join(' ').padEnd(47)}  |${[...row].map(byte => byte >= 32 && byte < 127 ? String.fromCharCode(byte) : '.').join('')}|`);
+    }
+    hex.textContent = lines.join('\n') || '空 payload';
+    hex.hidden = false;
+    const rows = el('buffer-rows');
+    clear(rows);
+    const view = new DataView(bytes.buffer);
+    for (let offset = 0; offset + 4 <= bytes.length; offset += 4) {
+      const tr = make('tr');
+      const float = view.getFloat32(offset, true);
+      for (const value of [offset.toString(16).padStart(8, '0'),
+        [...bytes.slice(offset, offset + 4)].map(byte => byte.toString(16).padStart(2, '0')).join(' '),
+        view.getUint32(offset, true), Number.isFinite(float) ? String(float) : String(float)]) tr.appendChild(make('td', value));
+      rows.appendChild(tr);
+    }
+    table.hidden = rows.childElementCount === 0;
   }
 
   function selectResource(kind, index) {
@@ -395,6 +583,9 @@
           `这张纹理没有导出的图片。${item.imageReason ? `原因：${item.imageReason}` : ''}`, 'muted small'));
       }
       holder.appendChild(box);
+      if (item.imageFile) holder.appendChild(make('p',
+        `来源：${item.imageSource || 'Inspector 纹理快照'}。仅代表捕获保存时的最终纹理状态，非任一 Draw 或 Pass 的当时输出。${item.imagePreviewTransform || ''}`,
+        'inspect-note'));
     }
     if (kind === 'shaders') {
       if (typeof item.code === 'string' && item.code) {
@@ -415,6 +606,12 @@
         holder.append(button, make('span', ' '));
       }
     }
+    if (kind === 'buffers') {
+      const captured = list(state.report?.payloads).filter(payload => list(payload.bufferIds).some(id => String(id) === String(item.id)));
+      holder.appendChild(make('p', captured.length ?
+        `记录了 ${captured.length} 份绑定时 payload。同一 Buffer 可在不同 Draw 有不同字节；请从 Pass → Draw 选择准确版本。` :
+        'Inspector 未捕获这个 Buffer 的字节；只有资源描述，不能还原其内容。', 'inspect-note'));
+    }
     const details = { ...item };
     delete details.code;
     delete details.imageFile;
@@ -424,23 +621,29 @@
   function renderErrors() {
     const errors = list(state.report?.validationErrors);
     const total = state.report?.validationErrorCount ?? errors.length;
-    el('error-count').textContent = String(total);
+    const sidecarErrors = list(state.report?.sidecarErrors);
+    el('error-count').textContent = String(total + sidecarErrors.length);
     const holder = el('errors');
     clear(holder);
-    if (!total) { holder.appendChild(make('p', '报告未记录验证错误。', 'muted small')); return; }
-    if (!errors.length) { holder.appendChild(make('p', '报告记载错误数量，但未附明细。', 'muted small')); return; }
+    if (!total && !sidecarErrors.length) { holder.appendChild(make('p', '报告未记录验证错误或 Sidecar 错误。', 'muted small')); return; }
+    if (total && !errors.length) holder.appendChild(make('p', '报告记载验证错误数量，但未附明细。', 'muted small'));
     for (const error of errors) holder.appendChild(make('p', error?.message ?? error, 'error-item'));
     if (total > errors.length) holder.appendChild(make('p', `仅展示前 ${errors.length} 条。`, 'muted small'));
+    for (const error of sidecarErrors) holder.appendChild(make('p',
+      `Sidecar ${error?.file || ''}：${error?.reason || '未知错误'}`, 'error-item'));
   }
 
   function renderFrame() {
     const img = el('frame-image');
     const placeholder = el('frame-empty');
     const frame = state.selectedFrame === null ? null : selectedFrame();
-    const file = frame ? frame.imageFile : state.report?.frameImage;
-    el('frame-note').textContent = frame
-      ? `帧边界按 queue.submit 推断。${frame.imageSource ? `图像来源：${frame.imageSource}。` : ''}选中事件只显示记录状态，不生成该 draw 单独的输出图。`
-      : '显示捕获保存时的画布图像；连抓时不代表每一帧。选中事件只显示记录状态，不生成该 draw 单独的输出图。';
+    const pass = state.selectedPass === null ? null : passFor(state.selectedPass);
+    const snapshot = list(pass?.snapshots)[0];
+    const file = snapshot?.imageFile || (frame ? frame.imageFile : state.report?.frameImage);
+    el('frame-note').textContent = snapshot ?
+      `这张图是 Pass #${snapshot.passIndex}（${snapshot.label || ''}）结束后真实 GPU 读回（命令 #${snapshot.afterCommandIndex}，来源 ${snapshot.source}）。逐 Draw 输出未捕获。` :
+      frame ? `帧边界按 queue.submit 推断。${frame.imageSource ? `图像来源：${frame.imageSource}。` : ''}${pass ? `该 Pass 没有独立读回${pass.outputUnavailableReason ? `：${pass.outputUnavailableReason}` : ''}；这里显示整帧画布。` : ''}逐 Draw 输出未捕获。` :
+        `这里显示捕获保存时的最终画布状态；多帧时不代表每一帧。${pass?.outputUnavailableReason ? `该 Pass 输出未读回：${pass.outputUnavailableReason}。` : ''}逐 Draw 输出未捕获。`;
     const url = assetUrl(file);
     if (!url) {
       img.hidden = true;
@@ -451,11 +654,11 @@
       el('frame-size').textContent = '';
       return;
     }
-    img.alt = frame ? `第 ${frame.frameOrdinal} 帧导出的图像` : '捕获保存时的画布图像';
+    img.alt = snapshot ? `Pass #${snapshot.passIndex} 结束读回` : frame ? `第 ${frame.frameOrdinal} 帧导出的图像` : '捕获保存时的画布图像';
     img.onload = () => {
       img.hidden = false;
       placeholder.hidden = true;
-      el('frame-size').textContent = `${img.naturalWidth} × ${img.naturalHeight}${frame ? ` · 第 ${frame.frameOrdinal} 帧` : ' · 保存时画布'}`;
+      el('frame-size').textContent = `${img.naturalWidth} × ${img.naturalHeight}${snapshot ? ` · Pass #${snapshot.passIndex}` : frame ? ` · 第 ${frame.frameOrdinal} 帧` : ' · 保存时画布'}`;
     };
     img.onerror = () => {
       img.hidden = true;
@@ -486,6 +689,8 @@
     renderPasses();
     renderEvents();
     renderEventDetail();
+    renderTextureInspector();
+    renderBufferInspector();
     renderFrame();
     renderResourceTabs();
     renderResources();
@@ -530,6 +735,10 @@
     renderPasses();
     renderEvents();
     renderEventDetail();
+    state.selectedTextureKey = null;
+    state.selectedBufferPayloadId = null;
+    renderTextureInspector();
+    renderBufferInspector();
     renderFrame();
   });
   el('clear-pass').addEventListener('click', () => {
@@ -537,8 +746,15 @@
     state.eventLimit = PAGE_SIZE;
     renderPasses();
     renderEvents();
+    renderTextureInspector();
+    renderBufferInspector();
+    renderFrame();
   });
   el('event-more').addEventListener('click', () => { state.eventLimit += PAGE_SIZE; renderEvents(); });
   el('resource-search').addEventListener('input', renderResources);
+  el('texture-channel').addEventListener('change', applyTextureControls);
+  el('texture-exposure').addEventListener('input', applyTextureControls);
+  el('texture-zoom').addEventListener('change', applyTextureControls);
+  el('buffer-select').addEventListener('change', () => { state.selectedBufferPayloadId = Number(el('buffer-select').value); renderBufferInspector(); });
   loadReport().then(renderAll, error => showError(error instanceof Error ? error.message : String(error)));
 }());

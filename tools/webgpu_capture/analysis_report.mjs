@@ -22,6 +22,7 @@ function boundResource(resource, byId) {
     label: object?.label ?? resource?.__label ?? resource?.buffer?.__label ?? '',
   };
   if (object?.type === 'TextureView') result.textureId = refId(object.texture);
+  if (object?.type === 'Texture') result.textureId = id;
   if (bufferId !== null) {
     result.offset = resource.offset ?? 0;
     result.size = resource.size ?? null;
@@ -42,9 +43,15 @@ function attachmentTarget(attachment, kind, slot, byId) {
   const view = byId.get(viewId);
   const textureId = refId(view?.texture);
   const texture = byId.get(textureId);
+  const resolveViewId = refId(attachment?.resolveTarget);
+  const resolveView = byId.get(resolveViewId);
+  const resolveTextureId = refId(resolveView?.texture);
+  const resolveTexture = byId.get(resolveTextureId);
   return {
-    kind, slot, viewId, textureId,
+    kind, slot, viewId, textureId, resolveViewId, resolveTextureId,
+    outputTextureId: resolveTextureId ?? textureId,
     textureLabel: texture?.label ?? attachment?.view?.__label ?? '',
+    outputTextureLabel: resolveTexture?.label ?? texture?.label ?? '',
     format: view?.descriptor?.format ?? texture?.format ?? null,
     loadOp: attachment?.loadOp ?? attachment?.depthLoadOp ?? null,
     storeOp: attachment?.storeOp ?? attachment?.depthStoreOp ?? null,
@@ -81,6 +88,7 @@ function dataPayloads(command, bufferId, sourceCommandIndex, kind, slot, group, 
       bufferLabel: byId.get(resolvedId)?.label ?? '',
       sourceCommandIndex, kind, slot,
       binding: entry?.binding ?? null,
+      bufferOffset: Number.isSafeInteger(entry?.resource?.offset) ? entry.resource.offset : null,
     };
   });
 }
@@ -264,7 +272,15 @@ export function buildCaptureDetails(metadata, passes) {
     }
   }
 
-  if (frameBeginCommand < metadata.commands.length) {
+  if (frameBeginCommand < metadata.commands.length && frames.length &&
+      metadata.commands.slice(frameBeginCommand).every(command =>
+        ['mapAsync', 'getMappedRange', 'unmap', 'destroy'].includes(command?.method))) {
+    // A timestamp/readback map after the final queue.submit is bookkeeping,
+    // not another rendered frame. Keep these events with that submission.
+    for (const event of events) {
+      if (event.commandIndex >= frameBeginCommand) event.frameOrdinal = frameOrdinal - 1;
+    }
+  } else if (frameBeginCommand < metadata.commands.length) {
     frames.push({
       frameOrdinal, beginCommand: frameBeginCommand, endCommand: metadata.commands.length - 1,
       submitCommandIndex: null, boundarySource: 'queue.submit',

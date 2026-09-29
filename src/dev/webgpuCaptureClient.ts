@@ -1,4 +1,7 @@
 /** WebGPU Inspector's local capture, driven by the dev server for both F2 and agents. */
+import type { RhiDevice } from '../rendering/rhi/RhiDevice';
+import { captureFrameDiagnostics, type CapturedFrameDiagnostics } from './webgpuFrameDiagnostics';
+
 const API = '/__gamedraft-api/webgpu-capture';
 const REQUEST_TIMEOUT_MS = 8_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
@@ -95,6 +98,7 @@ export class WebGpuCaptureClient {
   private readonly bootId: string;
   private readonly sceneId: () => string | undefined;
   private readonly isGpuReady: () => boolean;
+  private readonly getRhi?: () => RhiDevice | null;
   private readonly setFrameHook: (hook: ((draw: () => void) => void) | null) => void;
   private readonly readFramePixels?: () => Promise<FramePixels | null>;
   private readonly onChange: () => void;
@@ -113,11 +117,14 @@ export class WebGpuCaptureClient {
   private stoppedJobIds = new Set<string>();
   private finishedLocallyJobId: string | null = null;
   private frameImages: FrameImageBatch | null = null;
+  private frameDiagnostics: { jobId: string; capture: ReturnType<typeof captureFrameDiagnostics>;
+    result: Promise<CapturedFrameDiagnostics> | null } | null = null;
 
   constructor(options: {
     bootId: string;
     sceneId: () => string | undefined;
     isGpuReady: () => boolean;
+    getRhi?: () => RhiDevice | null;
     setFrameHook: (hook: ((draw: () => void) => void) | null) => void;
     readFramePixels?: () => Promise<FramePixels | null>;
     onChange: () => void;
@@ -125,6 +132,7 @@ export class WebGpuCaptureClient {
     this.bootId = options.bootId;
     this.sceneId = options.sceneId;
     this.isGpuReady = options.isGpuReady;
+    this.getRhi = options.getRhi;
     this.setFrameHook = options.setFrameHook;
     this.readFramePixels = options.readFramePixels;
     this.onChange = options.onChange;
@@ -149,6 +157,8 @@ export class WebGpuCaptureClient {
     const job = this.activeJob;
     this.activeJob = null;
     if (this.frameImages) this.frameImages.cancelled = true;
+    this.frameDiagnostics?.capture.cancel();
+    this.frameDiagnostics = null;
     this.setFrameHook(null);
     if (job) {
       void api('POST', {}, { action: 'stop', jobId: job.id, targetBootId: this.bootId }).catch(() => {});
@@ -179,6 +189,10 @@ export class WebGpuCaptureClient {
     this.stoppedJobIds.add(job.id);
     if (this.stoppedJobIds.size > 32) this.stoppedJobIds.delete(this.stoppedJobIds.values().next().value!);
     if (this.frameImages?.jobId === job.id) this.frameImages.cancelled = true;
+    if (this.frameDiagnostics?.jobId === job.id) {
+      this.frameDiagnostics.capture.cancel();
+      this.frameDiagnostics = null;
+    }
     this.leaveActiveJob();
     try {
       const result = await api<WebGpuCaptureJob>('POST', {}, { action: 'stop', jobId: job.id, targetBootId: this.bootId });
@@ -257,9 +271,22 @@ export class WebGpuCaptureClient {
       finally { if (job) void this.fail(job, 'WebGPU Inspector 在抓帧期间不可用'); }
       return;
     }
+    let diagnostic: ReturnType<typeof captureFrameDiagnostics> | null = null;
+    if (job.requestedFrames === 1) {
+      const rhi = this.getRhi?.();
+      if (rhi) {
+        try {
+          diagnostic = captureFrameDiagnostics(rhi);
+          this.frameDiagnostics = { jobId: job.id, capture: diagnostic, result: null };
+        } catch (error) {
+          console.warn('Frame Debugger pass readback unavailable', error);
+        }
+      }
+    }
     try {
       inspector.beginFrameCapture();
     } catch (error) {
+      diagnostic?.cancel();
       try { draw(); }
       finally { void this.fail(job, `无法开始抓帧：${String(error)}`); }
       return;
@@ -279,10 +306,15 @@ export class WebGpuCaptureClient {
       catch (error) { void this.fail(job, `无法结束抓帧：${String(error)}`); }
     }
     if (renderFailed) {
+      diagnostic?.cancel();
       void this.fail(job, `游戏渲染失败：${String(renderError)}`);
       throw renderError;
     }
     if (!rendered || !ended || this.activeJob?.id !== job.id) return;
+    if (diagnostic && this.frameDiagnostics?.jobId === job.id) {
+      this.frameDiagnostics.result = diagnostic.finish();
+      void this.frameDiagnostics.result.catch(() => {});
+    }
     const frameIndex = this.framesCaptured + 1;
     const images = this.frameImages;
     if (this.readFramePixels) {
@@ -351,7 +383,7 @@ export class WebGpuCaptureClient {
     }
   }
 
-  private encodeFrameImage(frame: FramePixels | null): Promise<Blob> {
+  private encodeFrameImage(frame: FramePixels | null, unpremultiply = true): Promise<Blob> {
     if (!frame) throw new Error('GPU 画布没有可回读的图像');
     const { pixels, width, height } = frame;
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 ||
@@ -367,12 +399,14 @@ export class WebGpuCaptureClient {
     imageData.data.set(pixels);
     const rgba = imageData.data;
     // The RHI returns premultiplied bytes; ImageData expects straight alpha.
-    for (let i = 0; i < rgba.length; i += 4) {
-      const alpha = rgba[i + 3];
-      if (alpha > 0 && alpha < 255) {
-        rgba[i] = Math.min(255, Math.round(rgba[i] * 255 / alpha));
-        rgba[i + 1] = Math.min(255, Math.round(rgba[i + 1] * 255 / alpha));
-        rgba[i + 2] = Math.min(255, Math.round(rgba[i + 2] * 255 / alpha));
+    if (unpremultiply) {
+      for (let i = 0; i < rgba.length; i += 4) {
+        const alpha = rgba[i + 3];
+        if (alpha > 0 && alpha < 255) {
+          rgba[i] = Math.min(255, Math.round(rgba[i] * 255 / alpha));
+          rgba[i + 1] = Math.min(255, Math.round(rgba[i + 1] * 255 / alpha));
+          rgba[i + 2] = Math.min(255, Math.round(rgba[i + 2] * 255 / alpha));
+        }
       }
     }
     context.putImageData(imageData, 0, 0);
@@ -405,6 +439,7 @@ export class WebGpuCaptureClient {
       const blob = inspector.captureStreamToBlob(stream);
       if (!(blob instanceof Blob) || blob.size === 0) throw new Error('WebGPU Inspector 生成了空抓帧文件');
       if (images) await images.uploads;
+      if (job.requestedFrames === 1) await this.exportDiagnostics(job);
       if (!this.isCurrentJob(job) || images?.cancelled) return;
       const result = await api<WebGpuCaptureJob>('PUT', {
         jobId: job.id, targetBootId: this.bootId, actualFrames: String(actualFrames),
@@ -416,8 +451,46 @@ export class WebGpuCaptureClient {
     } finally {
       this.exportInFlight = false;
       if (this.frameImages === images) this.frameImages = null;
+      if (this.frameDiagnostics?.jobId === job.id) this.frameDiagnostics = null;
       if (!this.disposed) this.onChange();
     }
+  }
+
+  private async exportDiagnostics(job: WebGpuCaptureJob): Promise<void> {
+    const batch = this.frameDiagnostics;
+    const diagnostics = batch?.jobId === job.id && batch.result ? await batch.result : {
+      passes: [], gpuPasses: [], gpuProfilerStatus: {
+        state: 'unsupported' as const, reason: 'RHI 逐 pass 诊断钩子不可用',
+      },
+    };
+    const passes: Array<{ passOrdinal: number; label: string; targetLabel: string;
+      colorIndex: number; width: number; height: number; format: string; reason?: string }> = [];
+    for (const item of diagnostics.passes) {
+      if (!this.isCurrentJob(job)) return;
+      let reason = item.reason;
+      if (item.pixels) {
+        try {
+          const png = await this.encodeFrameImage({ pixels: item.pixels,
+            width: item.width, height: item.height }, false);
+          item.pixels = undefined;
+          if (png.size > MAX_FRAME_IMAGE_BYTES) throw new Error('PNG 超过 32 MiB');
+          await api('PUT', {
+            action: 'pass-image', jobId: job.id, targetBootId: this.bootId,
+            frameIndex: '1', passOrdinal: String(item.passOrdinal), colorIndex: String(item.colorIndex),
+          }, png);
+        } catch (error) { reason = `Pass PNG 导出失败：${String(error)}`; }
+      } else if (!reason) reason = 'Pass 没有可读回的颜色输出';
+      passes.push({
+        passOrdinal: item.passOrdinal, label: item.label, targetLabel: item.targetLabel,
+        colorIndex: item.colorIndex, width: item.width, height: item.height,
+        format: item.format, ...(reason ? { reason } : {}),
+      });
+    }
+    if (!this.isCurrentJob(job)) return;
+    await api('POST', {}, { action: 'diagnostics', jobId: job.id, targetBootId: this.bootId,
+      passes, gpuPasses: diagnostics.gpuPasses,
+      gpuProfilerStatus: diagnostics.gpuProfilerStatus,
+      ...(diagnostics.warning ? { warning: diagnostics.warning } : {}) });
   }
 
   private leaveActiveJob(): void {
@@ -426,6 +499,10 @@ export class WebGpuCaptureClient {
     if (this.activeJob && this.frameImages?.jobId === this.activeJob.id) {
       this.frameImages.cancelled = true;
       this.frameImages = null;
+    }
+    if (this.activeJob && this.frameDiagnostics?.jobId === this.activeJob.id) {
+      this.frameDiagnostics.capture.cancel();
+      this.frameDiagnostics = null;
     }
     this.activeJob = null;
     this.setFrameHook(null);

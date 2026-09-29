@@ -57,7 +57,9 @@ import type {
   RhiDiagnosticListener,
   RhiDiagnosticSeverity,
   RhiFrame,
+  RhiFrameDebugCapture,
   RhiFrameStats,
+  RhiRenderPassEndCapture,
   RhiRenderPassEncoder,
   RhiRenderPipeline,
   RhiRenderTarget,
@@ -78,6 +80,7 @@ import {
   toLumaTextureUsage,
 } from './lumaMapping';
 import { WebGpuMipmapGenerator } from './lumaMipmaps';
+import { LumaGpuProfiler, type LumaGpuTimingCapture } from './LumaGpuProfiler';
 import { SAMPLER_SUFFIX, missingBindings, resolveShaderEntries } from '../backendRules';
 
 export interface LumaRhiDeviceOptions {
@@ -90,6 +93,8 @@ export interface LumaRhiDeviceOptions {
   autoResize?: boolean;
   /** 打开 luma 的调试校验(慢) */
   debug?: boolean;
+  /** 显式启用真实 GPU pass 耗时；开发构建可稍后经 gpuProfiler.setEnabled 开启。 */
+  gpuProfiling?: boolean;
 }
 
 /**
@@ -132,6 +137,7 @@ export async function createLumaRhiDevice(options: LumaRhiDeviceOptions): Promis
     throw new RhiError('unsupported', '此环境没有 WebGPU(navigator.gpu 不存在;需要 https 或 localhost,且浏览器 / WebView 开启 WebGPU)');
   }
   const sink: { target: LumaRhiDevice | null; early: unknown[] } = { target: null, early: [] };
+  const diagnosticsAllowed = import.meta.env.DEV || options.debug === true || options.gpuProfiling === true;
   // 每次都重新要适配器(丢过设备的适配器不能再用);画布上下文参数(格式 / alphaMode / 像素比 / 自动调整)与首次相同
   const open = async (): Promise<Device> => {
     try {
@@ -145,6 +151,7 @@ export async function createLumaRhiDevice(options: LumaRhiDeviceOptions): Promis
           autoResize: options.autoResize ?? true,
         },
         debug: options.debug ?? false,
+        optionalFeatures: diagnosticsAllowed ? ['timestamp-query'] : [],
         debugShaders: options.debug ? 'errors' : 'never',
         onError: (error: Error) => {
           if (sink.target) sink.target._reportBackendError(error);
@@ -156,7 +163,11 @@ export async function createLumaRhiDevice(options: LumaRhiDeviceOptions): Promis
     }
   };
   const device = await open();
-  const rhi = new LumaRhiDevice(device, { recreateDevice: open });
+  const rhi = new LumaRhiDevice(device, {
+    recreateDevice: open,
+    gpuProfilingAllowed: diagnosticsAllowed,
+    gpuProfilingInitiallyEnabled: options.gpuProfiling === true,
+  });
   sink.target = rhi;
   for (const e of sink.early) rhi._reportBackendError(e);
   return rhi;
@@ -168,6 +179,8 @@ export interface LumaRhiDeviceRecovery {
   recreateDevice?: () => Promise<Device>;
   /** 第 i 次重建前等多久(毫秒);次数 = 长度,用尽还没建成就报错放弃 */
   restoreRetryDelaysMs?: readonly number[];
+  gpuProfilingAllowed?: boolean;
+  gpuProfilingInitiallyEnabled?: boolean;
 }
 
 /** 重建设备前的等待:GPU 进程重启 / 驱动重置期间适配器可能暂时要不到,逐次放宽,前后约 15 秒 */
@@ -490,7 +503,7 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
    * 本帧开 pass 用的附件视图(第一次取时从画布帧缓冲拿)。同一帧里画布纹理与深度缓冲不变;luma 的画布帧缓冲对象
    * 在各画布目标之间共用、取的时候才重挂附件,所以缓存视图、不缓存那个对象
    */
-  private views: { color: GPUTextureView; depth: GPUTextureView | null } | null = null;
+  private views: { color: GPUTextureView; colorTexture: GPUTexture | null; depth: GPUTextureView | null } | null = null;
   /** 本目标持有的深度 / 模板纹理(只在带深度时建) */
   private depthTex: Texture | null = null;
 
@@ -516,10 +529,14 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
   }
 
   /** 本帧开 pass 用的颜色 / 深度附件视图(每帧只向画布取一次帧缓冲) */
-  passViews(): { color: GPUTextureView; depth: GPUTextureView | null } {
+  passViews(): { color: GPUTextureView; colorTexture: GPUTexture | null; depth: GPUTextureView | null } {
     if (!this.views) {
-      const fb = this.canvasFramebuffer as Framebuffer & { colorAttachments: Array<{ handle: GPUTextureView }> };
-      this.views = { color: fb.colorAttachments[0].handle, depth: this.depth ? this.depthView(this.depth, fb.width, fb.height) : null };
+      const fb = this.canvasFramebuffer as Framebuffer & { colorAttachments: Array<{ handle: GPUTextureView; texture?: { handle: GPUTexture } }> };
+      this.views = {
+        color: fb.colorAttachments[0].handle,
+        colorTexture: fb.colorAttachments[0].texture?.handle ?? null,
+        depth: this.depth ? this.depthView(this.depth, fb.width, fb.height) : null,
+      };
     }
     return this.views;
   }
@@ -627,6 +644,7 @@ class LumaMsaaSwapchainTarget extends RhiResourceBase<'render-target'> implement
   private depthTex: Texture | null = null;
   private fb: Framebuffer | null = null;
   private fbGeneration = -1;
+  private currentResolveTexture: GPUTexture | null = null;
 
   constructor(
     scope: RhiResourceScope,
@@ -651,7 +669,13 @@ class LumaMsaaSwapchainTarget extends RhiResourceBase<'render-target'> implement
 
   /** 这一帧画布纹理的视图(resolve 目标) */
   get resolveView(): GPUTextureView {
-    return (this.canvasFramebuffer as Framebuffer & { colorAttachments: Array<{ handle: GPUTextureView }> }).colorAttachments[0].handle;
+    const fb = this.canvasFramebuffer as Framebuffer & { colorAttachments: Array<{ handle: GPUTextureView; texture?: { handle: GPUTexture } }> };
+    this.currentResolveTexture = fb.colorAttachments[0].texture?.handle ?? null;
+    return fb.colorAttachments[0].handle;
+  }
+
+  get resolveTexture(): GPUTexture | null {
+    return this.currentResolveTexture;
   }
 
   /** 多重采样附件组成的帧缓冲(先取这一帧的画布纹理,按它的尺寸建 / 重建多重采样纹理) */
@@ -698,10 +722,12 @@ class LumaMsaaSwapchainTarget extends RhiResourceBase<'render-target'> implement
 
   _beginFrame(): void {
     this.armed = true;
+    this.currentResolveTexture = null;
   }
 
   _endFrame(): void {
     this.armed = false;
+    this.currentResolveTexture = null;
   }
 
   /** 只放自己的帧缓冲与深度(共用的多重采样颜色归设备放) */
@@ -874,13 +900,22 @@ class LumaCommandList implements RhiCommandList {
   private openPass: { end(): void } | null = null;
   /** 本批命令里已经引用过的缓冲 / 纹理(录制期写入冲突检查用) */
   private readonly used = new Set<LumaRhiBuffer | LumaRhiTexture>();
+  private readonly timing: LumaGpuTimingCapture | null;
+  private readonly captureHooks: FrameCaptureHooks | null;
+  private captureFailed = false;
+  private renderPassOrdinal = 0;
+  private canvasCaptureReady = false;
 
   constructor(
     private readonly device: LumaRhiDevice,
     readonly label: string,
     private readonly stats: RhiFrameStats,
+    private readonly kind: 'frame' | 'submit',
+    private readonly frame: number | null,
   ) {
     this.native = device.gpuDevice.createCommandEncoder({ label });
+    this.timing = device.gpuProfiler.start(kind, frame, label);
+    this.captureHooks = device._takeFrameCapture(kind);
   }
 
   private get encoder(): CommandEncoder {
@@ -891,6 +926,10 @@ class LumaCommandList implements RhiCommandList {
     this.assertNoOpenPass(`beginRenderPass「${desc.label}」`);
     const target = asTarget(desc.target);
     target.assertAlive(`render pass「${desc.label}」的目标`);
+    if (this.captureHooks && !this.canvasCaptureReady && (target instanceof LumaSwapchainTarget || target instanceof LumaMsaaSwapchainTarget)) {
+      this.device._ensureCanvasCopySrc();
+      this.canvasCaptureReady = true;
+    }
     if (target instanceof LumaRhiRenderTarget) {
       for (const c of target.colors) this._use(c);
       if (target.depth) this._use(target.depth);
@@ -944,16 +983,20 @@ class LumaCommandList implements RhiCommandList {
     // 直接在原生 encoder 上开 pass,不再交给 luma 包装:luma 9.4 的 WebGPURenderPass 构造时每次都 JSON.stringify
     // 整个描述符去打(关着的)日志、经 probe 读 performance.memory、做资源统计,end 时再拆统计;这些对原生 pass
     // 没有任何作用(关调试时它的错误作用域也是空操作),每帧几十个 pass 就是几毫秒纯开销。
-    const handle = this.native.beginRenderPass({ label: desc.label, colorAttachments, depthStencilAttachment });
+    const timestampWrites = this.timing?.beginPass('render', desc.label);
+    const handle = this.native.beginRenderPass({ label: desc.label, colorAttachments, depthStencilAttachment, timestampWrites });
     this.stats.renderPasses++;
-    const enc = new LumaRenderPassEncoder(this.device, this, handle, target, desc.label, this.stats);
+    const enc = new LumaRenderPassEncoder(this.device, this, handle, target, desc.label, this.renderPassOrdinal++, this.stats);
     this.openPass = enc;
     return enc;
   }
 
   beginComputePass(label: string): RhiComputePassEncoder {
     this.assertNoOpenPass(`beginComputePass「${label}」`);
-    const pass = this.encoder.beginComputePass({ id: label });
+    const timestampWrites = this.timing?.beginPass('compute', label);
+    // luma 的 wrapper 仍负责计算管线/绑定；原生 pass 带 timestampWrites 后交给它包装。
+    const native = timestampWrites ? this.native.beginComputePass({ label, timestampWrites }) : null;
+    const pass = this.encoder.beginComputePass(native ? { id: label, handle: native } as never : { id: label });
     this.stats.computePasses++;
     const enc = new LumaComputePassEncoder(this.device, this, pass, label, this.stats);
     this.openPass = enc;
@@ -1025,14 +1068,63 @@ class LumaCommandList implements RhiCommandList {
     this.openPass = null;
   }
 
+  /** @internal pass 已结束，下一次写目标之前同步交给一次性抓帧钩子。 */
+  _renderPassEnded(target: LumaRhiRenderTarget | LumaSwapchainTarget | LumaMsaaSwapchainTarget, label: string, passOrdinal: number): void {
+    const hooks = this.captureHooks;
+    if (!hooks || this.captureFailed) return;
+    const emit = (colorIndex: number | null, format: RhiColorFormat | null, texture: GPUTexture | null, reason?: string): void => {
+      if (this.captureFailed) return;
+      const copyable = !!texture && texture.sampleCount === 1 && !!(texture.usage & GPUTextureUsage.COPY_SRC);
+      const event: RhiRenderPassEndCapture = {
+        encoder: this.native,
+        texture,
+        copyable,
+        reason: copyable ? undefined : reason ?? (!texture ? '无法取得颜色纹理' : texture.sampleCount !== 1 ? '多重采样附件没有单采样 resolve 目标' : '颜色纹理缺少 COPY_SRC 用途'),
+        submissionKind: this.kind,
+        frame: this.frame,
+        submissionLabel: this.label,
+        label,
+        passOrdinal,
+        targetLabel: target.label,
+        colorIndex,
+        width: target.width,
+        height: target.height,
+        format,
+      };
+      try { hooks.onPassEnd(event); } catch (error) {
+        this.captureFailed = true;
+        this.device._reportCaptureError(error);
+      }
+    };
+    if (!target.colorFormats.length) {
+      emit(null, null, null, '此 pass 没有颜色附件');
+      return;
+    }
+    for (let i = 0; i < target.colorFormats.length; i++) {
+      let texture: GPUTexture | null;
+      if (target instanceof LumaRhiRenderTarget) {
+        const source = target.resolves[i] ?? target.colors[i];
+        texture = (source?.handle as Texture & { handle: GPUTexture } | undefined)?.handle ?? null;
+      } else if (target instanceof LumaSwapchainTarget) {
+        texture = target.passViews().colorTexture;
+      } else {
+        texture = target.resolveTexture;
+      }
+      emit(i, target.colorFormats[i], texture);
+    }
+  }
+
   /** @internal */
   _submit(): void {
     this.assertNoOpenPass(`提交「${this.label}」`);
+    this.timing?.finishEncoding(this.native);
     const commandBuffer = this.native.finish();
     // luma 的包装只用来编码,拆掉它的资源统计(不再经它 finish / 提交)
     this.lumaEncoder?.destroy();
     this.lumaEncoder = null;
     this.device.gpuDevice.queue.submit([commandBuffer]);
+    this.timing?.submitted();
+    if (this.captureHooks) this.device._notifyCapture(this.captureFailed ? this.captureHooks.onAborted : this.captureHooks.onSubmitted);
   }
 
   /** @internal 录制失败:收尾开着的 pass,整批丢弃 */
@@ -1050,6 +1142,8 @@ class LumaCommandList implements RhiCommandList {
       /* 同上 */
     }
     this.lumaEncoder = null;
+    this.timing?.cancel();
+    this.device._notifyCapture(this.captureHooks?.onAborted);
   }
 
   private assertNoOpenPass(what: string): void {
@@ -1088,6 +1182,7 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     private readonly native: GPURenderPassEncoder,
     private readonly target: LumaRhiRenderTarget | LumaSwapchainTarget | LumaMsaaSwapchainTarget,
     private readonly label: string,
+    private readonly passOrdinal: number,
     private readonly stats: RhiFrameStats,
   ) {}
 
@@ -1193,6 +1288,7 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     this.ended = true;
     this.native.end();
     this.list._passEnded();
+    this.list._renderPassEnded(this.target, this.label, this.passOrdinal);
   }
 
   private requirePipeline(what: string): LumaRhiRenderPipeline {
@@ -1324,6 +1420,8 @@ function emptyStats(frame: number): RhiFrameStats {
   return { frame, renderPasses: 0, computePasses: 0, draws: 0, dispatches: 0, skippedDraws: 0 };
 }
 
+type FrameCaptureHooks = Parameters<RhiFrameDebugCapture['captureNextSubmission']>[0];
+
 /**
  * 丢失与恢复(对照 master 的 Pixi WebGL:webglcontextlost 里 preventDefault 让浏览器恢复上下文,webglcontextrestored 时
  * runners.contextChange,各系统丢掉旧 GL 对象、下次用时从 CPU 源重建重传)。WebGPU 丢了的设备永远不能再用,
@@ -1337,6 +1435,23 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   readonly caps: RhiCaps;
   readonly info: RhiDeviceInfo;
   readonly rootScope: RhiResourceScope;
+  readonly gpuProfiler: LumaGpuProfiler;
+  readonly frameDebugCapture: RhiFrameDebugCapture = {
+    captureNextSubmission: (hooks) => {
+      if (this._destroyed) throw new RhiError('invalid-usage', '设备已销毁，不能抓帧');
+      if (!import.meta.env.DEV && !this.recovery.gpuProfilingAllowed) {
+        throw new RhiError('unsupported', '逐 pass 抓帧仅开发构建或显式调试设备可启用');
+      }
+      if (this.armedCapture) throw new RhiError('invalid-usage', '已有待执行的逐 pass 抓帧');
+      this.armedCapture = hooks;
+      return () => {
+        if (this.armedCapture === hooks) {
+          this.armedCapture = null;
+          this._notifyCapture(hooks.onAborted);
+        }
+      };
+    },
+  };
   private _luma: Device;
   private _lost!: Promise<string>;
   private _isLost = false;
@@ -1348,6 +1463,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   private readonly releases: RhiReleaseQueue;
   private readonly listeners = new Set<RhiDiagnosticListener>();
   private readonly restoredListeners = new Set<() => void>();
+  private armedCapture: FrameCaptureHooks | null = null;
   /** 正在重建设备(同时只有一轮) */
   private restoring = false;
   /** 当前设备的画布上下文已拆(丢失后到新设备接上之前;以及销毁后) */
@@ -1372,6 +1488,13 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     this._luma = luma;
     this.caps = capsOf(luma);
     this.info = { vendor: luma.info.vendor, renderer: luma.info.renderer };
+    const gpu = (luma as Device & { handle: GPUDevice }).handle;
+    this.gpuProfiler = new LumaGpuProfiler(
+      gpu,
+      recovery.gpuProfilingAllowed ?? Boolean(gpu?.features?.has('timestamp-query')),
+      recovery.gpuProfilingInitiallyEnabled ?? false,
+      (error) => this.report(new RhiError('backend', `GPU timestamp-query 失败:${errorText(error)}`), 'warning'),
+    );
     this.releases = new RhiReleaseQueue((e) => this.report(e, 'error'));
     this.rootScope = new RhiResourceScope('设备', this, null);
     this.swapchain = new LumaSwapchainTarget(this.rootScope, this.releases, luma, luma.getDefaultCanvasContext(), this.caps.swapchainFormat);
@@ -1403,6 +1526,44 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
 
   get lastFrameStats(): RhiFrameStats {
     return this._lastFrameStats;
+  }
+
+  /** @internal 消费下一次匹配的提交，普通帧不读这个钩子。 */
+  _takeFrameCapture(kind: 'frame' | 'submit'): FrameCaptureHooks | null {
+    const hooks = this.armedCapture;
+    if (!hooks || (hooks.kind ?? 'frame') !== 'any' && (hooks.kind ?? 'frame') !== kind) return null;
+    this.armedCapture = null;
+    return hooks;
+  }
+
+  /** @internal 钩子失败不能把游戏渲染异常带进主循环。 */
+  _notifyCapture(callback: (() => void) | undefined): void {
+    if (!callback) return;
+    try { callback(); } catch (error) {
+      this.report(new RhiError('backend', `逐 pass 抓帧钩子失败:${errorText(error)}`), 'warning');
+    }
+  }
+
+  /** @internal */
+  _reportCaptureError(error: unknown): void {
+    this.report(new RhiError('backend', `逐 pass 抓帧钩子失败:${errorText(error)}`), 'warning');
+  }
+
+  /** @internal luma 9.4 常规画布只有 RENDER_ATTACHMENT；抓图前让这一帧画布纹理支持 COPY_SRC。 */
+  _ensureCanvasCopySrc(): void {
+    try {
+      const context = this.luma.getDefaultCanvasContext();
+      const native = (context as CanvasContext & { handle?: GPUCanvasContext }).handle;
+      if (!native?.getConfiguration || !native.configure) return;
+      // 先触发 luma 的待办 resize；它的 _configureDevice 会把 usage 还原，之后再加 COPY_SRC。
+      takeCanvasColorFramebuffer(context);
+      const config = native.getConfiguration();
+      if (!config || ((config.usage ?? GPUTextureUsage.RENDER_ATTACHMENT) & GPUTextureUsage.COPY_SRC)) return;
+      native.configure({ ...config, usage: (config.usage ?? GPUTextureUsage.RENDER_ATTACHMENT) | GPUTextureUsage.COPY_SRC });
+    } catch (error) {
+      // 诊断设施不可把正常绘制变成失败；后续 pass 仍按原附件画，钩子将报告 copyable=false。
+      this._reportCaptureError(error);
+    }
   }
 
   get native(): RhiNativeInterop {
@@ -1482,12 +1643,17 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     let usage = desc.usage;
     if (desc.data != null) usage |= RhiTextureUsage.COPY_DST;
     if (isImage) usage |= RhiTextureUsage.RENDER_TARGET;
+    // 开发构建的单采样颜色目标在创建设备时就带原生 COPY_SRC：之后只抓一帧也能回读早已存在的离屏目标。
+    // RHI 声明的用途位保持原样(常规 readTexture 仍按作者声明校验)；MSAA 纹理不能拿来直接复制。
+    const nativeUsage = import.meta.env.DEV && samples === 1 && (usage & RhiTextureUsage.RENDER_TARGET) && !isDepthFormat(desc.format)
+      ? usage | RhiTextureUsage.COPY_SRC
+      : usage;
     const handle = this.luma.createTexture({
       id: desc.label,
       width: desc.width,
       height: desc.height,
       format: toLumaTextureFormat(desc.format),
-      usage: toLumaTextureUsage(usage),
+      usage: toLumaTextureUsage(nativeUsage),
       mipLevels: desc.mipLevels ?? 1,
       ...(samples > 1 ? { samples } : {}),
       // 总是显式给采样状态,缺省值由 RHI 定(clamp + 线性),不依赖 luma 的设备缺省采样器
@@ -1712,7 +1878,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       this.swapchain._beginFrame();
       for (const t of this.swapchainDepth.values()) t._beginFrame();
       for (const t of this.swapchainMsaa.values()) t._beginFrame();
-      commands = new LumaCommandList(this, `帧 ${this.frameIndex}`, stats);
+      commands = new LumaCommandList(this, `帧 ${this.frameIndex}`, stats, 'frame', this.frameIndex);
       this.recordings.push(commands);
       const swapchainWithDepth = (format: RhiDepthFormat): RhiRenderTarget => {
         let t = this.swapchainDepth.get(format);
@@ -1766,7 +1932,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     let commands: LumaCommandList | null = null;
     this.releases.beginRecording();
     try {
-      commands = new LumaCommandList(this, label, stats);
+      commands = new LumaCommandList(this, label, stats, 'submit', null);
       this.recordings.push(commands);
       record(commands);
       commands._submit();
@@ -1789,6 +1955,9 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   destroy(): void {
     if (this._destroyed) return;
     this._destroyed = true;
+    this.gpuProfiler.destroy();
+    if (this.armedCapture) this._notifyCapture(this.armedCapture.onAborted);
+    this.armedCapture = null;
     this.rootScope.destroy();
     this.releaseSwapchainTargets();
     this.releases.flush();
@@ -1806,6 +1975,9 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       const reason = info?.message || info?.reason || '未知原因';
       if (device !== this._luma) return reason;
       this._isLost = true;
+      this.gpuProfiler.cancelPending();
+      if (this.armedCapture) this._notifyCapture(this.armedCapture.onAborted);
+      this.armedCapture = null;
       this.rejectPendingReadbacks(reason);
       if (this._destroyed) return reason;
       this.report(new RhiError('backend', `图形设备丢失:${reason}`), 'error');
@@ -1866,6 +2038,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       this.report(e, 'warning');
     }
     this._luma = next;
+    this.gpuProfiler.setDevice((next as Device & { handle: GPUDevice }).handle);
     this.canvasReleased = false;
     Object.assign(this.caps, capsOf(next));
     Object.assign(this.info, { vendor: next.info.vendor, renderer: next.info.renderer });

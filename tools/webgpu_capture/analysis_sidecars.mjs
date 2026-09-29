@@ -1,11 +1,17 @@
-// A game readback sidecar is a separate, per-frame image. Inspector's texture
-// table can reuse one CanvasTexture ID across frames and retain only its last
-// state, so earlier images must never be invented from that payload.
-import { copyFile, lstat, mkdir, open, readdir, unlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+// Game canvas and pass readbacks are separate evidence. Inspector texture mip
+// payloads may contain only a final state; never reuse them for earlier passes.
+import { copyFile, lstat, mkdir, open, readFile, readdir, realpath, unlink } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const MAX_SIDECAR_BYTES = 128 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 1024 * 1024;
+
+function relativePng(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 240 &&
+    value.endsWith('.png') && value.split('/').every(segment =>
+      segment !== '.' && segment !== '..' && /^[\w.-]+$/.test(segment)) ? value : null;
+}
 
 async function validPng(path) {
   const stat = await lstat(path);
@@ -21,50 +27,202 @@ async function validPng(path) {
         head.readUInt32BE(16) < 1 || head.readUInt32BE(20) < 1) {
       throw new Error('sidecar PNG header is invalid');
     }
+    return { width: head.readUInt32BE(16), height: head.readUInt32BE(20) };
   } finally {
     await file.close();
   }
 }
 
-export async function attachFrameSidecars(captureFile, outputDir, frames) {
-  const sourceDir = dirname(captureFile);
-  const names = await readdir(sourceDir);
-  const candidates = names.filter(name => /^frame-[0-9]{4}\.png$/.test(name));
-  if (!candidates.length) return { exports: [], attached: 0, errors: [], frameImage: null };
+async function readSidecarManifest(sourceDir) {
+  const path = join(sourceDir, 'sidecars.json');
+  let stat;
+  try { stat = await lstat(path); }
+  catch (error) { if (error?.code === 'ENOENT') return null; throw error; }
+  if (!stat.isFile() || stat.size > MAX_MANIFEST_BYTES) {
+    throw new Error('sidecars.json must be a regular file of at most 1 MiB');
+  }
+  const manifest = JSON.parse(await readFile(path, 'utf8'));
+  if (!manifest || manifest.schemaVersion !== 1 ||
+      !Array.isArray(manifest.frames) || !Array.isArray(manifest.passSnapshots) ||
+      !Array.isArray(manifest.gpuTimings) ||
+      (manifest.passUnavailable !== undefined && !Array.isArray(manifest.passUnavailable))) {
+    throw new Error('sidecars.json requires schemaVersion 1 and frames, passSnapshots, gpuTimings arrays');
+  }
+  return manifest;
+}
 
+async function copySidecar(sourceDir, outputDir, file, destination, expectedWidth, expectedHeight) {
+  const safe = relativePng(file);
+  if (!safe) throw new Error('sidecar PNG path must be a safe relative path');
+  const source = join(sourceDir, ...safe.split('/'));
+  const sourceRoot = await realpath(sourceDir);
+  const physicalSource = await realpath(source);
+  const pathWithinRoot = relative(sourceRoot, physicalSource);
+  if (pathWithinRoot === '..' || pathWithinRoot.startsWith(`..${sep}`) || isAbsolute(pathWithinRoot)) {
+    throw new Error('sidecar PNG escaped the capture directory');
+  }
+  const dimensions = await validPng(source);
+  if ((expectedWidth != null && dimensions.width !== expectedWidth) ||
+      (expectedHeight != null && dimensions.height !== expectedHeight)) {
+    throw new Error(`sidecar PNG size ${dimensions.width}×${dimensions.height} differs from manifest`);
+  }
+  const dest = join(outputDir, destination);
+  await mkdir(dirname(dest), { recursive: true });
+  try { await unlink(dest); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  await copyFile(source, dest);
+  return dest;
+}
+
+function frameRecord(item, frames) {
+  const ordinal = item?.frameOrdinal;
+  if (!Number.isSafeInteger(ordinal) || ordinal < 1) throw new Error('frameOrdinal must be a positive integer');
+  const frame = frames.find(value => value.frameOrdinal === ordinal);
+  if (!frame) throw new Error(`frame ${ordinal} does not exist in capture`);
+  return frame;
+}
+
+function passRecord(item, frames, passes) {
+  const frame = frameRecord(item, frames);
+  if (!Number.isSafeInteger(item.passIndex) || item.passIndex < 0) {
+    throw new Error('passIndex must be a nonnegative integer');
+  }
+  const pass = passes.find(value => value.index === item.passIndex && value.frameOrdinal === frame.frameOrdinal);
+  if (!pass) throw new Error(`pass ${item.passIndex} does not belong to frame ${frame.frameOrdinal}`);
+  return pass;
+}
+
+export async function attachFrameSidecars(captureFile, outputDir, frames, passes) {
+  const sourceDir = dirname(captureFile);
   const exports = [];
   const errors = [];
+  const passSnapshots = [];
+  const passUnavailable = [];
   let attached = 0;
-  await mkdir(join(outputDir, 'frames'), { recursive: true });
-  for (const name of candidates) {
-    const ordinal = Number(name.slice(6, 10));
-    const frame = frames.find(item => item.frameOrdinal === ordinal);
-    if (!frame) continue;
-    const source = join(sourceDir, name);
+  let manifest = null;
+  try { manifest = await readSidecarManifest(sourceDir); }
+  catch (error) { errors.push({ file: 'sidecars.json', reason: error.message }); }
+
+  // Legacy canvas readbacks predate sidecars.json and are still real per-frame
+  // readbacks. Manifest entries take precedence for the same ordinal.
+  const names = await readdir(sourceDir);
+  const legacy = (manifest ? [] : names.filter(name => /^frame-[0-9]{4}\.png$/.test(name))).map(name => ({
+    frameOrdinal: Number(name.slice(6, 10)), file: name, source: 'legacy canvas readback',
+  }));
+  const frameEntries = [...legacy, ...(manifest?.frames ?? []).map(item =>
+    ({ ...item, source: 'sidecars.json canvas readback' }))];
+  const attachedFrames = new Set();
+  for (const item of frameEntries) {
     try {
-      await validPng(source);
-      const relativeFile = `frames/${ordinal}.png`;
-      const dest = join(outputDir, relativeFile);
-      try { await unlink(dest); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
-      await copyFile(source, dest);
+      const frame = frameRecord(item, frames);
+      const relativeFile = `frames/${frame.frameOrdinal}.png`;
+      const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile, item.width, item.height);
       frame.imageFile = relativeFile;
-      frame.imageSource = `game canvas readback sidecar ${name}`;
+      frame.imageSource = `game canvas readback sidecar ${item.file}`;
+      frame.imageEvidence = item.source;
       delete frame.imageReason;
       exports.push(dest);
-      attached++;
+      if (!attachedFrames.has(frame.frameOrdinal)) { attached++; attachedFrames.add(frame.frameOrdinal); }
     } catch (error) {
-      errors.push({ frameOrdinal: ordinal, file: name, reason: error.message });
+      errors.push({ frameOrdinal: item.frameOrdinal, file: item.file, reason: error.message });
     }
   }
 
+  const snapshotKeys = new Set();
+  for (const item of manifest?.passSnapshots ?? []) {
+    try {
+      const pass = passRecord(item, frames, passes);
+      if (!Number.isSafeInteger(item.afterCommandIndex) || item.afterCommandIndex !== pass.endCommand) {
+        throw new Error('afterCommandIndex must equal this pass end command');
+      }
+      if (!Number.isSafeInteger(item.textureId) ||
+          !pass.targets?.some(target => target.outputTextureId === item.textureId)) {
+        throw new Error('textureId must name a render target of this pass');
+      }
+      const key = `${item.frameOrdinal}:${item.passIndex}:${item.textureId}`;
+      if (snapshotKeys.has(key)) throw new Error('duplicate pass snapshot');
+      const relativeFile = `pass-snapshots/frame-${item.frameOrdinal}-pass-${item.passIndex}-texture-${item.textureId}.png`;
+      const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile, item.width, item.height);
+      snapshotKeys.add(key);
+      const snapshot = {
+        frameOrdinal: item.frameOrdinal, passIndex: item.passIndex,
+        afterCommandIndex: item.afterCommandIndex, textureId: item.textureId,
+        imageFile: relativeFile, width: item.width ?? null, height: item.height ?? null,
+        format: typeof item.format === 'string' ? item.format.slice(0, 80) : null,
+        label: typeof item.label === 'string' ? item.label.slice(0, 160) : pass.label,
+        source: typeof item.source === 'string' ? item.source.slice(0, 160) : 'game pass-end GPU readback sidecar',
+      };
+      (pass.snapshots ??= []).push(snapshot);
+      passSnapshots.push(snapshot);
+      exports.push(dest);
+    } catch (error) {
+      errors.push({ frameOrdinal: item?.frameOrdinal, passIndex: item?.passIndex, file: item?.file, reason: error.message });
+    }
+  }
+
+  for (const item of manifest?.passUnavailable ?? []) {
+    try {
+      const pass = passRecord(item, frames, passes);
+      if (typeof item.reason !== 'string' || !item.reason.trim()) {
+        throw new Error('unavailable pass output needs a reason');
+      }
+      const partial = Array.isArray(pass.snapshots) && pass.snapshots.length > 0;
+      const key = partial ? 'partialOutputUnavailableReason' : 'outputUnavailableReason';
+      pass[key] = [pass[key], item.reason.slice(0, 500)].filter(Boolean).join('；');
+      passUnavailable.push({ frameOrdinal: item.frameOrdinal, passIndex: item.passIndex,
+        reason: item.reason.slice(0, 500), partial });
+    } catch (error) {
+      errors.push({ frameOrdinal: item?.frameOrdinal, passIndex: item?.passIndex, reason: error.message });
+    }
+  }
+
+  const timingKeys = new Set();
+  const gpuTimings = [];
+  for (const item of manifest?.gpuTimings ?? []) {
+    try {
+      const pass = passRecord(item, frames, passes);
+      if (item.source !== 'webgpu-timestamp-query' ||
+          typeof item.durationMs !== 'number' || !Number.isFinite(item.durationMs) || item.durationMs < 0) {
+        throw new Error('GPU duration needs a finite nonnegative ms value from webgpu-timestamp-query');
+      }
+      const key = `${item.frameOrdinal}:${item.passIndex}`;
+      if (timingKeys.has(key)) throw new Error('duplicate GPU timing');
+      timingKeys.add(key);
+      pass.gpuTiming = { durationMs: item.durationMs, source: item.source };
+      gpuTimings.push(pass.gpuTiming);
+    } catch (error) {
+      errors.push({ frameOrdinal: item?.frameOrdinal, passIndex: item?.passIndex, reason: error.message });
+    }
+  }
+
+  // Inspector may record mapAsync after the final queue.submit as an inferred
+  // trailing frame with no render. Use the last *actual canvas readback*.
+  const last = [...frames].reverse().find(frame =>
+    frame.imageSource?.startsWith('game canvas readback sidecar'));
   let frameImage = null;
-  const last = frames.at(-1);
   if (last?.imageSource?.startsWith('game canvas readback sidecar')) {
     const dest = join(outputDir, 'frame.png');
+    // analysis_png may have hard-linked frame.png to a texture-state snapshot.
+    // Break that link before replacing it with the independent game readback.
     try { await unlink(dest); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
     await copyFile(join(outputDir, last.imageFile), dest);
     frameImage = 'frame.png';
-    exports.push(dest);
+    exports.push(join(outputDir, frameImage));
   }
-  return { exports, attached, errors, frameImage };
+  const status = manifest?.gpuProfilerStatus;
+  const gpuProfilerStatus = status && typeof status.state === 'string' ? {
+    state: status.state.slice(0, 80),
+    reason: typeof status.reason === 'string' ? status.reason.slice(0, 500) : null,
+  } : null;
+  return {
+    exports, attached, errors, frameImage, passSnapshots, passUnavailable,
+    manifest: manifest ? { schemaVersion: 1, file: 'sidecars.json' } : null,
+    gpuProfilerStatus,
+    passCaptureWarning: typeof manifest?.passCaptureWarning === 'string' ?
+      manifest.passCaptureWarning.slice(0, 500) : null,
+    gpuTiming: gpuTimings.length ? {
+      timedPasses: gpuTimings.length,
+      sumPassDurationMs: Math.round(gpuTimings.reduce((sum, value) => sum + value.durationMs, 0) * 1000) / 1000,
+      source: 'webgpu-timestamp-query',
+    } : null,
+  };
 }

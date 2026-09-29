@@ -6,7 +6,11 @@ import { join } from 'node:path';
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const MAX_IMAGE_BYTES = 128 * 1024 * 1024;
-const FORMATS = new Set(['rgba8unorm', 'rgba8unorm-srgb', 'bgra8unorm', 'bgra8unorm-srgb']);
+const FORMAT_BYTES = new Map([
+  ['rgba8unorm', 4], ['rgba8unorm-srgb', 4],
+  ['bgra8unorm', 4], ['bgra8unorm-srgb', 4],
+  ['rgba16float', 8], ['r8unorm', 1],
+]);
 const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
   let value = index;
   for (let bit = 0; bit < 8; bit++) value = value & 1 ? (value >>> 1) ^ 0xedb88320 : value >>> 1;
@@ -57,7 +61,8 @@ async function readExactly(handle, bytes, position) {
 }
 
 function payloadFor(texture, payloads) {
-  if (!FORMATS.has(texture.format)) {
+  const bytesPerPixel = FORMAT_BYTES.get(texture.format);
+  if (!bytesPerPixel) {
     return { status: 'unsupported-format', reason: `PNG export does not support ${texture.format ?? 'unknown'} texture format` };
   }
   if (texture.dimension !== '2d' || texture.depthOrArrayLayers !== 1 ||
@@ -65,9 +70,10 @@ function payloadFor(texture, payloads) {
     return { status: 'unsupported-layout', reason: 'PNG export supports single-layer, non-multisampled 2D textures' };
   }
   const { width, height } = texture;
-  const tightRow = width * 4;
+  const tightRow = width * bytesPerPixel;
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) ||
-      width < 1 || height < 1 || tightRow * height > MAX_IMAGE_BYTES) {
+      width < 1 || height < 1 || tightRow * height > MAX_IMAGE_BYTES ||
+      width * height * 4 > MAX_IMAGE_BYTES) {
     return { status: 'unsupported-size', reason: 'texture dimensions exceed the 128 MiB PNG export limit' };
   }
   const mip = texture.mipLevels.find(level => level.mipLevel === 0);
@@ -85,6 +91,21 @@ function payloadFor(texture, payloads) {
   return { status: 'ready', payload, stride };
 }
 
+function halfToFloat(bits) {
+  const sign = bits & 0x8000 ? -1 : 1;
+  const exponent = (bits >>> 10) & 31;
+  const fraction = bits & 1023;
+  if (exponent === 31) return fraction ? NaN : sign * Infinity;
+  if (exponent === 0) return sign * 2 ** -14 * (fraction / 1024);
+  return sign * 2 ** (exponent - 15) * (1 + fraction / 1024);
+}
+
+function previewByte(value) {
+  // An 8-bit PNG is a display preview. Keep the conversion deterministic and
+  // disclose clipping; the original float payload is not a rendered pass.
+  return Math.round(Math.min(1, Math.max(0, Number.isNaN(value) ? 0 : value)) * 255);
+}
+
 function rgbaFromPayload(source, texture, stride) {
   const { width, height } = texture;
   const rgba = Buffer.allocUnsafe(width * height * 4);
@@ -92,6 +113,24 @@ function rgbaFromPayload(source, texture, stride) {
   for (let y = 0; y < height; y++) {
     const srcRow = y * stride;
     const dstRow = y * width * 4;
+    if (texture.format === 'r8unorm') {
+      for (let x = 0; x < width; x++) {
+        const dst = dstRow + x * 4;
+        rgba[dst] = rgba[dst + 1] = rgba[dst + 2] = source[srcRow + x];
+        rgba[dst + 3] = 255;
+      }
+      continue;
+    }
+    if (texture.format === 'rgba16float') {
+      for (let x = 0; x < width; x++) {
+        const src = srcRow + x * 8;
+        const dst = dstRow + x * 4;
+        for (let channel = 0; channel < 4; channel++) {
+          rgba[dst + channel] = previewByte(halfToFloat(source.readUInt16LE(src + channel * 2)));
+        }
+      }
+      continue;
+    }
     if (!bgra) {
       source.copy(rgba, dstRow, srcRow, srcRow + width * 4);
       continue;
@@ -147,6 +186,9 @@ export async function exportTextureImages(capture, outputDir, textures, frames) 
       texture.imageStatus = 'exported';
       texture.imageFile = `textures/${fileName}`;
       texture.imageSource = 'capture texture mip 0 snapshot; not a per-draw output';
+      texture.imagePreviewTransform = texture.format === 'rgba16float'
+        ? 'float16 线性值裁剪到 [0,1] 后转为 8 位 PNG；HDR 和负值会被截断。'
+        : texture.format === 'r8unorm' ? 'R 通道复制为灰度 RGB。' : '通道字节复制为 PNG。';
       texture.rowStrideBytes = choice.stride;
       texture.payloadId = choice.payload.id;
       exports.push(filePath);

@@ -16,6 +16,9 @@ const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'
 const MAX_CAPTURE_BYTES = 512 * 1024 * 1024;
 const MAX_METADATA_BYTES = 64 * 1024 * 1024;
 const MAX_EXPORT_FILES = 256;
+const MAX_BUFFER_PREVIEW_BYTES = 1024;
+const MAX_AUTO_BUFFER_FILES = 1024;
+const MAX_AUTO_BUFFER_BYTES = 256 * 1024 * 1024;
 const DRAW = new Set(['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect']);
 const DISPATCH = new Set(['dispatchWorkgroups', 'dispatchWorkgroupsIndirect']);
 const COPY = new Set(['copyBufferToBuffer', 'copyBufferToTexture', 'copyTextureToBuffer', 'copyTextureToTexture']);
@@ -138,7 +141,7 @@ function summarizePasses(commands) {
         draws: 0, dispatches: 0, pipelineBinds: 0, bindGroupBinds: 0,
       };
       if (typeof cmd.duration === 'number' && Number.isFinite(cmd.duration)) {
-        current.durationMs = cmd.duration;
+        current.inspectorDurationMs = cmd.duration;
       }
       passes.push(current);
     } else if (current && method === 'end') {
@@ -163,7 +166,6 @@ export function summarizeCapture(capture) {
   const passes = summarizePasses(metadata.commands);
   const details = buildCaptureDetails(metadata, passes);
   const payloadIndex = indexPayloads(payloads, details);
-  const gpuTimedPasses = passes.filter(pass => typeof pass.durationMs === 'number');
   const stats = {
     drawCalls: [...DRAW].reduce((n, method) => n + (methodCounts[method] || 0), 0),
     dispatches: [...DISPATCH].reduce((n, method) => n + (methodCounts[method] || 0), 0),
@@ -177,7 +179,7 @@ export function summarizeCapture(capture) {
     shaderCreatesInCapture: methodCounts.createShaderModule || 0,
   };
   const report = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     captureKind: 'webgpu-inspector', format: 'wgpuc',
     captureFile, bytes: size,
     inspector: {
@@ -193,11 +195,8 @@ export function summarizeCapture(capture) {
     frameTextureId: details.frameTextureId,
     frameBoundaryNote: 'Frame ordinals infer one frame per queue.submit; this is not an Inspector-native frame boundary.',
     imageNote: 'Texture PNGs are capture texture-state snapshots, not outputs after individual draws. Per-frame sidecar images, when present, come from game canvas readback.',
-    bufferPayloadNote: 'Draw bufferPayloads refer to bytes recorded when buffers or bind groups were bound, not a post-draw GPU readback. Raw payload IDs can be exported with cli.mjs export --payloads.',
-    gpuTiming: gpuTimedPasses.length ? {
-      timedPasses: gpuTimedPasses.length,
-      sumPassDurationMs: Math.round(gpuTimedPasses.reduce((sum, pass) => sum + pass.durationMs, 0) * 1000) / 1000,
-    } : null,
+    bufferPayloadNote: 'Draw bufferPayloads are Inspector bytes recorded when each buffer or bind group was bound. They are not post-draw GPU readback. Automatically exported payloads have complete .bin files and up to 1024 preview bytes; bufferExportSummary and each omitted payload state any export limit.',
+    gpuTiming: null,
     validationErrorCount: validErrors.length,
     validationErrors: validErrors.slice(0, 30).map(value => ({
       message: String(value?.message ?? value).slice(0, 2000),
@@ -256,6 +255,54 @@ function selectedPayloads(payloads, requested) {
   });
 }
 
+async function exportBufferPayloads(capture, outputDir, report) {
+  const used = report.payloads.filter(item => item.bufferIds.length || item.sourceCommandIndexes.length);
+  const summary = { considered: used.length, exported: 0, bytes: 0, omitted: 0,
+    maxFiles: MAX_AUTO_BUFFER_FILES, maxBytes: MAX_AUTO_BUFFER_BYTES };
+  report.bufferExportSummary = summary;
+  if (!used.length) return [];
+  const directory = join(outputDir, 'buffers');
+  await mkdir(directory);
+  const exports = [];
+  const handle = await open(capture.captureFile, 'r');
+  try {
+    for (const item of used) {
+      const payload = capture.payloads[item.id];
+      if (!payload) continue;
+      const reason = summary.exported >= MAX_AUTO_BUFFER_FILES ?
+        `自动导出达到 ${MAX_AUTO_BUFFER_FILES} 个文件上限；可用 CLI 按 ID 导出` :
+        payload.bytes > MAX_AUTO_BUFFER_BYTES - summary.bytes ?
+          '自动导出达到 256 MiB 总字节上限；可用 CLI 按 ID 导出' : null;
+      if (reason) {
+        item.bufferExportReason = reason;
+        summary.omitted++;
+        continue;
+      }
+      const name = `${String(item.id).padStart(6, '0')}.bin`;
+      const file = join(directory, name);
+      if (payload.bytes) {
+        await pipeline(
+          createReadStream(capture.captureFile, { start: payload.offset, end: payload.offset + payload.bytes - 1 }),
+          createWriteStream(file, { flags: 'wx' }),
+        );
+      } else {
+        await writeFile(file, Buffer.alloc(0), { flag: 'wx' });
+      }
+      item.bufferFile = `buffers/${name}`;
+      const preview = Buffer.alloc(Math.min(payload.bytes, MAX_BUFFER_PREVIEW_BYTES));
+      if (preview.length) await readExactly(handle, preview, payload.offset);
+      item.previewBase64 = preview.toString('base64');
+      item.previewBytes = preview.length;
+      exports.push(file);
+      summary.exported++;
+      summary.bytes += payload.bytes;
+    }
+  } finally {
+    await handle.close();
+  }
+  return exports;
+}
+
 export async function analyzeCapture(path, options = {}) {
   const capture = await readCapture(path);
   const report = summarizeCapture(capture);
@@ -273,6 +320,7 @@ export async function analyzeCapture(path, options = {}) {
   // Check the realized directory too; a junction in an existing parent cannot move output into Git.
   await outsideWorktrees(await realpath(outputDir));
   const exports = [];
+  exports.push(...await exportBufferPayloads(capture, outputDir, report));
   if (options.exportMetadata) {
     const metadataFile = join(outputDir, 'metadata.json');
     await writeFile(metadataFile, JSON.stringify(capture.metadata) + '\n', { flag: 'wx' });
@@ -303,10 +351,16 @@ export async function analyzeCapture(path, options = {}) {
     }
   }
   const images = await exportTextureImages(capture, outputDir, report.resources.textures, report.frames);
-  const sidecars = await attachFrameSidecars(capture.captureFile, outputDir, report.frames);
+  const sidecars = await attachFrameSidecars(capture.captureFile, outputDir, report.frames, report.passes);
   report.frameImage = sidecars.frameImage ?? images.frameImage;
   report.imageExportSummary = { ...images.summary, sidecarFrames: sidecars.attached };
   report.sidecarErrors = sidecars.errors;
+  report.sidecarManifest = sidecars.manifest;
+  report.passSnapshots = sidecars.passSnapshots;
+  report.passUnavailable = sidecars.passUnavailable;
+  report.gpuProfilerStatus = sidecars.gpuProfilerStatus;
+  report.passCaptureWarning = sidecars.passCaptureWarning;
+  report.gpuTiming = sidecars.gpuTiming;
   exports.push(...images.exports, ...sidecars.exports);
 
   const viewerSourceDir = dirname(fileURLToPath(import.meta.url));
