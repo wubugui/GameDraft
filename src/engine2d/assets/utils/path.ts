@@ -216,7 +216,10 @@ export const path = {
     let root = '';
     if (path.startsWith('/')) root = '/';
     else root = this.getProtocol(path);
-    if (this.isUrl(path)) {
+    // A packaged game uses a hierarchical custom scheme (gamedraft://game/).
+    // Keep its authority when resolving root-relative assets; otherwise
+    // /resources/x.png becomes gamedraft://resources/x.png.
+    if (/^[^/:]+:\/\/[^/]+/.test(path)) {
       const index = path.indexOf('/', root.length);
       if (index !== -1) root = path.slice(0, index);
       else root = path;

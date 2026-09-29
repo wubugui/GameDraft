@@ -124,7 +124,11 @@ class WorkerManagerClass {
 
   /** 在 worker 里载一张图为 ImageBitmap(只把 alphaMode 传过去,决定解码期是否预乘) */
   loadImageBitmap(src: string, asset?: { data?: { alphaMode?: string } }): Promise<ImageBitmap> {
-    return this._run('loadImageBitmap', [src, asset?.data?.alphaMode]) as Promise<ImageBitmap>;
+    // Blob worker has its own blob: base URL. A root-relative game asset can
+    // resolve on the page but cannot be parsed by fetch() inside that worker.
+    const pageUrl = globalThis.location?.href;
+    const workerUrl = pageUrl ? new URL(src, pageUrl).href : src;
+    return this._run('loadImageBitmap', [workerUrl, asset?.data?.alphaMode]) as Promise<ImageBitmap>;
   }
 
   private async _initWorkers(): Promise<void> {
