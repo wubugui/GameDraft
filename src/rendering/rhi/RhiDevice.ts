@@ -148,6 +148,8 @@ export interface RhiCommandList {
   readonly label: string;
   /** 仅本次提交命中一次性抓帧钩子时为 true；录制方可据此暴露逐 Draw 的中间结果。 */
   readonly frameDebugCaptureActive?: boolean;
+  /** 仅抓帧时、在逐 Draw 原生 pass 开始前调用；同一命令编码器读取该 Draw 实际绑定的输入。 */
+  captureDrawInputs?(pipeline: RhiRenderPipeline, bindings: RhiBindings, geometry?: RhiDrawGeometryCapture): void;
   beginRenderPass(desc: RhiRenderPassDesc): RhiRenderPassEncoder;
   beginComputePass(label: string): RhiComputePassEncoder;
   copyBufferToBuffer(src: RhiBuffer, srcOffset: number, dst: RhiBuffer, dstOffset: number, size: number): void;
@@ -232,11 +234,81 @@ export interface RhiRenderPassEndCapture {
   readonly format: RhiColorFormat | null;
 }
 
+/** Pass 结束时的真实深度 / 模板附件，供一次性诊断在同一命令编码器中读取。 */
+export interface RhiDepthStencilAspectCapture {
+  readonly encoder: GPUCommandEncoder;
+  readonly texture: GPUTexture | null;
+  readonly textureId: number | null;
+  readonly viewId: number | null;
+  readonly submissionKind: 'frame' | 'submit';
+  readonly frame: number | null;
+  readonly submissionLabel: string;
+  readonly label: string;
+  readonly passOrdinal: number;
+  readonly targetLabel: string;
+  readonly aspect: 'depth' | 'stencil';
+  readonly width: number;
+  readonly height: number;
+  readonly sourceFormat: RhiDepthFormat;
+  readonly sampleCount: number;
+  /** 权限 / 附件获取失败的准确原因。 */
+  readonly reason?: string;
+}
+
+/** 逐 Draw pass 开始前的一个真实 shader 纹理绑定。无 Inspector 身份或不可回读时 reason 明确指出原因。 */
+export interface RhiDrawInputCapture {
+  readonly encoder: GPUCommandEncoder;
+  readonly passOrdinal: number;
+  readonly bindingName: string;
+  readonly groupSlot: number;
+  readonly binding: number;
+  readonly texture: GPUTexture | null;
+  readonly textureId: number | null;
+  readonly viewId: number | null;
+  readonly mipLevel: number;
+  readonly arrayLayer: number;
+  readonly width: number;
+  readonly height: number;
+  readonly format: string;
+  readonly reason?: string;
+}
+
+export interface RhiDrawGeometryCapture {
+  readonly streams: readonly { name: string; buffer: RhiBuffer }[];
+  readonly indexBuffer?: RhiBuffer | null;
+  readonly firstIndex?: number;
+  readonly indexCount?: number;
+}
+
+/** 一个 Draw 开始前的实际 GPU Buffer 绑定；字节拷贝在同一原生命令编码器中执行。 */
+export interface RhiDrawBufferCapture {
+  readonly encoder: GPUCommandEncoder;
+  readonly passOrdinal: number;
+  readonly role: 'uniform' | 'storage' | 'read-only-storage' | 'vertex' | 'index';
+  readonly bindingName?: string;
+  readonly groupSlot?: number;
+  readonly binding?: number;
+  readonly streamName?: string;
+  readonly vertexSlot?: number;
+  readonly indexFormat?: 'uint16' | 'uint32';
+  readonly buffer: GPUBuffer | null;
+  readonly bufferId: number | null;
+  readonly bufferLabel: string;
+  readonly totalSize: number;
+  readonly offset: number;
+  readonly size: number;
+  readonly rangeScope: 'binding' | 'draw-indices' | 'bound-suffix';
+  readonly reason?: string;
+}
+
 export interface RhiFrameDebugCapture {
   /** 只拦截下一次匹配的命令提交，回调同步执行；onSubmitted 后可以异步 map 回读缓冲。 */
   captureNextSubmission(hooks: {
     kind?: 'frame' | 'submit' | 'any';
+    onDrawInput?: (input: RhiDrawInputCapture) => void;
+    onDrawBuffer?: (buffer: RhiDrawBufferCapture) => void;
     onPassEnd: (pass: RhiRenderPassEndCapture) => void;
+    onAspectEnd?: (aspect: RhiDepthStencilAspectCapture) => void;
     onSubmitted?: () => void;
     onAborted?: () => void;
   }): () => void;

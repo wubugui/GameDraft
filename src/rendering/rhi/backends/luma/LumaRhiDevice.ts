@@ -56,6 +56,10 @@ import type {
   RhiDeviceInfo,
   RhiDiagnosticListener,
   RhiDiagnosticSeverity,
+  RhiDepthStencilAspectCapture,
+  RhiDrawBufferCapture,
+  RhiDrawGeometryCapture,
+  RhiDrawInputCapture,
   RhiFrame,
   RhiFrameDebugCapture,
   RhiFrameStats,
@@ -515,6 +519,7 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
     private readonly format: RhiColorFormat,
     /** 附带的深度 / 模板格式(本目标持有、随画布尺寸重建) */
     private readonly depth: RhiDepthFormat | null = null,
+    private readonly diagnosticDepthUsage = false,
   ) {
     super('render-target', depth ? `画布后备缓冲+${depth}` : '画布后备缓冲', scope, releases);
   }
@@ -549,10 +554,15 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
       t?.destroy();
       t = this.depthTex = this.luma.createTexture({
         id: `${this.label} 深度`, width: w, height: h, format: toLumaTextureFormat(depth),
-        usage: toLumaTextureUsage(RhiTextureUsage.RENDER_TARGET),
+        usage: toLumaTextureUsage(RhiTextureUsage.RENDER_TARGET |
+          (this.diagnosticDepthUsage ? RhiTextureUsage.SAMPLED | RhiTextureUsage.COPY_SRC : 0)),
       } as never);
     }
     return (t as Texture & { view: { handle: GPUTextureView } }).view.handle;
+  }
+
+  get depthTextureHandle(): GPUTexture | null {
+    return (this.depthTex as Texture & { handle: GPUTexture } | null)?.handle ?? null;
   }
 
   get width(): number {
@@ -654,6 +664,7 @@ class LumaMsaaSwapchainTarget extends RhiResourceBase<'render-target'> implement
     private readonly format: RhiColorFormat,
     private readonly colorStore: LumaMsaaSwapchainColor,
     private readonly depth: RhiDepthFormat | null,
+    private readonly diagnosticDepthUsage = false,
   ) {
     super('render-target', `画布后备缓冲 MSAA×${colorStore.sampleCount}${depth ? `+${depth}` : ''}`, scope, releases);
   }
@@ -689,7 +700,8 @@ class LumaMsaaSwapchainTarget extends RhiResourceBase<'render-target'> implement
       this.depthTex = this.depth
         ? this.luma.createTexture({
             id: `${this.label} 深度`, width: w, height: h, format: toLumaTextureFormat(this.depth),
-            usage: toLumaTextureUsage(RhiTextureUsage.RENDER_TARGET), samples: this.sampleCount,
+            usage: toLumaTextureUsage(RhiTextureUsage.RENDER_TARGET |
+              (this.diagnosticDepthUsage ? RhiTextureUsage.SAMPLED : 0)), samples: this.sampleCount,
           } as never)
         : null;
       this.fb = this.luma.createFramebuffer({
@@ -698,6 +710,10 @@ class LumaMsaaSwapchainTarget extends RhiResourceBase<'render-target'> implement
       this.fbGeneration = this.colorStore.generation;
     }
     return this.fb;
+  }
+
+  get depthTextureHandle(): GPUTexture | null {
+    return (this.depthTex as Texture & { handle: GPUTexture } | null)?.handle ?? null;
   }
 
   get width(): number {
@@ -775,6 +791,11 @@ function stepNumber(node: BindCacheNode, key: number): BindCacheNode {
   return next;
 }
 
+function inspectorResourceId(resource: object | null | undefined): number | null {
+  const id = (resource as { __id?: unknown } | null | undefined)?.__id;
+  return typeof id === 'number' && Number.isSafeInteger(id) && id >= 0 ? id : null;
+}
+
 /**
  * 一条管线的绑定计划(按着色器布局算一次)+ bind group 缓存。
  *
@@ -793,6 +814,11 @@ function stepNumber(node: BindCacheNode, key: number): BindCacheNode {
 class LumaBindingPlan {
   /** 着色器声明的绑定名(布局顺序) */
   private readonly names: readonly string[];
+  /** 着色器实际读取的纹理绑定；不包含名字碰巧相同却未声明的资源。 */
+  readonly inputTextureBindings: readonly { name: string; groupSlot: number; binding: number }[];
+  readonly inputBufferBindings: readonly {
+    name: string; groupSlot: number; binding: number; role: 'uniform' | 'storage' | 'read-only-storage';
+  }[];
   /** names[i] + Sampler:按约定配给纹理 names[i] 的采样器名 */
   private readonly pairedSampler: readonly string[];
   /** names[i] + Sampler 本身也是声明了的绑定:采样器随纹理进 bind group,键里要带上纹理当前的采样器 */
@@ -804,6 +830,15 @@ class LumaBindingPlan {
 
   constructor(layout: ShaderLayout | ComputeShaderLayout) {
     this.names = layout.bindings.map((b) => b.name);
+    this.inputTextureBindings = layout.bindings.filter((binding) =>
+      binding.type === 'texture' ||
+      (binding.type === 'storage' && 'format' in binding && binding.access !== 'write-only'),
+    ).map((binding) => ({ name: binding.name, groupSlot: binding.group, binding: binding.location }));
+    this.inputBufferBindings = layout.bindings.filter((binding) =>
+      binding.type === 'uniform' || binding.type === 'read-only-storage' ||
+      (binding.type === 'storage' && !('format' in binding)),
+    ).map((binding) => ({ name: binding.name, groupSlot: binding.group, binding: binding.location,
+      role: binding.type as 'uniform' | 'storage' | 'read-only-storage' }));
     const declared = new Set(this.names);
     this.pairedSampler = this.names.map((n) => n + SAMPLER_SUFFIX);
     this.pairedSamplerDeclared = this.pairedSampler.map((n) => declared.has(n));
@@ -922,6 +957,114 @@ class LumaCommandList implements RhiCommandList {
 
   private get encoder(): CommandEncoder {
     return (this.lumaEncoder ??= this.device.luma.createCommandEncoder({ id: this.label, handle: this.native } as never));
+  }
+
+  /** 抓帧专用：恰在该 Draw 的原生 pass 打开前，按真实管线布局上报输入。 */
+  captureDrawInputs(pipeline: RhiRenderPipeline, bindings: RhiBindings, geometry?: RhiDrawGeometryCapture): void {
+    const textureCallback = this.captureHooks?.onDrawInput;
+    const bufferCallback = this.captureHooks?.onDrawBuffer;
+    if ((!textureCallback && !bufferCallback) || this.captureFailed || !(pipeline instanceof LumaRhiRenderPipeline)) return;
+    const emit = (input: Omit<RhiDrawInputCapture, 'encoder' | 'passOrdinal'>): void => {
+      if (!textureCallback || this.captureFailed) return;
+      try { textureCallback({ encoder: this.native, passOrdinal: this.renderPassOrdinal, ...input }); }
+      catch (error) {
+        this.captureFailed = true;
+        this.device._reportCaptureError(error);
+      }
+    };
+    const emitBuffer = (data: Omit<RhiDrawBufferCapture, 'encoder' | 'passOrdinal'>): void => {
+      if (!bufferCallback || this.captureFailed) return;
+      try { bufferCallback({ encoder: this.native, passOrdinal: this.renderPassOrdinal, ...data }); }
+      catch (error) {
+        this.captureFailed = true;
+        this.device._reportCaptureError(error);
+      }
+    };
+    for (const slot of pipeline.bindings.inputTextureBindings) {
+      const { name: bindingName, groupSlot, binding } = slot;
+      const resource = bindings[bindingName];
+      const source = resource instanceof LumaRhiTexture ? resource : null;
+      const native = source?.handle.handle as GPUTexture | undefined;
+      const view = (source?.handle as Texture & { view?: { handle?: GPUTextureView; props?: {
+        baseMipLevel?: number; mipLevelCount?: number; baseArrayLayer?: number; arrayLayerCount?: number;
+        dimension?: string;
+      } } } | undefined)?.view;
+      const textureId = inspectorResourceId(native);
+      const viewId = inspectorResourceId(view?.handle);
+      const format = source?.format ?? '';
+      const baseMip = view?.props?.baseMipLevel ?? 0;
+      const mipCount = view?.props?.mipLevelCount;
+      const baseLayer = view?.props?.baseArrayLayer ?? 0;
+      const layers = view?.props?.arrayLayerCount ?? native?.depthOrArrayLayers ?? 1;
+      const dimension = view?.props?.dimension ?? '2d';
+      const validMipRange = typeof mipCount === 'number' && Number.isSafeInteger(mipCount) && mipCount > 0 &&
+        Number.isSafeInteger(baseMip) && baseMip >= 0 && baseMip + mipCount <= (source?.mipLevels ?? 0);
+      const reason = pipeline.failed ? '管线编译失败，此 Draw 未执行'
+        : !source || !native || source.destroyed ? '着色器声明了纹理但未绑定有效的 RHI 纹理'
+        : textureId === null || viewId === null ? 'WebGPU Inspector 未提供纹理或视图 ID，无法关联此 Draw 输入'
+        : !validMipRange
+          ? '绑定视图的 mip 范围无法确认，停止回读以免误标'
+        : dimension !== '2d' || native.dimension !== '2d' || layers !== 1 || native.depthOrArrayLayers !== 1 || baseLayer !== 0
+          ? '仅支持单层 2D 输入纹理；此绑定使用数组层、立方体或 3D 视图'
+        : native.sampleCount !== 1 ? '多重采样输入纹理无法直接复制'
+        : (native.usage & GPUTextureUsage.COPY_SRC) === 0 ? '输入纹理缺少 COPY_SRC 用途'
+        : format.startsWith('depth') ? '深度输入纹理需专用转换回读'
+        : undefined;
+      const count = validMipRange ? mipCount! : 1;
+      for (let level = baseMip; level < baseMip + count; level++) {
+        emit({ bindingName, groupSlot, binding, texture: reason ? null : native ?? null, textureId, viewId,
+          mipLevel: level, arrayLayer: baseLayer,
+          width: source ? Math.max(1, Math.floor(source.width / 2 ** level)) : 0,
+          height: source ? Math.max(1, Math.floor(source.height / 2 ** level)) : 0,
+          format, reason });
+      }
+    }
+    if (!bufferCallback) return;
+    const reportBuffer = (source: LumaRhiBuffer | null, data: Omit<RhiDrawBufferCapture,
+      'encoder' | 'passOrdinal' | 'buffer' | 'bufferId' | 'bufferLabel' | 'totalSize' | 'reason'>): void => {
+      const native = (source?.handle as LumaBuffer & { handle?: GPUBuffer } | undefined)?.handle ?? null;
+      const bufferId = inspectorResourceId(native);
+      const reason = pipeline.failed ? '管线编译失败，此 Draw 未执行'
+        : !source || source.destroyed || !native ? 'Draw 绑定了无效的 RHI Buffer'
+        : bufferId === null ? 'WebGPU Inspector 未提供 Buffer ID，无法关联此 Draw 输入'
+        : (native.usage & GPUBufferUsage.COPY_SRC) === 0 ? 'Buffer 缺少 COPY_SRC 用途'
+        : !Number.isSafeInteger(data.offset) || !Number.isSafeInteger(data.size) ||
+          data.offset < 0 || data.size <= 0 || data.offset + data.size > source.size
+          ? 'Draw Buffer 绑定范围无效或为空' : undefined;
+      emitBuffer({ ...data, buffer: reason ? null : native, bufferId, bufferLabel: source?.label ?? '',
+        totalSize: source?.size ?? 0, reason });
+    };
+    for (const slot of pipeline.bindings.inputBufferBindings) {
+      const resource = bindings[slot.name];
+      const source = resource instanceof LumaRhiBuffer ? resource
+        : resource && typeof resource === 'object' && 'buffer' in resource && resource.buffer instanceof LumaRhiBuffer
+          ? resource.buffer : null;
+      const offset = resource && typeof resource === 'object' && 'buffer' in resource ? resource.offset ?? 0 : 0;
+      const size = resource && typeof resource === 'object' && 'buffer' in resource
+        ? resource.size ?? (source?.size ?? 0) - offset : source?.size ?? 0;
+      reportBuffer(source, { role: slot.role, bindingName: slot.name, groupSlot: slot.groupSlot,
+        binding: slot.binding, offset, size, rangeScope: 'binding' });
+    }
+    const streams = new Map(geometry?.streams.map(stream => [stream.name, stream.buffer] as const) ?? []);
+    for (let vertexSlot = 0; vertexSlot < pipeline.vertexSlotStream.length; vertexSlot++) {
+      const streamIndex = pipeline.vertexSlotStream[vertexSlot];
+      if (streamIndex < 0) continue;
+      const streamName = pipeline.streamNames[streamIndex];
+      const bound = streams.get(streamName);
+      const source = bound instanceof LumaRhiBuffer ? bound : null;
+      const offset = pipeline.vertexSlotOffset[vertexSlot];
+      reportBuffer(source, { role: 'vertex', streamName, vertexSlot, offset,
+        size: (source?.size ?? 0) - offset, rangeScope: 'bound-suffix' });
+    }
+    const index = geometry?.indexBuffer;
+    if (index) {
+      const source = index instanceof LumaRhiBuffer ? index : null;
+      const indexFormat = source?.indexFormat;
+      const stride = indexFormat === 'uint16' ? 2 : indexFormat === 'uint32' ? 4 : 0;
+      const offset = (geometry?.firstIndex ?? 0) * stride;
+      const size = (geometry?.indexCount ?? 0) * stride;
+      reportBuffer(source, { role: 'index', indexFormat, offset, size, rangeScope: 'draw-indices' });
+    }
   }
 
   beginRenderPass(desc: RhiRenderPassDesc): RhiRenderPassEncoder {
@@ -1098,10 +1241,7 @@ class LumaCommandList implements RhiCommandList {
         this.device._reportCaptureError(error);
       }
     };
-    if (!target.colorFormats.length) {
-      emit(null, null, null, '此 pass 没有颜色附件');
-      return;
-    }
+    if (!target.colorFormats.length) emit(null, null, null, '此 pass 没有颜色附件');
     for (let i = 0; i < target.colorFormats.length; i++) {
       let texture: GPUTexture | null;
       if (target instanceof LumaRhiRenderTarget) {
@@ -1113,6 +1253,32 @@ class LumaCommandList implements RhiCommandList {
         texture = target.resolveTexture;
       }
       emit(i, target.colorFormats[i], texture);
+    }
+    const depthFormat = target.depthFormat;
+    if (!depthFormat || !hooks.onAspectEnd || this.captureFailed) return;
+    const texture = target instanceof LumaRhiRenderTarget
+      ? (target.depth?.handle as Texture & { handle: GPUTexture } | undefined)?.handle ?? null
+      : target.depthTextureHandle;
+    const view = target instanceof LumaSwapchainTarget
+      ? target.passViews().depth
+      : (target.framebuffer as Framebuffer & { depthStencilAttachment?: { handle?: GPUTextureView } | null })
+        .depthStencilAttachment?.handle ?? null;
+    const textureId = inspectorResourceId(texture);
+    const viewId = inspectorResourceId(view);
+    const aspects: readonly ('depth' | 'stencil')[] = depthFormat.includes('stencil') ? ['depth', 'stencil'] : ['depth'];
+    for (const aspect of aspects) {
+      if (this.captureFailed) return;
+      const event: RhiDepthStencilAspectCapture = {
+        encoder: this.native, texture, textureId, viewId,
+        submissionKind: this.kind, frame: this.frame, submissionLabel: this.label,
+        label, passOrdinal, targetLabel: target.label, aspect,
+        width: target.width, height: target.height, sourceFormat: depthFormat, sampleCount: target.sampleCount,
+        ...(!texture || !view ? { reason: '无法取得深度 / 模板附件的原生纹理或视图' } : {}),
+      };
+      try { hooks.onAspectEnd(event); } catch (error) {
+        this.captureFailed = true;
+        this.device._reportCaptureError(error);
+      }
     }
   }
 
@@ -1607,9 +1773,11 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     if ((desc.usage & RhiBufferUsage.INDEX) && !desc.indexFormat) {
       throw new RhiError('invalid-usage', `索引缓冲「${desc.label}」要给 indexFormat`);
     }
+    const nativeUsage = (import.meta.env.DEV || this.recovery.gpuProfilingAllowed)
+      ? desc.usage | RhiBufferUsage.COPY_SRC : desc.usage;
     const handle = this.luma.createBuffer({
       id: desc.label,
-      usage: toLumaBufferUsage(desc.usage),
+      usage: toLumaBufferUsage(nativeUsage),
       byteLength: size,
       data: desc.data ?? null,
       indexType: desc.indexFormat,
@@ -1645,11 +1813,15 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     let usage = desc.usage;
     if (desc.data != null) usage |= RhiTextureUsage.COPY_DST;
     if (isImage) usage |= RhiTextureUsage.RENDER_TARGET;
-    // 开发构建的单采样颜色目标在创建设备时就带原生 COPY_SRC：之后只抓一帧也能回读早已存在的离屏目标。
-    // RHI 声明的用途位保持原样(常规 readTexture 仍按作者声明校验)；MSAA 纹理不能拿来直接复制。
-    const nativeUsage = import.meta.env.DEV && samples === 1 && (usage & RhiTextureUsage.RENDER_TARGET) && !isDepthFormat(desc.format)
-      ? usage | RhiTextureUsage.COPY_SRC
-      : usage;
+    // 开发 / 显式调试构建的单采样颜色纹理在创建时就带原生 COPY_SRC：
+    // 按需抓帧可以读早已存在的采样输入和离屏目标。RHI 声明用途不变，常规 readTexture 仍按作者声明校验。
+    const diagnosticsAllowed = import.meta.env.DEV || this.recovery.gpuProfilingAllowed;
+    const nativeUsage = diagnosticsAllowed && isDepthFormat(desc.format) && (usage & RhiTextureUsage.RENDER_TARGET)
+      ? usage | RhiTextureUsage.SAMPLED | (samples === 1 ? RhiTextureUsage.COPY_SRC : 0)
+      : diagnosticsAllowed && samples === 1 &&
+        (usage & (RhiTextureUsage.RENDER_TARGET | RhiTextureUsage.SAMPLED)) && !isDepthFormat(desc.format)
+        ? usage | RhiTextureUsage.COPY_SRC
+        : usage;
     const handle = this.luma.createTexture({
       id: desc.label,
       width: desc.width,
@@ -1885,7 +2057,8 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       const swapchainWithDepth = (format: RhiDepthFormat): RhiRenderTarget => {
         let t = this.swapchainDepth.get(format);
         if (!t) {
-          t = new LumaSwapchainTarget(this.rootScope, this.releases, this.luma, this.luma.getDefaultCanvasContext(), this.caps.swapchainFormat, format);
+          t = new LumaSwapchainTarget(this.rootScope, this.releases, this.luma, this.luma.getDefaultCanvasContext(),
+            this.caps.swapchainFormat, format, import.meta.env.DEV || this.recovery.gpuProfilingAllowed);
           this.swapchainDepth.set(format, t);
           t._beginFrame();
         }
@@ -1903,7 +2076,8 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
             this.swapchainMsaaColors.set(sampleCount, color);
           }
           t = new LumaMsaaSwapchainTarget(
-            this.rootScope, this.releases, this.luma, this.luma.getDefaultCanvasContext(), this.caps.swapchainFormat, color, depthFormat,
+            this.rootScope, this.releases, this.luma, this.luma.getDefaultCanvasContext(), this.caps.swapchainFormat,
+            color, depthFormat, import.meta.env.DEV || this.recovery.gpuProfilingAllowed,
           );
           this.swapchainMsaa.set(key, t);
           t._beginFrame();

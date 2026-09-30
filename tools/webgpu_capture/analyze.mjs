@@ -195,7 +195,7 @@ export function summarizeCapture(capture) {
     frameTextureId: details.frameTextureId,
     frameBoundaryNote: 'Frame ordinals infer one frame per queue.submit; this is not an Inspector-native frame boundary.',
     imageNote: 'Texture PNGs are capture texture-state snapshots, not outputs after individual draws. Per-frame sidecar images, when present, come from game canvas readback.',
-    bufferPayloadNote: 'Draw bufferPayloads are Inspector bytes recorded when each buffer or bind group was bound. They are not post-draw GPU readback. Automatically exported payloads have complete .bin files and up to 1024 preview bytes; bufferExportSummary and each omitted payload state any export limit.',
+    bufferPayloadNote: 'Inspector associates bufferPayloads with bind commands, but copies GPU buffer bytes after the Pass ends. Those bytes do not prove the exact pre-Draw contents. Exported payloads have complete .bin files and up to 1024 preview bytes; bufferExportSummary and each omitted payload state any export limit.',
     gpuTiming: null,
     validationErrorCount: validErrors.length,
     validationErrors: validErrors.slice(0, 30).map(value => ({
@@ -351,15 +351,32 @@ export async function analyzeCapture(path, options = {}) {
     }
   }
   const images = await exportTextureImages(capture, outputDir, report.resources.textures, report.frames);
-  const sidecars = await attachFrameSidecars(capture.captureFile, outputDir, report.frames, report.passes);
+  const sidecars = await attachFrameSidecars(capture.captureFile, outputDir,
+    report.frames, report.passes, report.events, report.resources);
   report.frameImage = sidecars.frameImage ?? images.frameImage;
-  report.imageExportSummary = { ...images.summary, sidecarFrames: sidecars.attached };
+  report.imageExportSummary = { ...images.summary, sidecarFrames: sidecars.attached,
+    passSidecars: sidecars.passSnapshots.filter(snapshot => snapshot.imageFile).length,
+    inputSidecars: sidecars.inputSnapshots.filter(snapshot => snapshot.imageFile).length,
+    aspectSidecars: sidecars.aspectSnapshots.filter(snapshot => snapshot.imageFile).length,
+    bufferSidecars: sidecars.bufferSnapshots.filter(snapshot => snapshot.rawFile).length };
   report.sidecarErrors = sidecars.errors;
   report.sidecarManifest = sidecars.manifest;
   report.passSnapshots = sidecars.passSnapshots;
-  report.imageNote = sidecars.passSnapshots.some(snapshot => snapshot.captureMoment === 'post-draw') ?
-    'Verified frame-debug one-Draw physical Pass readbacks show the output after that Draw. Other Pass readbacks show only Pass-end state; Inspector texture mip images show capture-final state.' :
-    'Texture PNGs are capture-final texture-state snapshots. Pass sidecars show Pass-end state, not output after individual Draws. Per-frame sidecars come from game canvas readback.';
+  report.inputSnapshots = sidecars.inputSnapshots;
+  report.aspectSnapshots = sidecars.aspectSnapshots;
+  report.bufferSnapshots = sidecars.bufferSnapshots;
+  report.imageNote = [
+    sidecars.passSnapshots.some(snapshot => snapshot.captureMoment === 'post-draw') ?
+      'Verified frame-debug one-Draw physical Pass readbacks show the output after that Draw.' :
+      'Pass sidecars without a verified one-Draw physical pass show only Pass-end state.',
+    sidecars.inputSnapshots.some(snapshot => snapshot.captureMoment === 'pre-draw') ?
+      'Verified input sidecars show texture contents before the selected Draw.' : '',
+    sidecars.aspectSnapshots.some(snapshot => snapshot.captureMoment === 'pass-end') ?
+      'Verified depth/stencil sidecars show attachment contents at Pass end; multisampled depth may show only sample 0.' : '',
+    sidecars.bufferSnapshots.some(snapshot => snapshot.captureMoment === 'pre-draw') ?
+      'Verified RHI Buffer sidecars show exact byte ranges copied before the selected Draw.' : '',
+    'Inspector texture mip images show capture-final state. Per-frame sidecars come from game canvas readback.',
+  ].filter(Boolean).join(' ');
   report.passUnavailable = sidecars.passUnavailable;
   report.gpuProfilerStatus = sidecars.gpuProfilerStatus;
   report.passCaptureWarning = sidecars.passCaptureWarning;
@@ -401,6 +418,8 @@ export async function analyzeCapture(path, options = {}) {
     outputDir, reportFile, report, exports: report.exports,
     frameImage: report.frameImage ? join(outputDir, report.frameImage) : null,
     viewerFile, eventCount: report.events.length,
-    imageCount: images.summary.exported + sidecars.attached,
+    imageCount: images.summary.exported + sidecars.attached +
+      report.imageExportSummary.passSidecars + report.imageExportSummary.inputSidecars +
+      report.imageExportSummary.aspectSidecars,
   };
 }

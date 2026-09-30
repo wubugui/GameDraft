@@ -1,6 +1,6 @@
 /** WebGPU Inspector's local capture, driven by the dev server for both F2 and agents. */
 import type { RhiDevice } from '../rendering/rhi/RhiDevice';
-import { captureFrameDiagnostics, visualizeCapturedPassPixels,
+import { captureFrameDiagnostics, visualizeCapturedAspectPixels, visualizeCapturedInputPixels, visualizeCapturedPassPixels,
   type CapturedFrameDiagnostics } from './webgpuFrameDiagnostics';
 
 const API = '/__gamedraft-api/webgpu-capture';
@@ -459,14 +459,31 @@ export class WebGpuCaptureClient {
 
   private async exportDiagnostics(job: WebGpuCaptureJob): Promise<void> {
     const batch = this.frameDiagnostics;
-    const diagnostics = batch?.jobId === job.id && batch.result ? await batch.result : {
-      passes: [], gpuPasses: [], gpuProfilerStatus: {
+    const diagnostics: CapturedFrameDiagnostics = batch?.jobId === job.id && batch.result ? await batch.result : {
+      passes: [], inputs: [], aspects: [], buffers: [], gpuPasses: [], gpuProfilerStatus: {
         state: 'unsupported' as const, reason: 'RHI 逐 pass 诊断钩子不可用',
       },
     };
     const passes: Array<{ passOrdinal: number; label: string; targetLabel: string;
       colorIndex: number; width: number; height: number; format: string; reason?: string;
       rawBytesPerRow?: number; rawByteLength?: number; rawReason?: string }> = [];
+    const inputs: Array<{ inputOrdinal: number; passOrdinal: number; bindingName: string; textureId: number | null;
+      viewId: number | null; groupSlot: number; binding: number; mipLevel: number; arrayLayer: number;
+      width: number; height: number;
+      format: string; reason?: string; rawBytesPerRow?: number; rawByteLength?: number;
+      rawReason?: string }> = [];
+    const aspects: Array<{ aspectOrdinal: number; passOrdinal: number; label: string; targetLabel: string;
+      aspect: 'depth' | 'stencil'; textureId: number | null; viewId: number | null;
+      width: number; height: number; sourceFormat: string; rawFormat: 'r32float' | 'stencil8';
+      sampleCount: number; sampleIndex: number | null; reason?: string;
+      rawBytesPerRow?: number; rawByteLength?: number; rawReason?: string }> = [];
+    const buffers: Array<{ bufferOrdinal: number; passOrdinal: number;
+      role: 'uniform' | 'storage' | 'read-only-storage' | 'vertex' | 'index';
+      bindingName?: string; groupSlot?: number; binding?: number; streamName?: string;
+      vertexSlot?: number; indexFormat?: 'uint16' | 'uint32'; bufferId: number | null;
+      bufferLabel: string; totalSize: number; offset: number; size: number;
+      copiedOffset: number; copiedSize: number; rangeScope: 'binding' | 'draw-indices' | 'bound-suffix';
+      reason?: string; rawByteLength?: number; rawReason?: string }> = [];
     let pngBytes = this.frameImages?.jobId === job.id ? this.frameImages.bytes : 0;
     try {
       for (const item of diagnostics.passes) {
@@ -513,13 +530,141 @@ export class WebGpuCaptureClient {
           }),
         });
       }
+      for (const [inputOrdinal, item] of diagnostics.inputs.entries()) {
+        if (!this.isCurrentJob(job)) return;
+        let reason = item.reason?.slice(0, 500);
+        if (item.rawPixels && item.rawBytesPerRow) {
+          try {
+            const pixels = visualizeCapturedInputPixels(item);
+            if (pixels) {
+              const png = await this.encodeFrameImage({ pixels,
+                width: item.width, height: item.height }, false);
+              if (png.size > MAX_FRAME_IMAGE_BYTES) throw new Error('PNG 超过 32 MiB');
+              if (pngBytes + png.size > MAX_FRAME_IMAGES_BYTES) {
+                throw new Error('本帧 PNG 总量达到 512 MiB 上限');
+              }
+              await api('PUT', {
+                action: 'input-image', jobId: job.id, targetBootId: this.bootId,
+                frameIndex: '1', inputOrdinal: String(inputOrdinal),
+              }, png);
+              pngBytes += png.size;
+            } else reason = `输入纹理 ${item.format} 没有可导出的 PNG 预览`;
+          } catch (error) { reason = `输入纹理 PNG 导出失败：${String(error)}`.slice(0, 500); }
+        } else if (!reason) reason = 'Draw 输入纹理没有可读回的像素';
+        let rawReason: string | undefined;
+        let rawByteLength: number | undefined;
+        if (item.rawPixels && item.rawBytesPerRow) {
+          try {
+            const raw = new Blob([item.rawPixels as BlobPart], { type: 'application/octet-stream' });
+            item.rawPixels = undefined;
+            await api('PUT', {
+              action: 'input-raw', jobId: job.id, targetBootId: this.bootId,
+              frameIndex: '1', inputOrdinal: String(inputOrdinal),
+              format: item.format, width: String(item.width), height: String(item.height),
+              bytesPerRow: String(item.rawBytesPerRow),
+            }, raw);
+            rawByteLength = raw.size;
+          } catch (error) { rawReason = `Draw 输入纹理原始像素导出失败：${String(error)}`.slice(0, 500); }
+          finally { item.rawPixels = undefined; }
+        } else rawReason = item.reason?.slice(0, 500) || 'Draw 输入纹理没有可回读的原始像素';
+        inputs.push({
+          inputOrdinal, passOrdinal: item.passOrdinal, bindingName: item.bindingName,
+          textureId: item.textureId, viewId: item.viewId,
+          groupSlot: item.groupSlot, binding: item.binding,
+          mipLevel: item.mipLevel, arrayLayer: item.arrayLayer,
+          width: item.width, height: item.height, format: item.format,
+          ...(reason ? { reason } : {}),
+          ...(rawByteLength === undefined ? { rawReason } : {
+            rawBytesPerRow: item.rawBytesPerRow, rawByteLength,
+          }),
+        });
+      }
+      for (const [aspectOrdinal, item] of diagnostics.aspects.entries()) {
+        if (!this.isCurrentJob(job)) return;
+        let reason = item.reason?.slice(0, 500);
+        if (item.rawPixels && item.rawBytesPerRow) {
+          try {
+            const pixels = visualizeCapturedAspectPixels(item);
+            const png = await this.encodeFrameImage({ pixels,
+              width: item.width, height: item.height }, false);
+            if (png.size > MAX_FRAME_IMAGE_BYTES) throw new Error('PNG 超过 32 MiB');
+            if (pngBytes + png.size > MAX_FRAME_IMAGES_BYTES) {
+              throw new Error('本帧 PNG 总量达到 512 MiB 上限');
+            }
+            await api('PUT', {
+              action: 'aspect-image', jobId: job.id, targetBootId: this.bootId,
+              frameIndex: '1', aspectOrdinal: String(aspectOrdinal),
+            }, png);
+            pngBytes += png.size;
+          } catch (error) { reason = `深度/模板 PNG 导出失败：${String(error)}`.slice(0, 500); }
+        } else if (!reason) reason = '此 Pass 的深度/模板没有可回读的像素';
+        let rawReason: string | undefined;
+        let rawByteLength: number | undefined;
+        if (item.rawPixels && item.rawBytesPerRow) {
+          try {
+            const raw = new Blob([item.rawPixels as BlobPart], { type: 'application/octet-stream' });
+            item.rawPixels = undefined;
+            await api('PUT', {
+              action: 'aspect-raw', jobId: job.id, targetBootId: this.bootId,
+              frameIndex: '1', aspectOrdinal: String(aspectOrdinal),
+              format: item.rawFormat, width: String(item.width), height: String(item.height),
+              bytesPerRow: String(item.rawBytesPerRow),
+            }, raw);
+            rawByteLength = raw.size;
+          } catch (error) { rawReason = `深度/模板原始像素导出失败：${String(error)}`.slice(0, 500); }
+          finally { item.rawPixels = undefined; }
+        } else rawReason = item.reason?.slice(0, 500) || '深度/模板没有可回读的原始像素';
+        aspects.push({
+          aspectOrdinal, passOrdinal: item.passOrdinal, label: item.label,
+          targetLabel: item.targetLabel, aspect: item.aspect, textureId: item.textureId,
+          viewId: item.viewId, width: item.width, height: item.height,
+          sourceFormat: item.sourceFormat, rawFormat: item.rawFormat,
+          sampleCount: item.sampleCount, sampleIndex: item.sampleIndex,
+          ...(reason ? { reason } : {}),
+          ...(rawByteLength === undefined ? { rawReason } : {
+            rawBytesPerRow: item.rawBytesPerRow, rawByteLength,
+          }),
+        });
+      }
+      for (const [bufferOrdinal, item] of diagnostics.buffers.entries()) {
+        if (!this.isCurrentJob(job)) return;
+        let rawByteLength: number | undefined;
+        let rawReason: string | undefined;
+        if (item.rawBytes?.byteLength) {
+          try {
+            const raw = new Blob([item.rawBytes as BlobPart], { type: 'application/octet-stream' });
+            item.rawBytes = undefined;
+            await api('PUT', {
+              action: 'buffer-raw', jobId: job.id, targetBootId: this.bootId,
+              frameIndex: '1', bufferOrdinal: String(bufferOrdinal),
+            }, raw);
+            rawByteLength = raw.size;
+          } catch (error) { rawReason = `Draw 前 Buffer 导出失败：${String(error)}`.slice(0, 500); }
+          finally { item.rawBytes = undefined; }
+        } else rawReason = item.reason?.slice(0, 500) || 'Draw 前 Buffer 没有可回读的字节';
+        buffers.push({
+          bufferOrdinal, passOrdinal: item.passOrdinal, role: item.role,
+          ...(item.bindingName ? { bindingName: item.bindingName } : {}),
+          ...(item.groupSlot === undefined ? {} : { groupSlot: item.groupSlot }),
+          ...(item.binding === undefined ? {} : { binding: item.binding }),
+          ...(item.streamName ? { streamName: item.streamName } : {}),
+          ...(item.vertexSlot === undefined ? {} : { vertexSlot: item.vertexSlot }),
+          ...(item.indexFormat ? { indexFormat: item.indexFormat } : {}),
+          bufferId: item.bufferId, bufferLabel: item.bufferLabel, totalSize: item.totalSize,
+          offset: item.offset, size: item.size, copiedOffset: item.copiedOffset,
+          copiedSize: item.copiedSize, rangeScope: item.rangeScope,
+          ...(item.reason ? { reason: item.reason.slice(0, 500) } : {}),
+          ...(rawByteLength === undefined ? { rawReason } : { rawByteLength }),
+        });
+      }
       if (!this.isCurrentJob(job)) return;
       await api('POST', {}, { action: 'diagnostics', jobId: job.id, targetBootId: this.bootId,
-        passes, gpuPasses: diagnostics.gpuPasses,
+        passes, inputs, aspects, buffers, gpuPasses: diagnostics.gpuPasses,
         gpuProfilerStatus: diagnostics.gpuProfilerStatus,
         ...(diagnostics.warning ? { warning: diagnostics.warning } : {}) });
     } finally {
-      for (const item of diagnostics.passes) item.rawPixels = undefined;
+      for (const item of [...diagnostics.passes, ...diagnostics.inputs, ...diagnostics.aspects]) item.rawPixels = undefined;
+      for (const item of diagnostics.buffers) item.rawBytes = undefined;
     }
   }
 

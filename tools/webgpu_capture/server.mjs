@@ -7,6 +7,7 @@ import { mkdir, open, realpath, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { analyzeCapture, readCapture, summarizeCapture } from './analyze.mjs';
+import { verifiedDrawBufferBinding, verifiedInputBinding } from './analysis_sidecars.mjs';
 
 const MAX_FRAMES = 120;
 const MAX_CAPTURE_BYTES = 512 * 1024 * 1024;
@@ -14,9 +15,25 @@ const MAX_FRAME_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_FRAME_IMAGES_BYTES = 512 * 1024 * 1024;
 const MAX_PASS_RAW_BYTES = 512 * 1024 * 1024;
 const MAX_DIAGNOSTIC_ENTRIES = 512;
+const MAX_INPUT_ENTRIES = 1024;
+const MAX_ASPECT_ENTRIES = 1024;
+const MAX_BUFFER_ENTRIES = 1024;
+const MAX_BUFFER_ITEM_BYTES = 16 * 1024 * 1024;
+const MAX_BUFFER_RAW_BYTES = 256 * 1024 * 1024;
+const MAX_INPUT_IMAGE_BYTES = 32 * 1024 * 1024;
+const MAX_INPUT_IMAGES_BYTES = 512 * 1024 * 1024;
+const MAX_INPUT_RAW_BYTES = 512 * 1024 * 1024;
+const MAX_ASPECT_IMAGE_BYTES = 32 * 1024 * 1024;
+const MAX_ASPECT_IMAGES_BYTES = 512 * 1024 * 1024;
+const MAX_ASPECT_RAW_BYTES = 512 * 1024 * 1024;
+const MAX_SIDECAR_MANIFEST_BYTES = 4 * 1024 * 1024;
 const RAW_FORMAT_BYTES = new Map([
-  ['r8unorm', 1], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4],
-  ['bgra8unorm', 4], ['bgra8unorm-srgb', 4], ['rgba16float', 8], ['rgba32float', 16],
+  ['r8unorm', 1], ['rg8unorm', 2], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4],
+  ['bgra8unorm', 4], ['bgra8unorm-srgb', 4],
+  ['r16float', 2], ['rg16float', 4], ['rgba16float', 8],
+  ['r32float', 4], ['rg32float', 8], ['rgba32float', 16],
+  ['r32uint', 4], ['rgba32uint', 16],
+  ['stencil8', 1],
 ]);
 const MAX_METADATA_BYTES = 64 * 1024 * 1024;
 const MAX_HEADER_BYTES = 64;
@@ -262,9 +279,16 @@ export function createWebGpuCaptureController(projectRoot) {
         url: client.url, sceneId: client.sceneId,
         createdAt: now, updatedAt: now, error: null,
         uploadInProgress: false, frameImages: new Map(), passImages: new Map(), passRaw: new Map(), diagnostics: null,
+        inputImages: new Map(), inputRaw: new Map(), inputRawInProgress: new Set(),
+        aspectImages: new Map(), aspectRaw: new Map(), aspectRawInProgress: new Set(),
+        bufferRaw: new Map(), bufferRawInProgress: new Set(),
         frameImageInProgress: new Set(), frameImageBytes: 0,
         reservedFrameImageBytes: 0, passRawInProgress: new Set(), passRawBytes: 0,
-        reservedPassRawBytes: 0,
+        reservedPassRawBytes: 0, inputImageBytes: 0, reservedInputImageBytes: 0,
+        inputRawBytes: 0, reservedInputRawBytes: 0,
+        aspectImageBytes: 0, reservedAspectImageBytes: 0,
+        aspectRawBytes: 0, reservedAspectRawBytes: 0,
+        bufferRawBytes: 0, reservedBufferRawBytes: 0,
       };
       jobs.set(id, job);
       activeJobId = id;
@@ -313,6 +337,11 @@ export function createWebGpuCaptureController(projectRoot) {
       ...(report.frames || []).map(frame => frame.imageFile),
       ...(report.passSnapshots || []).map(snapshot => snapshot.imageFile),
       ...(report.passSnapshots || []).map(snapshot => snapshot.rawFile),
+      ...(report.inputSnapshots || []).map(snapshot => snapshot.imageFile),
+      ...(report.inputSnapshots || []).map(snapshot => snapshot.rawFile),
+      ...(report.aspectSnapshots || []).map(snapshot => snapshot.imageFile),
+      ...(report.aspectSnapshots || []).map(snapshot => snapshot.rawFile),
+      ...(report.bufferSnapshots || []).map(snapshot => snapshot.rawFile),
       ...(report.payloads || []).map(payload => payload.bufferFile),
       ...(report.resources?.textures || []).map(texture => texture.imageFile),
       ...(report.resources?.shaders || []).map(shader => shader.codeFile),
@@ -325,20 +354,41 @@ export function createWebGpuCaptureController(projectRoot) {
     return physical;
   }
 
-  async function uploadPngImage({ jobId, targetBootId, frameIndex, passOrdinal, colorIndex, stream, contentLength }, kind) {
+  async function uploadPngImage({ jobId, targetBootId, frameIndex, passOrdinal, colorIndex,
+    inputOrdinal, aspectOrdinal, stream, contentLength }, kind) {
     if (closed) throw new Error('capture controller is closed');
     const job = getJob(jobId, targetBootId);
-    const frame = Number(frameIndex);
+    const frame = kind === 'input' || kind === 'aspect' ? 1 : Number(frameIndex);
     const pass = Number(passOrdinal);
     const color = Number(colorIndex);
+    const input = Number(inputOrdinal);
+    const aspect = Number(aspectOrdinal);
     if (!Number.isInteger(frame) || frame < 1 || frame > job.frames) throw new Error('frameIndex must be within the requested capture');
     if (kind === 'pass' && (job.frames !== 1 || frame !== 1 ||
         !Number.isInteger(pass) || pass < 0 || pass >= MAX_DIAGNOSTIC_ENTRIES ||
         !Number.isInteger(color) || color < 0 || color > 7)) {
       throw new Error('pass image requires a single-frame capture and valid pass/color indices');
     }
-    const key = kind === 'pass' ? `${pass}:${color}` : frame;
-    const images = kind === 'pass' ? job.passImages : job.frameImages;
+    if (kind === 'input' && (job.frames !== 1 || !Number.isInteger(input) ||
+        input < 0 || input >= MAX_INPUT_ENTRIES)) {
+      throw new Error('input image requires a single-frame capture and valid input ordinal');
+    }
+    if (kind === 'aspect' && (job.frames !== 1 || !Number.isInteger(aspect) ||
+        aspect < 0 || aspect >= MAX_ASPECT_ENTRIES)) {
+      throw new Error('aspect image requires a single-frame capture and valid aspect ordinal');
+    }
+    const key = kind === 'pass' ? `${pass}:${color}` : kind === 'input' ? input :
+      kind === 'aspect' ? aspect : frame;
+    const images = kind === 'pass' ? job.passImages : kind === 'input' ? job.inputImages :
+      kind === 'aspect' ? job.aspectImages : job.frameImages;
+    const bytesField = kind === 'input' ? 'inputImageBytes' :
+      kind === 'aspect' ? 'aspectImageBytes' : 'frameImageBytes';
+    const reservedField = kind === 'input' ? 'reservedInputImageBytes' :
+      kind === 'aspect' ? 'reservedAspectImageBytes' : 'reservedFrameImageBytes';
+    const singleLimit = kind === 'input' ? MAX_INPUT_IMAGE_BYTES :
+      kind === 'aspect' ? MAX_ASPECT_IMAGE_BYTES : MAX_FRAME_IMAGE_BYTES;
+    const totalLimit = kind === 'input' ? MAX_INPUT_IMAGES_BYTES :
+      kind === 'aspect' ? MAX_ASPECT_IMAGES_BYTES : MAX_FRAME_IMAGES_BYTES;
     if (!['pending', 'capturing'].includes(job.state) || job.uploadInProgress) {
       throw new Error('capture job is not accepting images');
     }
@@ -349,27 +399,30 @@ export function createWebGpuCaptureController(projectRoot) {
       throw new Error('frame image binary stream is required');
     }
     if (contentLength != null && (!Number.isInteger(Number(contentLength)) ||
-        Number(contentLength) < 24 || Number(contentLength) > MAX_FRAME_IMAGE_BYTES ||
-        job.frameImageBytes + job.reservedFrameImageBytes + Number(contentLength) > MAX_FRAME_IMAGES_BYTES)) {
-      throw new Error('frame image exceeds capture image size limit');
+        Number(contentLength) < 24 || Number(contentLength) > singleLimit ||
+        job[bytesField] + job[reservedField] + Number(contentLength) > totalLimit)) {
+      throw new Error(`${kind} image exceeds capture image size limit`);
     }
     const name = kind === 'pass' ? `pass-${String(pass).padStart(4, '0')}-color-${color}.png` :
-      `frame-${String(frame).padStart(4, '0')}.png`;
+      kind === 'input' ? `input-${String(input).padStart(4, '0')}.png` :
+      kind === 'aspect' ? `aspect-${String(aspect).padStart(4, '0')}.png` :
+        `frame-${String(frame).padStart(4, '0')}.png`;
     const file = join(job.outputDir, name);
     job.frameImageInProgress.add(`${kind}:${key}`);
     let handle;
     let bytes = 0;
+    const sha = kind === 'input' || kind === 'aspect' ? createHash('sha256') : null;
     try {
       handle = await open(file, 'wx+');
       for await (const part of stream) {
         if (closed || !['pending', 'capturing'].includes(job.state)) throw new Error('capture stopped while uploading frame image');
         const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
         bytes += chunk.length;
-        job.reservedFrameImageBytes += chunk.length;
-        if (bytes > MAX_FRAME_IMAGE_BYTES ||
-            job.frameImageBytes + job.reservedFrameImageBytes > MAX_FRAME_IMAGES_BYTES) {
-          throw new Error('frame image exceeds capture image size limit');
+        job[reservedField] += chunk.length;
+        if (bytes > singleLimit || job[bytesField] + job[reservedField] > totalLimit) {
+          throw new Error(`${kind} image exceeds capture image size limit`);
         }
+        sha?.update(chunk);
         let offset = 0;
         while (offset < chunk.length) {
           const { bytesWritten } = await handle.write(chunk, offset, chunk.length - offset);
@@ -393,103 +446,208 @@ export function createWebGpuCaptureController(projectRoot) {
       await handle.close();
       handle = null;
       if (closed || !['pending', 'capturing'].includes(job.state)) throw new Error('capture stopped while uploading frame image');
-      images.set(key, { file, name, bytes, width, height });
-      job.frameImageBytes += bytes;
+      images.set(key, { file, name, bytes, width, height, ...(sha ? { sha256: sha.digest('hex') } : {}) });
+      job[bytesField] += bytes;
       job.updatedAt = Date.now();
       return { jobId: job.id, frameIndex: frame, passOrdinal: kind === 'pass' ? pass : null,
+        inputOrdinal: kind === 'input' ? input : null,
+        aspectOrdinal: kind === 'aspect' ? aspect : null,
         colorIndex: kind === 'pass' ? color : null, file, bytes, width, height };
     } catch (error) {
       try { await handle?.close(); } catch { /* Keep the first failure. */ }
       try { await unlink(file); } catch { /* File may not exist. */ }
       throw error;
     } finally {
-      job.reservedFrameImageBytes -= bytes;
+      job[reservedField] -= bytes;
       job.frameImageInProgress.delete(`${kind}:${key}`);
     }
   }
 
   function uploadFrameImage(args = {}) { return uploadPngImage(args, 'frame'); }
   function uploadPassImage(args = {}) { return uploadPngImage(args, 'pass'); }
+  function uploadInputImage(args = {}) { return uploadPngImage(args, 'input'); }
+  function uploadAspectImage(args = {}) { return uploadPngImage(args, 'aspect'); }
 
-  async function uploadPassRaw({ jobId, targetBootId, frameIndex, passOrdinal, colorIndex,
-    format, width, height, bytesPerRow, stream, contentLength } = {}) {
+  async function uploadRaw({ jobId, targetBootId, frameIndex, passOrdinal, colorIndex,
+    inputOrdinal, aspectOrdinal, format, width, height, bytesPerRow, stream, contentLength } = {}, kind) {
     if (closed) throw new Error('capture controller is closed');
     const job = getJob(jobId, targetBootId);
-    const frame = Number(frameIndex);
+    const frame = kind === 'input' || kind === 'aspect' ? 1 : Number(frameIndex);
     const pass = Number(passOrdinal);
     const color = Number(colorIndex);
+    const input = Number(inputOrdinal);
+    const aspect = Number(aspectOrdinal);
     const w = Number(width);
     const h = Number(height);
     const stride = Number(bytesPerRow);
     const bpp = RAW_FORMAT_BYTES.get(format);
-    if (job.frames !== 1 || frame !== 1 || !Number.isInteger(pass) || pass < 0 ||
-        pass >= MAX_DIAGNOSTIC_ENTRIES || !Number.isInteger(color) || color < 0 || color > 7) {
-      throw new Error('raw pass output requires a single frame and valid pass/color indices');
+    if (job.frames !== 1 || frame !== 1 || (kind === 'pass' &&
+        (!Number.isInteger(pass) || pass < 0 || pass >= MAX_DIAGNOSTIC_ENTRIES ||
+        !Number.isInteger(color) || color < 0 || color > 7)) ||
+        (kind === 'input' && (!Number.isInteger(input) || input < 0 || input >= MAX_INPUT_ENTRIES)) ||
+        (kind === 'aspect' && (!Number.isInteger(aspect) || aspect < 0 || aspect >= MAX_ASPECT_ENTRIES))) {
+      throw new Error(`raw ${kind} output requires a single frame and valid ordinal`);
     }
-    if (!bpp || !Number.isSafeInteger(w) || !Number.isSafeInteger(h) || w < 1 || h < 1 ||
+    if (!bpp || kind === 'aspect' && !['r32float', 'stencil8'].includes(format) ||
+        !Number.isSafeInteger(w) || !Number.isSafeInteger(h) || w < 1 || h < 1 ||
         w > 16384 || h > 16384 || !Number.isSafeInteger(stride) ||
         stride !== Math.ceil(w * bpp / 256) * 256) {
-      throw new Error('raw pass output format, dimensions, or row stride is invalid');
+      throw new Error(`raw ${kind} output format, dimensions, or row stride is invalid`);
     }
     const expected = stride * h;
-    if (!Number.isSafeInteger(expected) || expected > MAX_PASS_RAW_BYTES ||
+    if (!Number.isSafeInteger(expected) || expected > (kind === 'input' ? MAX_INPUT_RAW_BYTES :
+        kind === 'aspect' ? MAX_ASPECT_RAW_BYTES : MAX_PASS_RAW_BYTES) ||
         contentLength != null && Number(contentLength) !== expected) {
-      throw new Error('raw pass output byte length exceeds the limit or differs from dimensions');
+      throw new Error(`raw ${kind} output byte length exceeds the limit or differs from dimensions`);
     }
     if (!['pending', 'capturing'].includes(job.state) || job.uploadInProgress) {
-      throw new Error('capture job is not accepting raw pass output');
+      throw new Error(`capture job is not accepting raw ${kind} output`);
     }
-    const key = `${pass}:${color}`;
-    if (job.passRaw.has(key) || job.passRawInProgress.has(key)) throw new Error('raw pass output already uploaded');
-    if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') throw new Error('raw pass output stream is required');
-    if (expected > MAX_PASS_RAW_BYTES - job.passRawBytes - job.reservedPassRawBytes) {
-      throw new Error('raw pass outputs exceed 512 MiB capture limit');
+    const key = kind === 'input' ? input : kind === 'aspect' ? aspect : `${pass}:${color}`;
+    const raw = kind === 'input' ? job.inputRaw : kind === 'aspect' ? job.aspectRaw : job.passRaw;
+    const inProgress = kind === 'input' ? job.inputRawInProgress :
+      kind === 'aspect' ? job.aspectRawInProgress : job.passRawInProgress;
+    const bytesField = kind === 'input' ? 'inputRawBytes' :
+      kind === 'aspect' ? 'aspectRawBytes' : 'passRawBytes';
+    const reservedField = kind === 'input' ? 'reservedInputRawBytes' :
+      kind === 'aspect' ? 'reservedAspectRawBytes' : 'reservedPassRawBytes';
+    const totalLimit = kind === 'input' ? MAX_INPUT_RAW_BYTES :
+      kind === 'aspect' ? MAX_ASPECT_RAW_BYTES : MAX_PASS_RAW_BYTES;
+    if (raw.has(key) || inProgress.has(key)) throw new Error(`raw ${kind} output already uploaded`);
+    if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') throw new Error(`raw ${kind} output stream is required`);
+    if (expected > totalLimit - job[bytesField] - job[reservedField]) {
+      throw new Error(`raw ${kind} outputs exceed 512 MiB capture limit`);
     }
-    const name = `pass-raw-${String(pass).padStart(4, '0')}-color-${color}.bin`;
+    const name = kind === 'input' ? `input-${String(input).padStart(4, '0')}.bin` :
+      kind === 'aspect' ? `aspect-${String(aspect).padStart(4, '0')}.bin` :
+      `pass-raw-${String(pass).padStart(4, '0')}-color-${color}.bin`;
     const file = join(job.outputDir, name);
     let handle;
     let bytes = 0;
     const sha = createHash('sha256');
-    job.passRawInProgress.add(key);
-    job.reservedPassRawBytes += expected;
+    inProgress.add(key);
+    job[reservedField] += expected;
     try {
       handle = await open(file, 'wx');
       for await (const part of stream) {
-        if (closed || !['pending', 'capturing'].includes(job.state)) throw new Error('capture stopped while uploading raw pass output');
+        if (closed || !['pending', 'capturing'].includes(job.state)) throw new Error(`capture stopped while uploading raw ${kind} output`);
         const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
         bytes += chunk.length;
-        if (bytes > expected) throw new Error('raw pass output exceeds declared byte length');
+        if (bytes > expected) throw new Error(`raw ${kind} output exceeds declared byte length`);
         sha.update(chunk);
         let offset = 0;
         while (offset < chunk.length) {
           const { bytesWritten } = await handle.write(chunk, offset, chunk.length - offset);
-          if (bytesWritten < 1) throw new Error('raw pass output write stopped');
+          if (bytesWritten < 1) throw new Error(`raw ${kind} output write stopped`);
           offset += bytesWritten;
         }
       }
-      if (bytes !== expected) throw new Error('raw pass output length differs from dimensions');
+      if (bytes !== expected) throw new Error(`raw ${kind} output length differs from dimensions`);
       await handle.sync();
       await handle.close();
       handle = null;
-      if (closed || !['pending', 'capturing'].includes(job.state)) throw new Error('capture stopped while uploading raw pass output');
+      if (closed || !['pending', 'capturing'].includes(job.state)) throw new Error(`capture stopped while uploading raw ${kind} output`);
       const item = { file, name, bytes, width: w, height: h, format, bytesPerRow: stride,
         sha256: sha.digest('hex') };
-      job.passRaw.set(key, item);
-      job.passRawBytes += bytes;
+      raw.set(key, item);
+      job[bytesField] += bytes;
       job.updatedAt = Date.now();
-      return { jobId: job.id, frameIndex: frame, passOrdinal: pass, colorIndex: color,
+      return { jobId: job.id, frameIndex: frame,
+        passOrdinal: kind === 'pass' ? pass : null,
+        colorIndex: kind === 'pass' ? color : null,
+        inputOrdinal: kind === 'input' ? input : null,
+        aspectOrdinal: kind === 'aspect' ? aspect : null,
         file, bytes, format, width: w, height: h, bytesPerRow: stride };
     } catch (error) {
       try { await handle?.close(); } catch { /* Keep the first failure. */ }
       try { await unlink(file); } catch { /* File may not exist. */ }
       throw error;
     } finally {
-      job.reservedPassRawBytes -= expected;
-      job.passRawInProgress.delete(key);
+      job[reservedField] -= expected;
+      inProgress.delete(key);
     }
   }
 
-  function diagnostics({ jobId, targetBootId, passes, gpuPasses, gpuProfilerStatus, warning } = {}) {
+  function uploadPassRaw(args = {}) { return uploadRaw(args, 'pass'); }
+  function uploadInputRaw(args = {}) { return uploadRaw(args, 'input'); }
+  function uploadAspectRaw(args = {}) { return uploadRaw(args, 'aspect'); }
+
+  async function uploadBufferRaw({ jobId, targetBootId, bufferOrdinal, stream, contentLength } = {}) {
+    if (closed) throw new Error('capture controller is closed');
+    const job = getJob(jobId, targetBootId);
+    const ordinal = Number(bufferOrdinal);
+    if (job.frames !== 1 || !Number.isInteger(ordinal) ||
+        ordinal < 0 || ordinal >= MAX_BUFFER_ENTRIES) {
+      throw new Error('raw Draw buffer requires a single frame and valid buffer ordinal');
+    }
+    if (!['pending', 'capturing'].includes(job.state) || job.uploadInProgress) {
+      throw new Error('capture job is not accepting raw Draw buffers');
+    }
+    if (job.bufferRaw.has(ordinal) || job.bufferRawInProgress.has(ordinal)) {
+      throw new Error('raw Draw buffer already uploaded');
+    }
+    if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') {
+      throw new Error('raw Draw buffer stream is required');
+    }
+    if (contentLength != null && (!Number.isSafeInteger(Number(contentLength)) ||
+        Number(contentLength) < 4 || Number(contentLength) % 4 !== 0 ||
+        Number(contentLength) > MAX_BUFFER_ITEM_BYTES ||
+        Number(contentLength) > MAX_BUFFER_RAW_BYTES - job.bufferRawBytes - job.reservedBufferRawBytes)) {
+      throw new Error('raw Draw buffer length exceeds limit or is not 4-byte aligned');
+    }
+    const name = `buffer-${String(ordinal).padStart(4, '0')}.bin`;
+    const file = join(job.outputDir, name);
+    job.bufferRawInProgress.add(ordinal);
+    const sha = createHash('sha256');
+    let bytes = 0;
+    let handle;
+    try {
+      handle = await open(file, 'wx');
+      for await (const part of stream) {
+        if (closed || !['pending', 'capturing'].includes(job.state)) {
+          throw new Error('capture stopped while uploading raw Draw buffer');
+        }
+        const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
+        bytes += chunk.length;
+        job.reservedBufferRawBytes += chunk.length;
+        if (bytes > MAX_BUFFER_ITEM_BYTES ||
+            job.bufferRawBytes + job.reservedBufferRawBytes > MAX_BUFFER_RAW_BYTES) {
+          throw new Error('raw Draw buffers exceed capture size limit');
+        }
+        sha.update(chunk);
+        let offset = 0;
+        while (offset < chunk.length) {
+          const { bytesWritten } = await handle.write(chunk, offset, chunk.length - offset);
+          if (bytesWritten < 1) throw new Error('raw Draw buffer write stopped');
+          offset += bytesWritten;
+        }
+      }
+      if (bytes < 4 || bytes % 4 !== 0 ||
+          (contentLength != null && bytes !== Number(contentLength))) {
+        throw new Error('raw Draw buffer length differs from declared aligned bytes');
+      }
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      if (closed || !['pending', 'capturing'].includes(job.state)) {
+        throw new Error('capture stopped while uploading raw Draw buffer');
+      }
+      job.bufferRaw.set(ordinal, { file, name, bytes, sha256: sha.digest('hex') });
+      job.bufferRawBytes += bytes;
+      job.updatedAt = Date.now();
+      return { jobId: job.id, bufferOrdinal: ordinal, file, bytes };
+    } catch (error) {
+      try { await handle?.close(); } catch { /* Keep the first failure. */ }
+      try { await unlink(file); } catch { /* File may not exist. */ }
+      throw error;
+    } finally {
+      job.reservedBufferRawBytes -= bytes;
+      job.bufferRawInProgress.delete(ordinal);
+    }
+  }
+
+  function diagnostics({ jobId, targetBootId, passes, inputs = [], aspects = [], buffers = [],
+    gpuPasses, gpuProfilerStatus, warning } = {}) {
     if (closed) throw new Error('capture controller is closed');
     const job = getJob(jobId, targetBootId);
     if (job.frames !== 1 || !['pending', 'capturing'].includes(job.state) || job.uploadInProgress) {
@@ -497,6 +655,9 @@ export function createWebGpuCaptureController(projectRoot) {
     }
     if (job.diagnostics) throw new Error('capture diagnostics already uploaded');
     if (!Array.isArray(passes) || passes.length > MAX_DIAGNOSTIC_ENTRIES ||
+        !Array.isArray(inputs) || inputs.length > MAX_INPUT_ENTRIES ||
+        !Array.isArray(aspects) || aspects.length > MAX_ASPECT_ENTRIES ||
+        !Array.isArray(buffers) || buffers.length > MAX_BUFFER_ENTRIES ||
         !Array.isArray(gpuPasses) || gpuPasses.length > MAX_DIAGNOSTIC_ENTRIES) {
       throw new Error('invalid diagnostic pass list');
     }
@@ -528,6 +689,149 @@ export function createWebGpuCaptureController(projectRoot) {
         throw new Error('invalid raw pass output reason');
       }
     }
+    const inputOrdinals = new Set();
+    for (const item of inputs) {
+      if (!item || !Number.isInteger(item.inputOrdinal) || item.inputOrdinal < 0 ||
+          item.inputOrdinal >= MAX_INPUT_ENTRIES || inputOrdinals.has(item.inputOrdinal) ||
+          !Number.isInteger(item.passOrdinal) || item.passOrdinal < 0 ||
+          item.passOrdinal >= MAX_DIAGNOSTIC_ENTRIES ||
+          typeof item.bindingName !== 'string' || !item.bindingName.trim() || item.bindingName.length > 160 ||
+          (item.groupSlot === undefined) !== (item.binding === undefined) ||
+          (item.groupSlot !== undefined &&
+            (!Number.isSafeInteger(item.groupSlot) || item.groupSlot < 0 ||
+              !Number.isSafeInteger(item.binding) || item.binding < 0)) ||
+          (item.textureId !== null && (!Number.isSafeInteger(item.textureId) || item.textureId < 0)) ||
+          (item.viewId !== null && (!Number.isSafeInteger(item.viewId) || item.viewId < 0)) ||
+          !Number.isSafeInteger(item.mipLevel) || item.mipLevel < 0 || item.mipLevel > 63 ||
+          !Number.isSafeInteger(item.arrayLayer) || item.arrayLayer < 0 || item.arrayLayer > 16383 ||
+          !Number.isSafeInteger(item.width) || item.width < 0 || item.width > 16384 ||
+          !Number.isSafeInteger(item.height) || item.height < 0 || item.height > 16384 ||
+          typeof item.format !== 'string' || item.format.length > 80 ||
+          (item.reason !== undefined && (typeof item.reason !== 'string' || item.reason.length > 500)) ||
+          (item.rawReason !== undefined && (typeof item.rawReason !== 'string' || item.rawReason.length > 500))) {
+        throw new Error('invalid input diagnostic');
+      }
+      inputOrdinals.add(item.inputOrdinal);
+      const image = job.inputImages.get(item.inputOrdinal);
+      const raw = job.inputRaw.get(item.inputOrdinal);
+      if (!image && !raw && !item.reason) {
+        throw new Error('input diagnostic has no uploaded pixels or unavailable reason');
+      }
+      if ((image || raw) && (item.width < 1 || item.height < 1)) {
+        throw new Error('uploaded input dimensions must be positive');
+      }
+      if (image && (image.width !== item.width || image.height !== item.height)) {
+        throw new Error('input image dimensions differ from diagnostic');
+      }
+      if (item.rawBytesPerRow !== undefined || item.rawByteLength !== undefined) {
+        if (!raw || raw.width !== item.width || raw.height !== item.height ||
+            raw.format !== item.format || raw.bytesPerRow !== item.rawBytesPerRow ||
+            raw.bytes !== item.rawByteLength) {
+          throw new Error('raw input differs from diagnostic');
+        }
+      } else if (raw) throw new Error('raw input has no diagnostic metadata');
+    }
+    const aspectOrdinals = new Set();
+    const aspectKeys = new Set();
+    for (const item of aspects) {
+      if (!item || !Number.isInteger(item.aspectOrdinal) || item.aspectOrdinal < 0 ||
+          item.aspectOrdinal >= MAX_ASPECT_ENTRIES || aspectOrdinals.has(item.aspectOrdinal) ||
+          !Number.isInteger(item.passOrdinal) || item.passOrdinal < 0 ||
+          item.passOrdinal >= MAX_DIAGNOSTIC_ENTRIES ||
+          !['depth', 'stencil'].includes(item.aspect) ||
+          aspectKeys.has(`${item.passOrdinal}:${item.aspect}`) ||
+          typeof item.label !== 'string' || item.label.length > 200 ||
+          typeof item.targetLabel !== 'string' || item.targetLabel.length > 200 ||
+          (item.textureId !== null && (!Number.isSafeInteger(item.textureId) || item.textureId < 0)) ||
+          (item.viewId !== null && (!Number.isSafeInteger(item.viewId) || item.viewId < 0)) ||
+          !Number.isSafeInteger(item.width) || item.width < 0 || item.width > 16384 ||
+          !Number.isSafeInteger(item.height) || item.height < 0 || item.height > 16384 ||
+          typeof item.sourceFormat !== 'string' || item.sourceFormat.length > 80 ||
+          item.rawFormat !== (item.aspect === 'depth' ? 'r32float' : 'stencil8') ||
+          !Number.isSafeInteger(item.sampleCount) || item.sampleCount < 1 || item.sampleCount > 32 ||
+          (item.sampleIndex !== null &&
+            (!Number.isSafeInteger(item.sampleIndex) || item.sampleIndex < 0 ||
+              item.sampleIndex >= item.sampleCount)) ||
+          (item.reason !== undefined && (typeof item.reason !== 'string' || item.reason.length > 500)) ||
+          (item.imageReason !== undefined &&
+            (typeof item.imageReason !== 'string' || item.imageReason.length > 500)) ||
+          (item.rawReason !== undefined &&
+            (typeof item.rawReason !== 'string' || item.rawReason.length > 500))) {
+        throw new Error('invalid depth/stencil aspect diagnostic');
+      }
+      aspectOrdinals.add(item.aspectOrdinal);
+      aspectKeys.add(`${item.passOrdinal}:${item.aspect}`);
+      const image = job.aspectImages.get(item.aspectOrdinal);
+      const raw = job.aspectRaw.get(item.aspectOrdinal);
+      if (!image && !raw && !item.reason) {
+        throw new Error('aspect diagnostic has no uploaded pixels or unavailable reason');
+      }
+      if ((image || raw) && (item.width < 1 || item.height < 1)) {
+        throw new Error('uploaded aspect dimensions must be positive');
+      }
+      if (image && (image.width !== item.width || image.height !== item.height)) {
+        throw new Error('aspect PNG dimensions differ from diagnostic');
+      }
+      if (item.rawBytesPerRow !== undefined || item.rawByteLength !== undefined) {
+        if (!raw || raw.width !== item.width || raw.height !== item.height ||
+            raw.format !== item.rawFormat || raw.bytesPerRow !== item.rawBytesPerRow ||
+            raw.bytes !== item.rawByteLength) {
+          throw new Error('raw aspect differs from diagnostic');
+        }
+      } else if (raw) throw new Error('raw aspect has no diagnostic metadata');
+    }
+    const bufferOrdinals = new Set();
+    for (const item of buffers) {
+      const shaderBinding = ['uniform', 'storage', 'read-only-storage'].includes(item?.role);
+      const vertexBinding = item?.role === 'vertex';
+      const indexBinding = item?.role === 'index';
+      if (!item || !Number.isInteger(item.bufferOrdinal) || item.bufferOrdinal < 0 ||
+          item.bufferOrdinal >= MAX_BUFFER_ENTRIES || bufferOrdinals.has(item.bufferOrdinal) ||
+          !Number.isInteger(item.passOrdinal) || item.passOrdinal < 0 ||
+          item.passOrdinal >= MAX_DIAGNOSTIC_ENTRIES ||
+          !(shaderBinding || vertexBinding || indexBinding) ||
+          (item.bufferId !== null && (!Number.isSafeInteger(item.bufferId) || item.bufferId < 0)) ||
+          typeof item.bufferLabel !== 'string' || item.bufferLabel.length > 200 ||
+          !Number.isSafeInteger(item.totalSize) || item.totalSize < 0 ||
+          !Number.isSafeInteger(item.offset) || !Number.isSafeInteger(item.size) ||
+          !Number.isSafeInteger(item.copiedOffset) || item.copiedOffset < 0 ||
+          !Number.isSafeInteger(item.copiedSize) || item.copiedSize < 0 ||
+          !['binding', 'draw-indices', 'bound-suffix'].includes(item.rangeScope) ||
+          (shaderBinding && (item.rangeScope !== 'binding' ||
+            typeof item.bindingName !== 'string' || !item.bindingName.trim() ||
+            item.bindingName.length > 160 ||
+            !Number.isSafeInteger(item.groupSlot) || item.groupSlot < 0 ||
+            !Number.isSafeInteger(item.binding) || item.binding < 0)) ||
+          (vertexBinding && (item.rangeScope !== 'bound-suffix' ||
+            typeof item.streamName !== 'string' || !item.streamName.trim() ||
+            item.streamName.length > 160 ||
+            !Number.isSafeInteger(item.vertexSlot) || item.vertexSlot < 0)) ||
+          (indexBinding && (item.rangeScope !== 'draw-indices' ||
+            item.indexFormat !== undefined && !['uint16', 'uint32'].includes(item.indexFormat))) ||
+          (item.reason !== undefined && (typeof item.reason !== 'string' || item.reason.length > 500)) ||
+          (item.rawReason !== undefined &&
+            (typeof item.rawReason !== 'string' || item.rawReason.length > 500))) {
+        throw new Error('invalid pre-Draw buffer diagnostic');
+      }
+      bufferOrdinals.add(item.bufferOrdinal);
+      const raw = job.bufferRaw.get(item.bufferOrdinal);
+      if (!raw && !item.reason && !item.rawReason) {
+        throw new Error('buffer diagnostic has no uploaded bytes or unavailable reason');
+      }
+      if (raw && (item.reason || item.bufferId === null || item.size <= 0 || item.offset < 0 ||
+          item.offset + item.size > item.totalSize || item.copiedOffset % 4 !== 0 ||
+          item.copiedSize % 4 !== 0 || item.copiedSize < 4 ||
+          item.copiedSize > MAX_BUFFER_ITEM_BYTES || item.copiedOffset > item.offset ||
+          item.copiedOffset + item.copiedSize < item.offset + item.size ||
+          item.copiedOffset + item.copiedSize > item.totalSize ||
+          raw.bytes !== item.copiedSize || item.rawByteLength !== raw.bytes ||
+          indexBinding && !['uint16', 'uint32'].includes(item.indexFormat))) {
+        throw new Error('raw pre-Draw buffer differs from diagnostic range');
+      }
+      if (!raw && item.rawByteLength !== undefined) {
+        throw new Error('unavailable Draw buffer has raw byte metadata');
+      }
+    }
     for (const item of gpuPasses) {
       if (!item || !Number.isInteger(item.ordinal) || item.ordinal < 0 || item.ordinal >= MAX_DIAGNOSTIC_ENTRIES ||
           !['render', 'compute'].includes(item.kind) || typeof item.label !== 'string' || item.label.length > 200 ||
@@ -539,29 +843,61 @@ export function createWebGpuCaptureController(projectRoot) {
     if (warning !== undefined && (typeof warning !== 'string' || warning.length > 500)) {
       throw new Error('invalid diagnostic warning');
     }
-    job.diagnostics = { passes, gpuPasses, gpuProfilerStatus, warning };
+    job.diagnostics = { passes, inputs, aspects, buffers, gpuPasses, gpuProfilerStatus, warning };
     job.updatedAt = Date.now();
     return { jobId: job.id, passImages: job.passImages.size, passRecords: passes.length,
+      inputImages: job.inputImages.size, inputRecords: inputs.length,
+      aspectImages: job.aspectImages.size, aspectRecords: aspects.length,
+      bufferRaw: job.bufferRaw.size, bufferRecords: buffers.length,
       gpuPasses: gpuPasses.length };
   }
 
   async function writeSidecars(job, actualFrames) {
     const detail = job.diagnostics;
+    if (job.inputImages.size || job.inputRaw.size) {
+      const recorded = new Set(detail?.inputs?.map(item => item.inputOrdinal) ?? []);
+      for (const ordinal of [...job.inputImages.keys(), ...job.inputRaw.keys()]) {
+        if (!recorded.has(ordinal)) {
+          throw new Error(`uploaded input ${ordinal} has no diagnostic metadata`);
+        }
+      }
+    }
+    if (job.aspectImages.size || job.aspectRaw.size) {
+      const recorded = new Set(detail?.aspects?.map(item => item.aspectOrdinal) ?? []);
+      for (const ordinal of [...job.aspectImages.keys(), ...job.aspectRaw.keys()]) {
+        if (!recorded.has(ordinal)) {
+          throw new Error(`uploaded aspect ${ordinal} has no diagnostic metadata`);
+        }
+      }
+    }
+    if (job.bufferRaw.size) {
+      const recorded = new Set(detail?.buffers?.map(item => item.bufferOrdinal) ?? []);
+      for (const ordinal of job.bufferRaw.keys()) {
+        if (!recorded.has(ordinal)) {
+          throw new Error(`uploaded Draw buffer ${ordinal} has no diagnostic metadata`);
+        }
+      }
+    }
     if (!detail && !job.frameImages.size) return null;
     const report = summarizeCapture(await readCapture(job.file));
     const displayFrames = report.frames.filter(frame => frame.frameTextureId != null &&
       report.passes.some(pass => pass.frameOrdinal === frame.frameOrdinal &&
         pass.targets?.some(target => target.outputTextureId === frame.frameTextureId)));
-    const matchingFrames = detail?.passes.length ? report.frames.filter(frame => {
+    const matchingFrames = detail && (detail.passes.length || detail.aspects.length) ? report.frames.filter(frame => {
       const frameRender = report.passes.filter(pass => pass.frameOrdinal === frame.frameOrdinal && pass.type === 'render');
-      return detail.passes.every(item => frameRender[item.passOrdinal]?.label === item.label);
+      return detail.passes.every(item => frameRender[item.passOrdinal]?.label === item.label) &&
+        detail.aspects.every(item => frameRender[item.passOrdinal]?.label === item.label);
     }) : [];
     const targetFrame = matchingFrames.at(-1) ?? displayFrames.at(-1) ?? report.frames.at(-1);
     const targetOrdinal = targetFrame?.frameOrdinal ?? 1;
     const passes = report.passes.filter(pass => pass.frameOrdinal === targetOrdinal);
+    const gamePasses = passes.filter(pass => !pass.diagnosticAuxiliary);
     const renderPasses = passes.filter(pass => pass.type === 'render');
     const passSnapshots = [];
     const passUnavailable = [];
+    const inputSnapshots = [];
+    const aspectSnapshots = [];
+    const bufferSnapshots = [];
     const gpuTimings = [];
     for (const item of detail?.passes ?? []) {
       const pass = renderPasses[item.passOrdinal];
@@ -602,8 +938,149 @@ export function createWebGpuCaptureController(projectRoot) {
         }
       }
     }
+    for (const item of detail?.inputs ?? []) {
+      const pass = renderPasses[item.passOrdinal];
+      const image = job.inputImages.get(item.inputOrdinal);
+      const raw = job.inputRaw.get(item.inputOrdinal);
+      const binding = matchingFrames.length === 1 ?
+        verifiedInputBinding(pass, report.events, report.resources, item) : null;
+      const base = {
+        frameOrdinal: targetOrdinal, passIndex: pass?.index ?? null,
+        inputOrdinal: item.inputOrdinal, passOrdinal: item.passOrdinal,
+        bindingName: item.bindingName, textureId: item.textureId, viewId: item.viewId,
+        ...(item.groupSlot !== undefined ? { groupSlot: item.groupSlot, binding: item.binding } : {}),
+        mipLevel: item.mipLevel, arrayLayer: item.arrayLayer,
+        width: item.width, height: item.height, format: item.format,
+      };
+      if (!binding || (!image && !raw)) {
+        inputSnapshots.push({ ...base, reason: !pass ?
+          'input pass ordinal does not exist in the captured frame' :
+          matchingFrames.length !== 1 ?
+            'cannot uniquely match the diagnostic frame to Inspector commands' :
+            !pass.frameDebugStep ?
+              'input pass is not a verified one-Draw physical render pass' :
+              !binding ?
+                'TextureView and texture IDs are missing or do not match the selected Draw bindings' :
+                item.reason || 'input pixels were not captured' });
+        continue;
+      }
+      inputSnapshots.push({ ...base, beforeCommandIndex: pass.frameDebugStep.drawCommandIndex,
+        groupSlot: binding.groupSlot, binding: binding.binding,
+        ...(binding.bindingAmbiguous ? {
+          bindingAmbiguous: true, bindingCandidates: binding.bindingCandidates,
+        } : {}),
+        ...(image ? { file: image.name, imageSha256: image.sha256 } :
+          { imageReason: item.reason || 'Input PNG was not saved' }),
+        ...(raw ? { rawFile: raw.name, rawFormat: raw.format,
+          rawBytesPerRow: raw.bytesPerRow, rawByteLength: raw.bytes,
+          rawSha256: raw.sha256 } :
+          { rawReason: item.rawReason || 'Input raw pixels were not saved' }),
+      });
+    }
+    for (const item of detail?.buffers ?? []) {
+      const pass = renderPasses[item.passOrdinal];
+      const raw = job.bufferRaw.get(item.bufferOrdinal);
+      const binding = matchingFrames.length === 1 ?
+        verifiedDrawBufferBinding(pass, report.events, report.resources, item) : null;
+      const base = {
+        frameOrdinal: targetOrdinal, passIndex: pass?.index ?? null,
+        bufferOrdinal: item.bufferOrdinal, passOrdinal: item.passOrdinal,
+        role: item.role,
+        ...(item.bindingName !== undefined ? { bindingName: item.bindingName } : {}),
+        ...(item.groupSlot !== undefined ? { groupSlot: item.groupSlot } : {}),
+        ...(item.binding !== undefined ? { binding: item.binding } : {}),
+        ...(item.streamName !== undefined ? { streamName: item.streamName } : {}),
+        ...(item.vertexSlot !== undefined ? { vertexSlot: item.vertexSlot } : {}),
+        ...(item.indexFormat !== undefined ? { indexFormat: item.indexFormat } : {}),
+        bufferId: item.bufferId, bufferLabel: item.bufferLabel,
+        totalSize: item.totalSize, offset: item.offset, size: item.size,
+        copiedOffset: item.copiedOffset, copiedSize: item.copiedSize,
+        rangeScope: item.rangeScope,
+      };
+      if (!binding || !raw) {
+        bufferSnapshots.push({ ...base, reason: !pass ?
+          'buffer pass ordinal does not exist in the captured frame' :
+          matchingFrames.length !== 1 ?
+            'cannot uniquely match the diagnostic frame to Inspector commands' :
+            !pass.frameDebugStep ?
+              'buffer pass is not a verified one-Draw physical render pass' :
+              !binding ?
+                'Buffer ID, slot, or byte range does not match selected Draw bindings' :
+                item.reason || item.rawReason || 'pre-Draw buffer bytes were not captured' });
+        continue;
+      }
+      bufferSnapshots.push({ ...base, beforeCommandIndex: pass.frameDebugStep.drawCommandIndex,
+        rawFile: raw.name, rawByteLength: raw.bytes, rawSha256: raw.sha256 });
+    }
+    for (const item of detail?.aspects ?? []) {
+      const pass = renderPasses[item.passOrdinal];
+      const target = pass?.targets?.find(value => value.kind === 'depth-stencil');
+      const sourceTexture = report.resources.textures.find(value => value.id === target?.textureId);
+      const image = job.aspectImages.get(item.aspectOrdinal);
+      const raw = job.aspectRaw.get(item.aspectOrdinal);
+      const base = {
+        frameOrdinal: targetOrdinal, passIndex: pass?.index ?? null,
+        aspectOrdinal: item.aspectOrdinal, passOrdinal: item.passOrdinal,
+        aspect: item.aspect, textureId: item.textureId, viewId: item.viewId,
+        width: item.width, height: item.height, sourceFormat: item.sourceFormat,
+        rawFormat: item.rawFormat, sampleCount: item.sampleCount, sampleIndex: item.sampleIndex,
+        label: item.label,
+      };
+      const attachmentMatches = matchingFrames.length === 1 && pass?.label === item.label &&
+        target?.textureId === item.textureId && target?.viewId === item.viewId &&
+        (target.format == null || target.format === item.sourceFormat) &&
+        (sourceTexture?.descriptor?.sampleCount == null ||
+          sourceTexture.descriptor.sampleCount === item.sampleCount);
+      if (!attachmentMatches || (!image && !raw)) {
+        aspectSnapshots.push({ ...base, reason: !pass ?
+          'aspect pass ordinal does not exist in the captured frame' :
+          matchingFrames.length !== 1 ?
+            'cannot uniquely match the diagnostic frame to Inspector commands' :
+            !target || pass.label !== item.label || target.textureId !== item.textureId ||
+              target.viewId !== item.viewId ||
+              target.format != null && target.format !== item.sourceFormat ?
+                'depth/stencil attachment IDs, format, or pass label differ from Inspector capture' :
+              !attachmentMatches ? 'depth/stencil sample count differs from Inspector capture' :
+                item.reason || 'depth/stencil pixels were not captured' });
+        continue;
+      }
+      aspectSnapshots.push({ ...base, afterCommandIndex: pass.endCommand,
+        ...(image ? { file: image.name, imageSha256: image.sha256 } :
+          { imageReason: item.imageReason || 'Aspect PNG was not saved' }),
+        ...(raw ? { rawFile: raw.name, rawBytesPerRow: raw.bytesPerRow,
+          rawByteLength: raw.bytes, rawSha256: raw.sha256 } :
+          { rawReason: item.rawReason || 'Aspect raw pixels were not saved' }),
+      });
+    }
+    if (detail) {
+      const recorded = new Set(detail.aspects.map(item => `${item.passOrdinal}:${item.aspect}`));
+      for (let ordinal = 0; ordinal < renderPasses.length; ordinal++) {
+        const pass = renderPasses[ordinal];
+        const target = pass.targets?.find(value => value.kind === 'depth-stencil');
+        if (!target) continue;
+        const format = target.format ?? '';
+        const expected = [
+          ...(format.startsWith('depth') ? ['depth'] : []),
+          ...(format.includes('stencil8') ? ['stencil'] : []),
+        ];
+        const sourceTexture = report.resources.textures.find(value => value.id === target.textureId);
+        for (const aspect of expected) {
+          if (recorded.has(`${ordinal}:${aspect}`)) continue;
+          aspectSnapshots.push({ frameOrdinal: targetOrdinal, passIndex: pass.index,
+            aspectOrdinal: null, passOrdinal: ordinal, aspect,
+            textureId: target.textureId, viewId: target.viewId,
+            width: sourceTexture?.width ?? null, height: sourceTexture?.height ?? null,
+            sourceFormat: format, rawFormat: aspect === 'depth' ? 'r32float' : 'stencil8',
+            sampleCount: sourceTexture?.descriptor?.sampleCount ?? 1, sampleIndex: null,
+            label: pass.label,
+            reason: ordinal >= MAX_DIAGNOSTIC_ENTRIES || detail.aspects.length >= MAX_ASPECT_ENTRIES ?
+              'RHI aspect diagnostic record limit reached' :
+              'RHI did not emit a depth/stencil diagnostic for this pass' });
+        }
+      }
+    }
     for (const item of detail?.gpuPasses ?? []) {
-      const pass = passes[item.ordinal];
+      const pass = gamePasses[item.ordinal];
       if (pass?.type === item.kind && pass.label === item.label) {
         gpuTimings.push({ frameOrdinal: pass.frameOrdinal, passIndex: pass.index,
           durationMs: item.durationMs, source: 'webgpu-timestamp-query' });
@@ -616,12 +1093,22 @@ export function createWebGpuCaptureController(projectRoot) {
           return frame ? { frameOrdinal: frame.frameOrdinal, file: image.name,
             width: image.width, height: image.height } : null;
         }).filter(Boolean),
-      passSnapshots, passUnavailable, gpuTimings,
+      passSnapshots, passUnavailable, inputSnapshots, aspectSnapshots, bufferSnapshots, gpuTimings,
       gpuProfilerStatus: detail?.gpuProfilerStatus ?? null,
       passCaptureWarning: detail?.warning ?? null };
-    await writeFile(join(job.outputDir, 'sidecars.json'), JSON.stringify(sidecars, null, 2) + '\n', { flag: 'wx' });
+    const manifestText = JSON.stringify(sidecars, null, 2) + '\n';
+    if (Buffer.byteLength(manifestText) > MAX_SIDECAR_MANIFEST_BYTES) {
+      throw new Error('sidecar manifest exceeds 4 MiB limit');
+    }
+    await writeFile(join(job.outputDir, 'sidecars.json'), manifestText, { flag: 'wx' });
     return { passSnapshots: passSnapshots.length,
       rawPassSnapshots: passSnapshots.filter(item => item.rawFile).length,
+      inputSnapshots: inputSnapshots.filter(item => item.file || item.rawFile).length,
+      inputUnavailable: inputSnapshots.filter(item => item.reason).length,
+      aspectSnapshots: aspectSnapshots.filter(item => item.file || item.rawFile).length,
+      aspectUnavailable: aspectSnapshots.filter(item => item.reason).length,
+      bufferSnapshots: bufferSnapshots.filter(item => item.rawFile).length,
+      bufferUnavailable: bufferSnapshots.filter(item => item.reason).length,
       passUnavailable: passUnavailable.length, gpuTimedPasses: gpuTimings.length };
   }
 
@@ -743,6 +1230,7 @@ export function createWebGpuCaptureController(projectRoot) {
   }
 
   return { register, list, request, poll, status, viewerFile, uploadFrameImage, uploadPassImage,
-    uploadPassRaw,
+    uploadPassRaw, uploadInputImage, uploadInputRaw,
+    uploadAspectImage, uploadAspectRaw, uploadBufferRaw,
     diagnostics, upload, fail, stop, close };
 }

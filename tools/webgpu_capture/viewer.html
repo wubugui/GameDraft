@@ -213,8 +213,8 @@
     body:has(#gpu-workspace:not([hidden])) .event-toolbar { display:none; }
     input,select { border-color:#505050; background:#242424; }
     .plain-button,.tab { border-color:#505050; background:#333; }
-    .frame-workspace { --tree-width:28%; grid-template-columns:minmax(270px,var(--tree-width)) 5px minmax(0,1fr); }
-    .frame-main { --preview-height:69%; grid-template-rows:minmax(330px,var(--preview-height)) 5px minmax(175px,1fr); }
+    .frame-workspace { --tree-width:32%; grid-template-columns:minmax(300px,var(--tree-width)) 5px minmax(0,1fr); }
+    .frame-main { --preview-height:55%; grid-template-rows:minmax(260px,var(--preview-height)) 5px minmax(260px,1fr); }
     .events-pane,.preview-pane,.inspector-pane,.gpu-chart-pane,.gpu-table-pane { background:var(--surface); }
     .pane-head { min-height:27px; padding:3px 9px; border-bottom-color:#414141; background:#303030; }
     .event-controls { gap:3px; padding:5px 7px; border-bottom-color:#444; }
@@ -225,21 +225,24 @@
     .tree-batch-head { background:#303030; }
     .tree-category-head,.tree-batch-head { overflow:hidden; white-space:nowrap; }
     .tree-pass-head { background:#2d2d2d; }
+    .tree-category-children,.tree-batch-children,.tree-children { padding-left:7px; }
+    .tree-pass-leaf::before { content:'·'; }
+    .tree-pass-leaf .tree-meta { margin-left:6px; }
     .tree-frame:hover,.tree-category-head:hover,.tree-batch-head:hover,.tree-pass-head:hover,.tree-event:hover { background:#424242; }
     .tree-pass-head.active,.tree-event.active,.tree-event[aria-selected=true],.list-button.active { background:var(--selection); }
     .list-footer { background:#292929; }
     .preview-pane { border-bottom-color:#151515; }
-    .preview-toolbar { display:flex; align-items:center; min-height:32px; overflow:hidden; border-bottom:1px solid var(--line); background:#303030; }
-    .preview-source-row { flex:1 1 40%; min-width:0; min-height:31px; gap:4px; padding:2px 5px 2px 8px; border:0; }
+    .preview-toolbar { display:flex; flex-direction:column; align-items:stretch; overflow:hidden; border-bottom:1px solid var(--line); background:#303030; }
+    .preview-source-row { flex:none; width:100%; min-width:0; min-height:31px; gap:5px; padding:3px 8px; border:0; border-bottom:1px solid #454545; }
     .preview-source-row .plain-button { padding:2px 6px; }
-    #texture-scope { max-width:76px; }
+    #texture-scope { max-width:155px; }
     .texture-choices { min-width:120px; }
     .texture-choices select { max-width:none; }
-    .inspector-controls { flex:none; min-height:31px; gap:4px; overflow:visible; padding:2px 7px; border:0; border-left:1px solid #474747; }
+    .inspector-controls { flex:none; width:100%; min-height:31px; gap:6px; overflow:auto hidden; padding:3px 8px; border:0; }
     .inspector-controls label { color:#b8b8b8; }
-    .inspector-controls select { max-width:80px; }
-    #texture-exposure { width:62px; }
-    #texture-zoom { width:66px; margin-right:0; }
+    .inspector-controls select { max-width:86px; }
+    #texture-exposure { width:120px; }
+    #texture-zoom { width:78px; margin-right:auto; }
     .inspector-controls .plain-button { min-height:23px; padding:2px 6px; }
     .preview-stage { background:#1a1a1a; }
     .pixel-readout { min-height:23px; padding:3px 8px; border-color:#414141; background:#252525; }
@@ -278,15 +281,14 @@
     .binding-table th { background:#343434; }
     .flow-node { border-color:#555; background:#303943; }
     @media (max-width:1350px) {
+      .tree-pass-leaf .tree-meta { display:none; }
       .inspector-controls { gap:3px; padding-inline:5px; }
-      .inspector-controls label[for="texture-zoom"] { display:none; }
       .preview-source-row { gap:3px; }
-      #texture-scope { display:none; }
+      #texture-scope { max-width:85px; }
     }
     @media (max-width:950px) {
-      .frame-workspace { --tree-width:34%; grid-template-columns:minmax(220px,var(--tree-width)) 5px minmax(0,1fr); }
-      .preview-toolbar { overflow:auto hidden; }
-      .preview-source-row { min-width:250px; }
+      .frame-workspace { --tree-width:36%; grid-template-columns:minmax(240px,var(--tree-width)) 5px minmax(0,1fr); }
+      .preview-source-row,.inspector-controls { overflow:auto hidden; }
       .resource-grid { grid-template-columns:1fr; }
     }
     @media (max-width:620px) {
@@ -378,19 +380,19 @@
       <div id="preview-splitter" class="splitter horizontal" role="separator" aria-label="调整输出预览高度" aria-orientation="horizontal" tabindex="0"></div>
       <section class="inspector-pane" aria-labelledby="detail-title">
         <div class="pane-head inspector-head"><h2 id="detail-title">事件信息</h2><span id="detail-index" class="muted small"></span></div>
-        <nav id="inspector-tabs" class="inspector-tabs" aria-label="事件检查器" hidden><button type="button" data-page="detail" class="active">详情</button><button type="button" data-page="pipeline">管线</button><button type="button" data-page="inputs">输入 / 输出</button><button type="button" data-page="buffers">Buffers</button><button type="button" data-page="resources">资源</button><button type="button" data-page="errors">错误</button></nav>
+        <nav id="inspector-tabs" class="inspector-tabs" aria-label="事件检查器"><button type="button" data-page="detail" class="active">详情</button><button type="button" data-page="pipeline">管线</button><button type="button" data-page="inputs">输入 / 输出</button><button type="button" data-page="buffers">Buffers</button><button type="button" data-page="resources">资源</button><button type="button" data-page="errors">错误</button></nav>
         <div id="inspector-scroll">
           <details id="page-detail" class="inspector-accordion" data-page="detail" open><summary>Details</summary><div class="inspector-page"><div id="event-detail"></div></div></details>
           <details id="page-inputs" class="inspector-accordion" data-page="inputs"><summary>Textures / 输入与输出</summary><div class="inspector-page"><div id="binding-detail"></div></div></details>
           <details id="page-pipeline" class="inspector-accordion" data-page="pipeline"><summary>Pipeline / 着色器</summary><div class="inspector-page"><div id="pipeline-detail"></div></div></details>
-          <details id="page-buffers" class="inspector-accordion" data-page="buffers"><summary>Buffers / 常量</summary><div class="inspector-page"><h3 class="section-caption">绑定时 Buffer 内容 <span id="buffer-count" class="small muted"></span></h3>
+          <details id="page-buffers" class="inspector-accordion" data-page="buffers"><summary>Buffers / 常量</summary><div class="inspector-page"><h3 class="section-caption">Draw Buffer 内容 <span id="buffer-count" class="small muted"></span></h3>
             <div class="panel-body">
-              <select id="buffer-select" class="buffer-select" aria-label="选择缓冲 Payload"></select>
+              <select id="buffer-select" class="buffer-select" aria-label="选择 Draw Buffer"></select>
               <p id="buffer-note" class="inspect-note"></p>
               <div id="buffer-uniform-fields" class="uniform-fields"></div>
-              <a id="buffer-save" class="plain-button" download hidden>保存完整二进制</a>
-              <button id="buffer-load-full" class="plain-button" type="button" hidden>载入完整字节</button>
-              <div class="control-row data-section"><label for="buffer-offset">字节偏移</label><input id="buffer-offset" type="number" min="0" step="16" value="0" style="width:88px;flex:none"><span id="buffer-page-status" class="muted small"></span></div>
+              <a id="buffer-save" class="plain-button" download hidden>下载 .bin</a>
+              <button id="buffer-load-full" class="plain-button" type="button" hidden>重试读取</button>
+              <div class="control-row data-section"><label for="buffer-offset">字节偏移</label><input id="buffer-offset" type="number" min="0" step="1" value="0" style="width:88px;flex:none"><span id="buffer-page-status" class="muted small"></span></div>
               <pre id="buffer-hex" hidden></pre>
               <div id="buffer-table-wrap" class="buffer-table-wrap" hidden><table id="buffer-table" class="buffer-table"><thead><tr><th>偏移</th><th>4 字节 Hex</th><th>uint32 LE</th><th>float32 LE</th></tr></thead><tbody id="buffer-rows"></tbody></table></div>
             </div>

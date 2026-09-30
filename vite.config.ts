@@ -161,6 +161,36 @@ function webgpuCaptureApi(): Plugin {
                 format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
                 bytesPerRow: Number(qs.get('bytesPerRow')), stream: req, contentLength,
               });
+            } else if (action === 'input-image') {
+              result = await controller.uploadInputImage({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                inputOrdinal: Number(qs.get('inputOrdinal') ?? NaN), stream: req, contentLength,
+              });
+            } else if (action === 'input-raw') {
+              result = await controller.uploadInputRaw({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                inputOrdinal: Number(qs.get('inputOrdinal') ?? NaN),
+                format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
+                bytesPerRow: Number(qs.get('bytesPerRow')), stream: req, contentLength,
+              });
+            } else if (action === 'aspect-image') {
+              result = await controller.uploadAspectImage({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                aspectOrdinal: Number(qs.get('aspectOrdinal') ?? NaN), stream: req, contentLength,
+              });
+            } else if (action === 'aspect-raw') {
+              result = await controller.uploadAspectRaw({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                aspectOrdinal: Number(qs.get('aspectOrdinal') ?? NaN),
+                format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
+                bytesPerRow: Number(qs.get('bytesPerRow')), stream: req, contentLength,
+              });
+            } else if (action === 'buffer-raw') {
+              result = await controller.uploadBufferRaw({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                bufferOrdinal: Number(qs.get('bufferOrdinal') ?? NaN),
+                stream: req, contentLength,
+              });
             } else {
               result = await controller.upload({
                 jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',

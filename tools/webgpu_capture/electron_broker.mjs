@@ -119,6 +119,25 @@ async function handleRequest(request, controller) {
         format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
         bytesPerRow: Number(qs.get('bytesPerRow')),
       });
+      else if (action === 'input-image') result = await controller.uploadInputImage({
+        ...common, inputOrdinal: Number(qs.get('inputOrdinal') ?? NaN),
+      });
+      else if (action === 'input-raw') result = await controller.uploadInputRaw({
+        ...common, inputOrdinal: Number(qs.get('inputOrdinal') ?? NaN),
+        format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
+        bytesPerRow: Number(qs.get('bytesPerRow')),
+      });
+      else if (action === 'aspect-image') result = await controller.uploadAspectImage({
+        ...common, aspectOrdinal: Number(qs.get('aspectOrdinal') ?? NaN),
+      });
+      else if (action === 'aspect-raw') result = await controller.uploadAspectRaw({
+        ...common, aspectOrdinal: Number(qs.get('aspectOrdinal') ?? NaN),
+        format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
+        bytesPerRow: Number(qs.get('bytesPerRow')),
+      });
+      else if (action === 'buffer-raw') result = await controller.uploadBufferRaw({
+        ...common, bufferOrdinal: Number(qs.get('bufferOrdinal') ?? NaN),
+      });
       else result = await controller.upload({ ...common, actualFrames: Number(qs.get('actualFrames')) });
     } else return json({ error: 'method not allowed' }, 405);
     return json(result);

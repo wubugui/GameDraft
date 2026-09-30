@@ -27,6 +27,7 @@
     textureViews: new Map(),
     frameChoice: null,
     selectedBufferPayloadId: null,
+    preferredBufferBinding: null,
     previewMode: 'frame',
     mode: 'frame',
     inspectorPage: 'detail',
@@ -102,8 +103,8 @@
       Number(snapshot.frameOrdinal) === Number(pass.frameOrdinal));
   }
   function hasRawFloat(snapshot) {
-    const bytesPerPixel = snapshot?.rawFormat === 'rgba16float' ? 8 :
-      snapshot?.rawFormat === 'rgba32float' ? 16 : 0;
+    const bytesPerPixel = ({ r16float: 2, rg16float: 4, rgba16float: 8,
+      r32float: 4, rg32float: 8, rgba32float: 16 })[snapshot?.rawFormat] || 0;
     return !!assetUrl(snapshot?.rawFile) && !!bytesPerPixel &&
       Number.isSafeInteger(snapshot.width) && snapshot.width > 0 &&
       Number.isSafeInteger(snapshot.height) && snapshot.height > 0 &&
@@ -152,6 +153,8 @@
   }
 
   const bufferCache = new Map();
+  const bufferPending = new Map();
+  const bufferErrors = new Map();
   const surface = window.createGameDraftSurfaceInspector(el('surface-mount'), onPixelPicked);
   function setInspectorPage(page) {
     state.inspectorPage = page;
@@ -162,6 +165,9 @@
     }
     const target = el(`page-${page}`);
     if (target?.tagName === 'DETAILS') {
+      for (const section of el('inspector-scroll').querySelectorAll('.inspector-accordion')) {
+        if (section !== target) section.open = false;
+      }
       target.open = true;
       target.scrollIntoView({ block: 'nearest' });
     } else {
@@ -171,10 +177,24 @@
       el('inspector-scroll').scrollTop = 0;
     }
   }
+  for (const section of el('inspector-scroll').querySelectorAll('.inspector-accordion')) {
+    section.addEventListener('toggle', () => {
+      if (!section.open) return;
+      state.inspectorPage = section.dataset.page;
+      for (const button of el('inspector-tabs').querySelectorAll('button[data-page]')) {
+        const active = button.dataset.page === state.inspectorPage;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', String(active));
+      }
+      for (const other of el('inspector-scroll').querySelectorAll('.inspector-accordion')) {
+        if (other !== section) other.open = false;
+      }
+    });
+  }
   function setupSplitter(handle, host, cssVariable, orientation) {
     const vertical = orientation === 'vertical';
-    const lower = vertical ? 220 : 180;
-    const reserve = vertical ? 320 : 170;
+    const lower = vertical ? 300 : 260;
+    const reserve = vertical ? 320 : 260;
     const setPosition = client => {
       const rect = host.getBoundingClientRect();
       const span = vertical ? rect.width : rect.height;
@@ -213,9 +233,9 @@
     const snapshot = state.activeSurface?.snapshot;
     const at = state.activeSurface?.signature;
     const display = el('pixel-value');
-    const formatNative = native => `${marker} · RT ${native.format} RGBA (${native.values.map(value =>
+    const formatNative = native => `${marker} · RT ${native.format} 通道值 (${native.values.map(value =>
       Number.isFinite(value) ? Number(value.toPrecision(7)) : String(value)).join(', ')})${native.raw8 ?
-      ` · bytes ${native.raw8.join(', ')}` : ''} · ${png}`;
+      ` · 原始字节 ${native.raw8.join(', ')}` : ''} · ${png}`;
     if (pixel.nativeRtBytes) {
       display.textContent = pixel.native ? formatNative(pixel.native) :
         `${marker} · ${pixel.reason || '原始 RT 像素不可读'}`;
@@ -301,7 +321,7 @@
   }
 
   function renderPasses() {
-    const passes = list(state.report?.passes);
+    const passes = list(state.report?.passes).filter(pass => !pass?.diagnosticAuxiliary);
     const visible = state.frameFilter === null ? passes : passes.filter(pass =>
       pass?.frameOrdinal !== null && pass?.frameOrdinal !== undefined &&
       Number(pass.frameOrdinal) === Number(state.frameFilter));
@@ -310,6 +330,8 @@
 
   function eventMatches(event, query, kind) {
     const method = String(event?.method || '');
+    if (kind !== 'all' && event?.passIndex != null &&
+        passFor(event.passIndex)?.diagnosticAuxiliary) return false;
     if (kind === 'visual' ? !['draw', 'dispatch'].includes(eventKind(method)) :
       kind !== 'all' && eventKind(method) !== kind) return false;
     if (state.frameFilter !== null && (event?.frameOrdinal === null || event?.frameOrdinal === undefined ||
@@ -330,7 +352,8 @@
       if (eventMatches(state.events[i], query, kind)) matches.push(i);
     }
     state.navigationIndices = matches;
-    el('event-count').textContent = `${matches.length} / ${state.events.length}`;
+    const total = state.events.filter(item => eventMatches(item, '', kind)).length;
+    el('event-count').textContent = `${matches.length} / ${total}`;
     const holder = el('event-tree');
     const previousScroll = holder.scrollTop;
     clear(holder);
@@ -371,8 +394,9 @@
       holder.appendChild(make('div', frame ?
         `▾ 第 ${frame.frameOrdinal} 帧 · 命令 ${printable(frame.beginCommand)}–${printable(frame.endCommand)}` :
         '▾ 捕获事件', 'tree-frame'));
-      const passes = list(state.report?.passes).filter(pass => ordinal === null ||
-        Number(pass?.frameOrdinal) === Number(ordinal));
+      const passes = list(state.report?.passes).filter(pass =>
+        (kind === 'all' || !pass?.diagnosticAuxiliary) &&
+        (ordinal === null || Number(pass?.frameOrdinal) === Number(ordinal)));
       const passIds = new Set(passes.map(pass => String(pass.index)));
       const ungrouped = inFrame.filter(index => state.events[index]?.passIndex == null ||
         !passIds.has(String(state.events[index].passIndex)));
@@ -454,7 +478,7 @@
           passContainer = batchContainer;
         }
         const step = pass.frameDebugStep;
-        if (step?.totalDraws > 1) {
+        if (step?.totalDraws > 1 && kind !== 'visual') {
           const logicalKey = `${ordinal ?? 'all'}:${category.key}:${step.logicalLabel}:${step.totalDraws}`;
           if (!stepContainer || stepGroupKey !== logicalKey || step.drawOrdinal !== stepOrdinal + 1) {
             stepGroupKey = logicalKey;
@@ -483,6 +507,29 @@
           stepOrdinal = 0;
         }
         const key = String(pass.index);
+        const passEvents = byPass.get(key) || [];
+        if (kind === 'visual' && passEvents.length === 1) {
+          const eventIndex = passEvents[0];
+          const drawEvent = state.events[eventIndex];
+          const method = eventKind(String(drawEvent?.method || ''));
+          if (method === 'draw' || method === 'dispatch') {
+            const head = make('button', undefined, 'tree-pass-head tree-pass-leaf');
+            head.type = 'button';
+            head.dataset.eventIndex = String(eventIndex);
+            head.classList.toggle('active', state.selectedEvent === eventIndex);
+            head.setAttribute('aria-selected', String(state.selectedEvent === eventIndex));
+            const label = treePassLabel(pass, passContainer === batchContainer && !!batchContainer);
+            const ordinalLabel = step?.totalDraws > 1 ? ` · ${step.drawOrdinal}/${step.totalDraws}` : '';
+            head.title = `${describePass(pass)}\n#${printable(drawEvent.commandIndex ?? eventIndex)} ${printable(drawEvent.method)}${drawEvent.pipelineLabel ? `\n${drawEvent.pipelineLabel}` : ''}`;
+            head.appendChild(make('span', `#${printable(drawEvent.commandIndex ?? eventIndex)} ${printable(drawEvent.method)} · ${label}${ordinalLabel}`, 'tree-label'));
+            const gpuMs = pass.gpuTiming?.source === 'webgpu-timestamp-query' && finite(pass.gpuTiming.durationMs) ?
+              compactGpuMs(pass.gpuTiming.durationMs) : '';
+            head.appendChild(make('span', `P${pass.index}${gpuMs ? ` · ${gpuMs}` : ''}`, 'tree-meta'));
+            head.addEventListener('click', () => selectEvent(eventIndex));
+            passContainer.appendChild(head);
+            continue;
+          }
+        }
         const group = make('details', undefined, 'tree-pass');
         group.open = state.expandedPasses.has(key);
         const head = make('summary', undefined, 'tree-pass-head');
@@ -733,7 +780,7 @@
   function previewTexture(id, viewId = null, input = false) {
     const option = state.textureChoices.find(item => String(item.id) === String(id) &&
       (!input || item.role === '绑定输入') &&
-      (viewId == null || item.key.endsWith(`:${viewId}`)));
+      (viewId == null || String(item.viewId) === String(viewId)));
     if (option) {
       state.selectedTextureKey = option.key;
       state.previewMode = 'texture';
@@ -898,13 +945,15 @@
           const button = make('button', '查看字节');
           button.type = 'button';
           button.addEventListener('click', () => {
-            const matching = draws.find(draw => list(draw.bufferPayloads).some(item =>
-              item.slot === row.group && item.binding === row.binding && String(item.bufferId) === String(row.id)));
+            const matching = draws.find(draw => list(draw.bindGroups).some(group =>
+              Number(group.slot) === Number(row.group) && list(group.resources).some(entry =>
+                Number(entry.binding) === Number(row.binding) &&
+                String(entry?.resource?.id) === String(row.id))));
             if (!matching) { selectResource('buffers', resourceIndexById('buffers', row.id)); return; }
             state.selectedEvent = state.events.indexOf(matching);
             state.focusScope = 'draw';
-            state.selectedBufferPayloadId = list(matching.bufferPayloads).find(item =>
-              item.slot === row.group && item.binding === row.binding && String(item.bufferId) === String(row.id))?.payloadId;
+            state.selectedBufferPayloadId = null;
+            state.preferredBufferBinding = { groupSlot: row.group, binding: row.binding, bufferId: row.id };
             renderBufferInspector();
             setInspectorPage('buffers');
           });
@@ -995,18 +1044,29 @@
     const draws = drawSelected ? [event] : pass ? state.events.filter(item =>
       Number(item?.passIndex) === Number(pass.index) && ['draw', 'dispatch'].includes(eventKind(String(item?.method || '')))) : [];
     const options = [];
-    const seen = new Set();
+    const seen = new Map();
     const inputEvent = draws.length === 1 ? draws[0] : null;
-    const add = (id, role, label, snapshot, evidenceOverride, viewId = null) => {
+    const add = (id, role, label, snapshot, evidenceOverride, viewId = null, mipLevel = null) => {
       if (id == null) return;
       const texture = resourceArray('textures').find(item => String(item.id) === String(id));
       if (!texture) return;
-      const key = `${role}:${id}:${viewId ?? ''}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      let evidence = evidenceOverride || (snapshot ? 'this-pass' : 'capture-final');
+      const key = `${role}:${id}:${viewId ?? ''}:${mipLevel ?? ''}`;
+      const existing = seen.get(key);
+      if (existing) {
+        if (role === '绑定输入' && label && !existing.bindingNames.includes(label)) {
+          existing.bindingNames.push(label);
+          existing.label = existing.bindingNames.length === 1 ? label :
+            `${existing.bindingNames[0]} +${existing.bindingNames.length - 1} 个绑定`;
+        }
+        return;
+      }
+      let evidence = snapshot?.captureMoment === 'pre-draw' ? 'pre-draw' :
+        snapshot?.captureMoment === 'unavailable' ?
+          role === '绑定输入' ? 'input-unavailable' : 'aspect-unavailable' :
+          evidenceOverride || (snapshot ? 'this-pass' : 'capture-final');
       let file = snapshot ? snapshot.imageFile : texture.imageFile;
-      if (role === '绑定输入' && pass) {
+      if ((role === '深度' || role === '模板') && !snapshot) file = null;
+      if (role === '绑定输入' && pass && evidence !== 'pre-draw' && evidence !== 'input-unavailable') {
         const viewReason = inputViewUnavailableReason(texture, viewId);
         const writes = state.textureWrites.get(String(id)) || [];
         const command = Number(inputEvent?.commandIndex);
@@ -1029,17 +1089,43 @@
         }
         if (viewReason) evidenceOverride = viewReason;
       }
-      options.push({ key, id, role, label: label || texture.label || `纹理 #${id}`, texture, snapshot,
-        file, evidence, unavailableReason: role === '绑定输入' ? evidenceOverride : null });
+      const option = { key, id, role, viewId, label: label || texture.label || `纹理 #${id}`,
+        bindingNames: role === '绑定输入' && label ? [label] : [], texture, snapshot,
+        file, evidence, mipLevel, unavailableReason: evidence === 'input-unavailable' ||
+          evidence === 'aspect-unavailable' ? snapshot?.reason || snapshot?.rawReason ||
+            snapshot?.imageReason : evidenceOverride };
+      options.push(option);
+      seen.set(key, option);
     };
     for (const draw of draws) {
       for (const group of list(draw.bindGroups)) for (const entry of list(group?.resources)) {
-        if (entry?.resource?.textureId != null) add(entry.resource.textureId, '绑定输入', entry.resource.label,
-          null, undefined, entry.resource.type === 'TextureView' ? entry.resource.id : null);
+        if (entry?.resource?.textureId == null) continue;
+        const textureId = entry.resource.textureId;
+        const viewId = entry.resource.type === 'TextureView' ? entry.resource.id : null;
+        const recorded = list(pass?.inputSnapshots).filter(item =>
+          String(item.textureId) === String(textureId) && String(item.viewId) === String(viewId) &&
+          (item.captureMoment === 'unavailable' || Number(item.drawCommandIndex) === Number(draw.commandIndex)));
+        if (recorded.length) {
+          for (const snapshot of recorded) add(textureId, '绑定输入',
+            snapshot.bindingName || entry.resource.label || `纹理 #${textureId}`,
+            snapshot, undefined, viewId, snapshot.mipLevel ?? 0);
+        } else add(textureId, '绑定输入', entry.resource.label, null, undefined, viewId);
       }
     }
     for (const target of list(pass?.targets || event?.targets)) {
       const outputId = target.outputTextureId ?? target.textureId;
+      if (target.kind === 'depth-stencil') {
+        const aspects = target.format?.includes('stencil') ? ['depth', 'stencil'] : ['depth'];
+        for (const aspect of aspects) {
+          const aspectSnapshot = list(pass?.aspectSnapshots).find(item => item.aspect === aspect &&
+            String(item.textureId) === String(target.textureId) &&
+            String(item.viewId) === String(target.viewId));
+          add(outputId, aspect === 'depth' ? '深度' : '模板',
+            target.outputTextureLabel || target.textureLabel,
+            aspectSnapshot, aspectSnapshot ? 'pass-end-aspect' : 'aspect-not-captured', target.viewId);
+        }
+        continue;
+      }
       const snapshot = list(pass?.snapshots).find(item => String(item.textureId) === String(outputId));
       const postDraw = drawSelected && postDrawSnapshots(pass, event).includes(snapshot);
       add(outputId, postDraw ? 'Draw 后输出' : snapshot ? 'Pass 结束读回' : '渲染目标',
@@ -1066,7 +1152,12 @@
       select.style.maxWidth = 'none';
       select.style.width = '100%';
       for (const item of options) {
-        const evidence = item.evidence === 'upstream-pass-candidate' ? `上游 Pass #${item.snapshot.passIndex} 候选` :
+        const evidence = item.evidence === 'pre-draw' ? `Draw #${item.snapshot.drawCommandIndex} 前实拍 · mip ${item.mipLevel ?? 0}` :
+          item.evidence === 'input-unavailable' ? `Draw 输入不可回读 · mip ${item.mipLevel ?? 0}` :
+          item.evidence === 'pass-end-aspect' ? `Pass 结束 · ${item.snapshot.sampleCount > 1 ? `sample ${item.snapshot.sampleIndex ?? 0}/${item.snapshot.sampleCount}` : '单样本'}` :
+          item.evidence === 'aspect-unavailable' ? '此 Pass 不可回读' :
+          item.evidence === 'aspect-not-captured' ? '旧捕获无独立读回' :
+          item.evidence === 'upstream-pass-candidate' ? `上游 Pass #${item.snapshot.passIndex} 候选` :
           item.evidence === 'post-draw' ? `Draw #${item.snapshot.drawCommandIndex} 后` :
           item.evidence === 'this-pass' ? '本 Pass 结束' :
           item.evidence === 'capture-final-unverified' ? '帧末快照，非 Draw 输入实拍' :
@@ -1075,6 +1166,7 @@
           item.evidence === 'later-write' ? '最终状态已变化' :
           item.file ? '捕获最终' : '无图像';
         const option = make('option', `${item.role} · #${item.id} ${item.label} [${evidence}]`);
+        if (item.bindingNames.length > 1) option.title = `共享此纹理的绑定：${item.bindingNames.join('、')}`;
         option.value = item.key;
         select.appendChild(option);
       }
@@ -1087,23 +1179,39 @@
       });
       holder.appendChild(select);
     }
+    const inputFailures = list(pass?.inputSnapshots).filter(item => item?.captureMoment === 'unavailable');
+    if (inputFailures.length) holder.appendChild(make('p',
+      `${inputFailures.length} 个 Draw 输入不可用：${inputFailures.slice(0, 3)
+        .map(item => `${item.bindingName || '未知绑定'}：${item.reason || '无法读取'}`).join('；')}${inputFailures.length > 3 ? '；…' : ''}`,
+      'inspect-note'));
     const selected = options.find(item => item.key === state.selectedTextureKey);
     el('texture-note').textContent = !selected ? '选择 Pass 或 Draw 后检查绑定纹理。' :
       !selected.file && !selected.snapshot?.rawFile ?
         `#${selected.id} ${selected.texture.format || ''} · ${selected.texture.width} × ${selected.texture.height}。${selected.evidence === 'later-write' ? '该纹理随后被写入，最终图不能代表此刻输入。' :
+          selected.evidence === 'input-unavailable' ? `所选 Draw 的输入未能读回：${selected.unavailableReason || '未提供原因'}。` :
+          selected.evidence === 'aspect-unavailable' ? `所选 Pass 的${selected.role}未能读回：${selected.unavailableReason || '未提供原因'}。` :
+          selected.evidence === 'aspect-not-captured' ? '这份旧捕获没有独立的深度/模板读回。' :
           selected.evidence === 'upstream-unavailable' ? '最近一次写入无当时读回，不能还原此刻输入。' :
           selected.evidence === 'view-unavailable' ? `${selected.unavailableReason}。` :
           selected.evidence === 'pass-aggregate' ? '此 Pass 有多个 Draw，请选具体 Draw 查看当时输入。' :
           `没有图像：${selected.texture.imageReason || '捕获未提供纹理字节'}。`}` :
-        (selected.evidence === 'upstream-pass-candidate' ?
+        (selected.evidence === 'pre-draw' ?
+          `真实 Draw #${selected.snapshot.drawCommandIndex} 前的 GPU 输入读回：绑定 ${selected.bindingNames.join('、') || selected.snapshot.bindingName || '未知'}，纹理 #${selected.id}，mip ${selected.snapshot.mipLevel ?? 0}，层 ${selected.snapshot.arrayLayer ?? 0}；来源 ${selected.snapshot.source || 'RHI pre-draw GPU readback'}；格式 ${selected.snapshot.format || selected.texture.format || '未知'}。` :
+          selected.evidence === 'pass-end-aspect' ?
+          `真实 Pass #${selected.snapshot.passIndex} 结束后的${selected.role}读回：纹理 #${selected.id}，${selected.snapshot.sourceFormat}；${selected.snapshot.sampleCount > 1 ? `MSAA sample ${selected.snapshot.sampleIndex ?? 0}/${selected.snapshot.sampleCount}` : '单样本'}；原始数据 ${selected.snapshot.rawFormat}。` :
+          selected.evidence === 'upstream-pass-candidate' ?
           `显示上游 Pass #${selected.snapshot.passIndex} 的结束 GPU 读回；这是输入候选，未在所选 Draw 绑定时直接捕获，不能证明纹理当时内容。` : selected.snapshot ?
             `${selected.evidence === 'post-draw' ? `真实 Draw #${selected.snapshot.drawCommandIndex} 后` : '真实 Pass 结束'}读回：第 ${selected.snapshot.frameOrdinal} 帧 Pass #${selected.snapshot.passIndex}（${selected.snapshot.label || ''}），结束命令 #${selected.snapshot.afterCommandIndex}；来源 ${selected.snapshot.source}；格式 ${selected.snapshot.format || selected.texture.format || '未知'}。` :
             selected.evidence === 'capture-final-unverified' ?
               `这里只是捕获帧末的 mip0 纹理快照，未在所选 Draw 读取时抓取，不能证明是当时输入。${selected.texture.imagePreviewTransform || ''}` :
               `Inspector 纹理 mip0 最终状态快照，非所选 Draw / Pass 当时的输入。${selected.texture.imagePreviewTransform || ''}`) +
           (!selected.file && selected.snapshot?.rawFile ? 'PNG 未生成；画布尝试按可见区域读取原始 RT。' : '');
-    if (hasRawFloat(selected?.snapshot)) el('texture-note').textContent +=
-      'HDR 预览从原始 float 值先应用曝光、再色调映射；PNG 仅供导出。';
+    if (selected?.snapshot?.aspect === 'depth') el('texture-note').textContent +=
+      '深度按 0–1 线性显示；曝光只改变预览，不改原始值。';
+    else if (selected?.snapshot?.aspect === 'stencil') el('texture-note').textContent +=
+      '模板预览按非零值显示亮色；点击像素仍显示精确 u8 值，下载的原始数据不变。';
+    else if (hasRawFloat(selected?.snapshot)) el('texture-note').textContent +=
+      '浮点预览从原始值先应用曝光、再色调映射；PNG 仅供导出。';
   }
 
   function uniformValue(value) {
@@ -1139,7 +1247,7 @@
     const grid = make('table', undefined, 'binding-table uniform-table');
     const head = make('thead');
     const title = make('tr');
-    for (const label of ['字段', 'WGSL 类型', '偏移', '绑定时的值']) title.appendChild(make('th', label));
+    for (const label of ['字段', 'WGSL 类型', '偏移', '捕获字节解码值']) title.appendChild(make('th', label));
     head.appendChild(title);
     grid.appendChild(head);
     const body = make('tbody');
@@ -1155,69 +1263,270 @@
     grid.appendChild(body);
     holder.appendChild(grid);
   }
+  const MAX_BUFFER_VIEW_BYTES = 16 * 1024 * 1024;
+  function bufferIdentity(item) {
+    if (item.role === 'vertex' || item.kind === 'vertex') {
+      return 'v:' + item.vertexSlot + ':' + item.bufferId;
+    }
+    if (item.role === 'index' || item.kind === 'index') return 'i:' + item.bufferId;
+    return 'g:' + (item.groupSlot ?? item.slot) + ':' + item.binding + ':' + item.bufferId;
+  }
+  function bufferChoices(event) {
+    const pass = passFor(event.passIndex);
+    const exactPass = pass?.frameDebugStep &&
+      Number(pass.frameDebugStep.drawCommandIndex) === Number(event.commandIndex) &&
+      Number(pass.frameOrdinal) === Number(event.frameOrdinal);
+    const choices = [];
+    const covered = new Set();
+    if (exactPass) for (const snapshot of list(pass.bufferSnapshots)) {
+      const choice = { key: 'draw:' + pass.index + ':' + snapshot.bufferOrdinal,
+        type: 'snapshot', ...snapshot };
+      choices.push(choice);
+      covered.add(bufferIdentity(choice));
+    }
+    const names = shaderBindingNames(pipelineForEvent(event));
+    for (const payload of list(event.bufferPayloads)) {
+      if (payload.bufferId == null) continue;
+      const choice = {
+        key: 'legacy:' + payload.payloadId, type: 'legacy', payload,
+        kind: payload.kind, bufferId: payload.bufferId, bufferLabel: payload.bufferLabel,
+        groupSlot: payload.kind === 'bind-group' ? payload.slot : null,
+        vertexSlot: payload.kind === 'vertex' ? payload.slot : null,
+        binding: payload.binding, role: payload.kind === 'vertex' ? 'vertex' :
+          payload.kind === 'index' ? 'index' : 'bound',
+        size: payload.bytes ?? payload.byteLength,
+        bindingName: payload.kind === 'bind-group' ?
+          names.get(payload.slot + ':' + payload.binding)?.name : null,
+      };
+      const identity = bufferIdentity(choice);
+      if (!covered.has(identity)) {
+        choices.push(choice);
+        covered.add(identity);
+      }
+    }
+    for (const group of list(event.bindGroups)) for (const entry of list(group.resources)) {
+      const resource = entry?.resource;
+      if (resource?.type !== 'Buffer' || resource.id == null) continue;
+      const choice = {
+        key: 'missing:g:' + group.slot + ':' + entry.binding + ':' + resource.id,
+        type: 'missing', role: 'bound', groupSlot: group.slot, binding: entry.binding,
+        bindingName: names.get(group.slot + ':' + entry.binding)?.name,
+        bufferId: resource.id, bufferLabel: resource.label,
+        offset: resource.offset ?? 0, size: resource.size ?? null,
+      };
+      const identity = bufferIdentity(choice);
+      if (!covered.has(identity)) { choices.push(choice); covered.add(identity); }
+    }
+    for (const vertex of list(event.vertexBuffers)) {
+      const choice = {
+        key: 'missing:v:' + vertex.slot + ':' + vertex.id,
+        type: 'missing', role: 'vertex', vertexSlot: vertex.slot,
+        bufferId: vertex.id, bufferLabel: vertex.label,
+        offset: vertex.offset ?? 0, size: vertex.size ?? null,
+      };
+      const identity = bufferIdentity(choice);
+      if (!covered.has(identity)) { choices.push(choice); covered.add(identity); }
+    }
+    if (event.indexBuffer && String(event.method).startsWith('drawIndexed')) {
+      const index = event.indexBuffer;
+      const choice = {
+        key: 'missing:i:' + index.id, type: 'missing', role: 'index',
+        indexFormat: index.format, bufferId: index.id, bufferLabel: index.label,
+        offset: index.offset ?? 0, size: index.size ?? null,
+      };
+      const identity = bufferIdentity(choice);
+      if (!covered.has(identity)) { choices.push(choice); covered.add(identity); }
+    }
+    return choices;
+  }
+  function bufferRoleLabel(choice) {
+    const names = { uniform: 'Uniform', storage: 'Storage',
+      'read-only-storage': 'Read-only Storage', vertex: 'Vertex', index: 'Index', bound: '绑定 Buffer' };
+    return names[choice.role] || choice.role || 'Buffer';
+  }
+  function bufferChoiceLabel(choice) {
+    const evidence = choice.type === 'snapshot' ?
+      choice.captureMoment === 'pre-draw' ? 'Draw 前' : '读回失败' :
+      choice.type === 'legacy' ? '旧 Payload' : '无字节';
+    const location = choice.groupSlot != null ? 'G' + choice.groupSlot + '/B' + choice.binding :
+      choice.vertexSlot != null ? 'Slot ' + choice.vertexSlot : '';
+    const name = choice.bindingName || choice.streamName || choice.bufferLabel || '';
+    return evidence + ' · ' + bufferRoleLabel(choice) + ' ' + name +
+      (location ? ' · ' + location : '') + ' · #' + printable(choice.bufferId) +
+      (Number.isSafeInteger(choice.size) ? ' · ' + choice.size + ' B' : '');
+  }
+  function startBufferLoad(choice, file, expected) {
+    if (!file || !Number.isSafeInteger(expected) || expected < 1 ||
+        expected > MAX_BUFFER_VIEW_BYTES || bufferCache.has(choice.key) ||
+        bufferPending.has(choice.key) || bufferErrors.has(choice.key)) return;
+    const url = assetUrl(file);
+    if (!url) { bufferErrors.set(choice.key, '文件路径无效'); return; }
+    const pending = (async () => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength !== expected) {
+        throw new Error('文件 ' + bytes.byteLength + ' B，报告记载 ' + expected + ' B');
+      }
+      bufferCache.set(choice.key, bytes);
+      while (bufferCache.size > 3) bufferCache.delete(bufferCache.keys().next().value);
+    })();
+    bufferPending.set(choice.key, pending);
+    pending.catch(error => bufferErrors.set(choice.key, error.message || String(error)))
+      .finally(() => {
+        bufferPending.delete(choice.key);
+        if (state.selectedBufferPayloadId === choice.key) renderBufferInspector();
+      });
+  }
   function renderBufferInspector() {
-    const event = state.events[state.selectedEvent];
-    const bound = event && ['draw', 'dispatch'].includes(eventKind(String(event.method || ''))) ?
-      list(event.bufferPayloads) : [];
+    const event = state.focusScope === 'draw' ? state.events[state.selectedEvent] : null;
+    const draw = event && ['draw', 'dispatch'].includes(eventKind(String(event.method || ''))) &&
+      (state.selectedPass == null || Number(event.passIndex) === Number(state.selectedPass)) ? event : null;
+    const choices = draw ? bufferChoices(draw) : [];
     const selector = el('buffer-select');
     clear(selector);
-    el('buffer-count').textContent = `${bound.length} 份`;
+    const exactCount = choices.filter(item => item.type === 'snapshot' && item.captureMoment === 'pre-draw').length;
+    el('buffer-count').textContent = choices.length + ' 项 · ' + exactCount + ' 项 Draw 前';
     const save = el('buffer-save');
-    const loadFull = el('buffer-load-full');
+    const retry = el('buffer-load-full');
     const hex = el('buffer-hex');
-    const table = el('buffer-table-wrap');
+    const grid = el('buffer-table-wrap');
     const uniformFields = el('buffer-uniform-fields');
-    if (uniformFields) clear(uniformFields);
-    save.hidden = loadFull.hidden = hex.hidden = table.hidden = true;
+    clear(uniformFields);
+    save.hidden = retry.hidden = hex.hidden = grid.hidden = true;
     el('buffer-page-status').textContent = '';
-    if (!bound.length) {
+    if (!choices.length) {
       selector.disabled = true;
-      const hasBuffer = event && (list(event.vertexBuffers).length || event.indexBuffer ||
-        list(event.bindGroups).some(group => list(group.resources).some(entry => entry?.resource?.type === 'Buffer')));
-      el('buffer-note').textContent = hasBuffer ?
-        '这个 Draw 有缓冲绑定，但 Inspector 没有捕获对应字节；无法显示或导出其当时内容。' :
-        '选择有缓冲 payload 的 Draw 查看当时绑定的字节。';
+      el('buffer-note').textContent = draw ?
+        '该 Draw 没有可核实的 Buffer 绑定或字节。' : '选择一个 Draw 查看实际绑定的 Buffer。';
       return;
     }
     selector.disabled = false;
-    if (!bound.some(item => item.payloadId === state.selectedBufferPayloadId)) state.selectedBufferPayloadId = bound[0].payloadId;
-    const bindingNames = shaderBindingNames(pipelineForEvent(event));
-    for (const item of bound) {
-      const symbol = item.slot != null && item.binding != null ? bindingNames.get(`${item.slot}:${item.binding}`)?.name : null;
-      const option = make('option', `#${item.payloadId} ${symbol ? `${symbol} · ` : ''}${item.bufferLabel || `Buffer #${item.bufferId}`} · ${item.kind}${item.slot == null ? '' : ` ${item.slot}`}`);
-      option.value = String(item.payloadId);
+    for (const choice of choices) {
+      const option = make('option', bufferChoiceLabel(choice));
+      option.value = choice.key;
       selector.appendChild(option);
     }
-    selector.value = String(state.selectedBufferPayloadId);
-    const item = bound.find(value => value.payloadId === state.selectedBufferPayloadId);
-    const payload = payloadFor(item.payloadId);
-    if (!payload) { el('buffer-note').textContent = '报告中找不到这份 payload。'; return; }
-    const url = assetUrl(payload.bufferFile);
-    if (url) { save.hidden = false; save.href = url; save.download = `buffer-${item.bufferId}-draw-${event.commandIndex}-payload-${item.payloadId}.bin`; }
-    el('buffer-note').textContent = `Buffer #${item.bufferId} ${item.bufferLabel || ''} · ${payload.bytes} 字节，来源绑定命令 #${item.sourceCommandIndex}，用于 Draw #${event.commandIndex}。这是绑定时捕获的字节，不是 Draw 后回读。` +
-      (payload.bufferFile ? `下方显示指定偏移的 256 字节；二进制文件包含全部。` :
-        `自动导出省略：${payload.bufferExportReason || '没有可用二进制文件'}。`);
-    if (!payload.bufferFile && !payload.previewBase64) return;
-    let bytes;
-    try { bytes = bufferCache.get(payload.id) || Uint8Array.from(atob(payload.previewBase64 || ''), char => char.charCodeAt(0)); }
-    catch { el('buffer-note').textContent += ' 预览字节解码失败。'; return; }
-    renderUniformFields(event, item, bytes);
-    const allLoaded = bytes.byteLength >= payload.bytes;
-    loadFull.hidden = allLoaded || !payload.bufferFile;
-    const requested = Number(el('buffer-offset').value);
-    const offset = Number.isFinite(requested) ? Math.max(0, Math.min(payload.bytes - 1, Math.floor(requested / 4) * 4)) : 0;
-    if (offset >= bytes.length) {
-      el('buffer-page-status').textContent = `偏移 ${offset} 超过已加载的 ${bytes.length} 字节；请载入完整字节。`;
+    if (state.preferredBufferBinding) {
+      const target = state.preferredBufferBinding;
+      state.selectedBufferPayloadId = choices.find(item =>
+        Number(item.groupSlot) === Number(target.groupSlot) &&
+        Number(item.binding) === Number(target.binding) &&
+        String(item.bufferId) === String(target.bufferId))?.key ?? null;
+      state.preferredBufferBinding = null;
+    }
+    if (typeof state.selectedBufferPayloadId === 'number') {
+      state.selectedBufferPayloadId = choices.find(item =>
+        item.type === 'legacy' && item.payload.payloadId === state.selectedBufferPayloadId)?.key ?? null;
+    }
+    if (!choices.some(item => item.key === state.selectedBufferPayloadId)) {
+      state.selectedBufferPayloadId = choices[0].key;
+    }
+    selector.value = state.selectedBufferPayloadId;
+    const choice = choices.find(item => item.key === state.selectedBufferPayloadId);
+    if (el('buffer-offset').dataset.choice !== choice.key) {
+      el('buffer-offset').dataset.choice = choice.key;
+      el('buffer-offset').value = String(choice.type === 'snapshot' ? choice.offset : 0);
+    }
+    let file = null;
+    let expected = null;
+    let fileBase = 0;
+    let rangeStart = 0;
+    let rangeSize = 0;
+    let note = '';
+    if (choice.type === 'snapshot') {
+      file = choice.captureMoment === 'pre-draw' ? choice.rawFile : null;
+      expected = choice.rawByteLength;
+      fileBase = choice.copiedOffset;
+      rangeStart = choice.offset;
+      rangeSize = choice.size;
+      note = (choice.captureMoment === 'pre-draw' ?
+        'Draw #' + draw.commandIndex + ' 前 GPU 实际读回 · ' :
+        'Draw #' + draw.commandIndex + ' 前读回请求 · ') +
+        bufferRoleLabel(choice) + ' ' + (choice.bindingName || choice.streamName || '') +
+        ' · Buffer #' + choice.bufferId + ' ' + (choice.bufferLabel || '') +
+        ' · 绑定范围 [' + choice.offset + ', ' + (choice.offset + choice.size) + ') B' +
+        ' · 文件拷贝范围 [' + choice.copiedOffset + ', ' +
+        (choice.copiedOffset + choice.copiedSize) + ') B' +
+        (choice.rangeScope === 'bound-suffix' ? '（Vertex 为绑定剩余范围，可能包含未读取顶点）' :
+          choice.rangeScope === 'draw-indices' ? '（Index 为本 Draw 使用的索引字节）' : '') + '。';
+      if (!file) note = 'Draw 前 Buffer 不可用：' + (choice.reason || '未保存字节') +
+        (choice.rawReason ? ' · ' + choice.rawReason : '') + '。' + note;
+    } else if (choice.type === 'legacy') {
+      const payload = payloadFor(choice.payload.payloadId);
+      file = payload?.bufferFile || null;
+      expected = payload?.bytes;
+      rangeSize = Number.isSafeInteger(payload?.bytes) ? payload.bytes : 0;
+      note = '旧 Inspector payload #' + choice.payload.payloadId + '，关联绑定命令 #' +
+        choice.payload.sourceCommandIndex + ' / Draw #' + draw.commandIndex +
+        '。GPU 拷贝在 Pass 结束后编码，不能证明 Draw 前值；以下偏移属于 payload 文件，不代表绑定起点。' +
+        (!file ? ' 完整文件未导出：' + (payload?.bufferExportReason || '无记录') + '。' : '');
+    } else {
+      note = '该 Draw 绑定了 Buffer #' + choice.bufferId + ' ' + (choice.bufferLabel || '') +
+        '，但没有可用的 Draw 前读回或旧 Inspector payload。';
+    }
+    el('buffer-note').textContent = note;
+    const url = assetUrl(file);
+    if (url) {
+      save.hidden = false;
+      save.href = url;
+      save.textContent = choice.type === 'snapshot' ? '下载 Draw 前 .bin' : '下载旧 Payload .bin';
+      save.download = choice.type === 'snapshot' ?
+        'draw-' + draw.commandIndex + '-buffer-' + choice.bufferId + '-' + choice.bufferOrdinal + '.bin' :
+        'buffer-' + choice.bufferId + '-payload-' + choice.payload.payloadId + '.bin';
+    }
+    if (!file && choice.type !== 'legacy') return;
+    if (file && expected > MAX_BUFFER_VIEW_BYTES) {
+      el('buffer-note').textContent += ' 文件超过 16 MiB，保留下载，页面不自动加载。';
       return;
     }
-    const page = bytes.subarray(offset, Math.min(offset + 256, bytes.length));
-    el('buffer-page-status').textContent = `${offset}–${offset + page.length - 1} / ${payload.bytes - 1} 字节${allLoaded ? '' : ' · 当前仅有报告预览'}`;
+    let bytes = bufferCache.get(choice.key);
+    if (!bytes && choice.type === 'legacy') {
+      const payload = payloadFor(choice.payload.payloadId);
+      try {
+        bytes = Uint8Array.from(atob(payload?.previewBase64 || ''), char => char.charCodeAt(0));
+      } catch { el('buffer-note').textContent += ' 旧 payload 预览解码失败。'; }
+    }
+    if (!bufferCache.has(choice.key) && file) startBufferLoad(choice, file, expected);
+    const loadError = bufferErrors.get(choice.key);
+    if (loadError) {
+      el('buffer-note').textContent += ' 字节文件读取失败：' + loadError + '。';
+      retry.hidden = false;
+    } else if (!bytes && file) el('buffer-note').textContent += ' 正在读取字节…';
+    if (!bytes?.byteLength) return;
+    const availableEnd = Math.min(rangeStart + rangeSize, fileBase + bytes.byteLength);
+    const logicalStart = rangeStart - fileBase;
+    if (choice.type === 'snapshot' && choice.captureMoment === 'pre-draw' &&
+        choice.role === 'uniform' && logicalStart >= 0 &&
+        bytes.byteLength >= logicalStart + rangeSize) {
+      renderUniformFields(draw, { kind: 'bind-group', slot: choice.groupSlot,
+        binding: choice.binding, bufferId: choice.bufferId, role: choice.role },
+        bytes.subarray(logicalStart, logicalStart + rangeSize));
+    } else if (choice.type === 'snapshot' && choice.role !== 'uniform') {
+      uniformFields.appendChild(make('p', '该绑定不是 Uniform；使用下方原始字节查看。', 'muted small'));
+    } else if (choice.type === 'legacy') {
+      uniformFields.appendChild(make('p', '旧 payload 不是可靠的 Draw 前绑定范围，字段值不作 Uniform 解码。', 'muted small'));
+    }
+    const requested = Number(el('buffer-offset').value);
+    const clamped = Number.isFinite(requested) ?
+      Math.max(rangeStart, Math.min(availableEnd - 1, Math.floor(requested))) : rangeStart;
+    if (availableEnd <= rangeStart || clamped < fileBase) {
+      el('buffer-page-status').textContent = '选定范围尚未加载。';
+      return;
+    }
+    const offset = rangeStart + Math.floor((clamped - rangeStart) / 4) * 4;
+    const page = bytes.subarray(offset - fileBase, Math.min(offset - fileBase + 256, availableEnd - fileBase));
+    el('buffer-page-status').textContent = '[' + offset + ', ' + (offset + page.length) +
+      ') / [' + rangeStart + ', ' + (rangeStart + rangeSize) + ') B' +
+      (availableEnd < rangeStart + rangeSize ? ' · 当前仅有预览字节' : '');
     const lines = [];
     for (let position = 0; position < page.length; position += 16) {
       const row = page.subarray(position, position + 16);
-      lines.push(`${(offset + position).toString(16).padStart(8, '0')}  ${[...row].map(byte => byte.toString(16).padStart(2, '0')).join(' ').padEnd(47)}  |${[...row].map(byte => byte >= 32 && byte < 127 ? String.fromCharCode(byte) : '.').join('')}|`);
+      lines.push((offset + position).toString(16).padStart(8, '0') + '  ' +
+        [...row].map(byte => byte.toString(16).padStart(2, '0')).join(' ').padEnd(47) +
+        '  |' + [...row].map(byte => byte >= 32 && byte < 127 ? String.fromCharCode(byte) : '.').join('') + '|');
     }
-    hex.textContent = lines.join('\n') || '空 payload';
+    hex.textContent = lines.join('\n') || '范围内没有字节';
     hex.hidden = false;
     const rows = el('buffer-rows');
     clear(rows);
@@ -1225,14 +1534,15 @@
     for (let position = 0; position + 4 <= page.length; position += 4) {
       const tr = make('tr');
       const float = view.getFloat32(position, true);
-      for (const value of [(offset + position).toString(16).padStart(8, '0'),
+      for (const value of [
+        (offset + position).toString(16).padStart(8, '0'),
         [...page.subarray(position, position + 4)].map(byte => byte.toString(16).padStart(2, '0')).join(' '),
-        view.getUint32(position, true), Number.isFinite(float) ? String(float) : String(float)]) tr.appendChild(make('td', value));
+        view.getUint32(position, true), Number.isFinite(float) ? String(Number(float.toPrecision(7))) : String(float),
+      ]) tr.appendChild(make('td', value));
       rows.appendChild(tr);
     }
-    table.hidden = rows.childElementCount === 0;
+    grid.hidden = rows.childElementCount === 0;
   }
-
   function selectResource(kind, index) {
     if (index < 0) return;
     state.resourceKind = kind;
@@ -1339,10 +1649,14 @@
       }
     }
     if (kind === 'buffers') {
+      const snapshots = list(state.report?.bufferSnapshots).filter(snapshot =>
+        String(snapshot.bufferId) === String(item.id));
+      const exact = snapshots.filter(snapshot => snapshot.captureMoment === 'pre-draw').length;
+      const unavailable = snapshots.filter(snapshot => snapshot.captureMoment === 'unavailable').length;
       const captured = list(state.report?.payloads).filter(payload => list(payload.bufferIds).some(id => String(id) === String(item.id)));
-      holder.appendChild(make('p', captured.length ?
-        `记录了 ${captured.length} 份绑定时 payload。同一 Buffer 可在不同 Draw 有不同字节；请从 Pass → Draw 选择准确版本。` :
-        'Inspector 未捕获这个 Buffer 的字节；只有资源描述，不能还原其内容。', 'inspect-note'));
+      holder.appendChild(make('p', `Draw 前读回 ${exact} 份，失败 ${unavailable} 份；旧 Inspector payload ${captured.length} 份。` +
+        (exact ? '选择对应 Draw 的 Buffers 面板查看准确的绑定范围和原始字节。' :
+          '旧 payload 在 Pass 后拷贝，不能证明 Draw 前值。'), 'inspect-note'));
     }
     const details = { ...item };
     delete details.code;
@@ -1387,7 +1701,7 @@
         frame ? `帧边界按 queue.submit 推断。${frame.imageSource ? `图像来源：${frame.imageSource}。` : ''}${pass ? `该 Pass 没有独立读回${pass.outputUnavailableReason ? `：${pass.outputUnavailableReason}` : ''}；这里显示整帧画布。` : ''}` :
           `这里显示捕获保存时的最终画布状态；多帧时不代表每一帧。${pass?.outputUnavailableReason ? `该 Pass 输出未读回：${pass.outputUnavailableReason}。` : ''}`;
     if (hasRawFloat(snapshot)) el('frame-note').textContent +=
-      'HDR 预览从原始 float 值先应用曝光、再色调映射；PNG 仅供导出。';
+      '浮点预览从原始值先应用曝光、再色调映射；PNG 仅供导出。';
   }
 
   function renderPreviewMode() {
@@ -1405,8 +1719,11 @@
     const choice = texture ? selected && {
       file: selected.file, snapshot: selected.snapshot,
       label: `${selected.role} · ${selected.label}`,
-      format: selected.snapshot?.format || selected.texture?.format,
-      source: selected.evidence === 'upstream-pass-candidate' ? `上游 Pass #${selected.snapshot.passIndex} 读回 · Draw 输入未验证` :
+      format: selected.snapshot?.sourceFormat || selected.snapshot?.format || selected.texture?.format,
+      source: selected.evidence === 'pre-draw' ? `Draw #${selected.snapshot.drawCommandIndex} 前 GPU 输入读回 · mip ${selected.mipLevel ?? 0}` :
+        selected.evidence === 'pass-end-aspect' ?
+          `Pass #${selected.snapshot.passIndex} 结束 GPU ${selected.role}读回` :
+        selected.evidence === 'upstream-pass-candidate' ? `上游 Pass #${selected.snapshot.passIndex} 读回 · Draw 输入未验证` :
         selected.evidence === 'post-draw' ? `Draw #${selected.snapshot.drawCommandIndex} 后 GPU 读回` :
         selected.snapshot ? '本 Pass 结束 GPU 读回' :
         selected.evidence === 'capture-final-unverified' ? '帧末快照 · Draw 输入未验证' : '捕获最终状态快照',
@@ -1422,11 +1739,18 @@
     saveRaw.hidden = !rawUrl;
     if (rawUrl) {
       saveRaw.href = rawUrl;
-      saveRaw.download = `pass-${choice.snapshot.passIndex}-texture-${choice.snapshot.textureId}-${choice.snapshot.rawFormat || 'raw'}.bin`;
+      saveRaw.download = choice.snapshot.aspect ?
+        `pass-${choice.snapshot.passIndex}-${choice.snapshot.aspect}-${choice.snapshot.rawFormat}.bin` :
+        choice.snapshot.captureMoment === 'pre-draw' ?
+        `draw-${choice.snapshot.drawCommandIndex}-input-${choice.snapshot.textureId}-mip-${choice.snapshot.mipLevel ?? 0}-${choice.snapshot.rawFormat || 'raw'}.bin` :
+        `pass-${choice.snapshot.passIndex}-texture-${choice.snapshot.textureId}-${choice.snapshot.rawFormat || 'raw'}.bin`;
     }
     if (url) {
       save.href = url;
-      save.download = texture ? `texture-${selected.id}${selected.evidence === 'post-draw' ? `-draw-${selected.snapshot.drawCommandIndex}` :
+      save.download = texture ? `texture-${selected.id}${selected.snapshot?.aspect ?
+        `-pass-${selected.snapshot.passIndex}-${selected.snapshot.aspect}` :
+        selected.evidence === 'pre-draw' ? `-draw-${selected.snapshot.drawCommandIndex}-input-mip-${selected.mipLevel ?? 0}` :
+        selected.evidence === 'post-draw' ? `-draw-${selected.snapshot.drawCommandIndex}` :
         selected.snapshot ? '-pass-end' : '-capture-final'}.png` :
         choice.snapshot?.captureMoment === 'post-draw' ? `draw-${choice.snapshot.drawCommandIndex}-output.png` :
           choice.snapshot ? `pass-${choice.snapshot.passIndex}-output.png` : 'frame-output.png';
@@ -1435,14 +1759,15 @@
     if (state.activeSurface?.signature !== signature || state.activeSurface?.snapshot !== choice?.snapshot) {
       const priorZoom = surface.getState();
       state.activeSurface = { url: url || rawUrl, signature, snapshot: choice?.snapshot || null };
-      el('pixel-value').textContent = '点击画面查看坐标和 RGBA 值；Ctrl+滚轮缩放，滚轮平移，拖动平移。';
+      el('pixel-value').textContent = '点击画面查看坐标和原始通道值；Ctrl+滚轮缩放，滚轮平移，拖动平移。';
       surface.setSource(url || rawUrl ? { url, rawUrl, label: choice.label, format: choice.format,
-        rawFormat: choice?.snapshot?.rawFormat, rawBytesPerRow: choice?.snapshot?.rawBytesPerRow,
+        rawFormat: choice?.snapshot?.rawFormat, aspect: choice?.snapshot?.aspect,
+        rawBytesPerRow: choice?.snapshot?.rawBytesPerRow,
         rawByteLength: choice?.snapshot?.rawByteLength,
         source: choice.source, width: choice.width, height: choice.height } : null).then(result => {
         if (state.activeSurface?.signature !== signature) return;
         el('frame-size').textContent = result.imageWidth ?
-          `${result.imageWidth} × ${result.imageHeight} · ${!url && rawUrl ? choice?.snapshot?.rawFormat || '原始 RT' : choice.format || 'PNG'}${hasRawFloat(choice?.snapshot) && result.nativeRtBytes ? ' · 原始 HDR' : ''}` : '';
+          `${result.imageWidth} × ${result.imageHeight} · ${!url && rawUrl ? choice?.snapshot?.rawFormat || '原始 RT' : choice.format || 'PNG'}${hasRawFloat(choice?.snapshot) && result.nativeRtBytes ? ' · 原始浮点值' : ''}` : '';
         if (result.imageWidth && priorZoom.zoomMode !== 'fit') {
           const zoom = surface.setZoom(priorZoom.zoomPercent);
           const select = el('texture-zoom');
@@ -1473,8 +1798,8 @@
 
   function renderGpu() {
     const frame = selectedFrame();
-    const passes = list(state.report?.passes).filter(pass => state.selectedFrame === null ||
-      Number(pass?.frameOrdinal) === Number(state.selectedFrame));
+    const passes = list(state.report?.passes).filter(pass => !pass?.diagnosticAuxiliary &&
+      (state.selectedFrame === null || Number(pass?.frameOrdinal) === Number(state.selectedFrame)));
     const measured = passes.filter(pass => pass.gpuTiming?.source === 'webgpu-timestamp-query' &&
       finite(pass.gpuTiming.durationMs) && pass.gpuTiming.durationMs >= 0);
     const bars = el('gpu-bars');
@@ -1693,29 +2018,14 @@
     select.value = 'custom';
   });
   el('buffer-select').addEventListener('change', () => {
-    state.selectedBufferPayloadId = Number(el('buffer-select').value);
-    el('buffer-offset').value = '0';
+    state.selectedBufferPayloadId = el('buffer-select').value;
     renderBufferInspector();
   });
   el('buffer-offset').addEventListener('change', renderBufferInspector);
-  el('buffer-load-full').addEventListener('click', async () => {
-    const id = state.selectedBufferPayloadId;
-    const payload = payloadFor(id);
-    const url = assetUrl(payload?.bufferFile);
-    if (!url) return;
-    const button = el('buffer-load-full');
-    button.disabled = true;
-    button.textContent = '正在加载…';
-    try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength !== payload.bytes) throw new Error(`字节数 ${bytes.byteLength}，报告记载 ${payload.bytes}`);
-      bufferCache.set(id, bytes);
-      if (bufferCache.size > 2) bufferCache.delete(bufferCache.keys().next().value);
-      if (state.selectedBufferPayloadId === id) renderBufferInspector();
-    } catch (error) { el('buffer-note').textContent += ` 完整字节读取失败：${error.message}`; }
-    finally { button.disabled = false; button.textContent = '载入完整字节'; }
+  el('buffer-load-full').addEventListener('click', () => {
+    const key = state.selectedBufferPayloadId;
+    bufferErrors.delete(key);
+    renderBufferInspector();
   });
   loadReport().then(renderAll, error => showError(error instanceof Error ? error.message : String(error)));
 }());

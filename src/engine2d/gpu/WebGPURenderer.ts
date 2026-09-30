@@ -415,6 +415,14 @@ export class WebGPURenderer extends RendererBase {
       }
       if (!logical || !target) throw new Error('[engine2d] 绘制命令之前没有 pass');
       const first = drawOrdinal++ === 0;
+      const pipeline = this.pipelines.get(cmd.pipeline);
+      commands.captureDrawInputs?.(pipeline, cmd.bindings as RhiBindings, {
+        streams: cmd.streams.map(stream => ({ name: stream.name,
+          buffer: stream.buffer === 'batch' ? state.vertexBuffer! : stream.buffer })),
+        indexBuffer: cmd.index === 'batch' ? state.indexBuffer! : cmd.index,
+        firstIndex: cmd.index ? cmd.first : undefined,
+        indexCount: cmd.index ? cmd.count : undefined,
+      });
       const pass = commands.beginRenderPass({
         label: `${logical.debugLabel} / frame-debug draw ${drawOrdinal}/${totals.get(logical)!}`,
         target,
@@ -427,7 +435,7 @@ export class WebGPURenderer extends RendererBase {
           : { load: 'load' },
       });
       pass.setViewport(logical.viewport[0], logical.viewport[1], logical.viewport[2], logical.viewport[3]);
-      pass.setPipeline(this.pipelines.get(cmd.pipeline));
+      pass.setPipeline(pipeline);
       pass.setBindings(cmd.bindings as RhiBindings);
       for (const s of cmd.streams) pass.setVertexBuffer(s.name, s.buffer === 'batch' ? state.vertexBuffer! : s.buffer);
       // 新原生 pass 的模板参考值自动归零；只给非零值显式重设。
@@ -445,6 +453,9 @@ export class WebGPURenderer extends RendererBase {
 
   /** 帧末:画布中间纹理翻回正向写进交换链(整屏覆盖写) */
   private presentCanvasFlip(commands: RhiCommandList, frame: RhiFrame, src: RhiTexture): void {
+    const pipeline = this.canvasFlipPipeline();
+    const bindings = { uCanvasFlip: src } as RhiBindings;
+    if (commands.frameDebugCaptureActive) commands.captureDrawInputs?.(pipeline, bindings);
     const pass = commands.beginRenderPass({
       label: commands.frameDebugCaptureActive
         ? 'canvas / 画布 / 翻转上屏 / frame-debug draw 1/1'
@@ -453,8 +464,8 @@ export class WebGPURenderer extends RendererBase {
       colorOps: [{ load: 'clear', clearValue: [0, 0, 0, 0] }],
     });
     pass.setViewport(0, 0, src.width, src.height);
-    pass.setPipeline(this.canvasFlipPipeline());
-    pass.setBindings({ uCanvasFlip: src } as RhiBindings);
+    pass.setPipeline(pipeline);
+    pass.setBindings(bindings);
     pass.setIndexBuffer(null);
     pass.draw(3, 1, 0);
     pass.end();

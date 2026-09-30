@@ -12,11 +12,18 @@
   const MAX_RAW_FILE_BYTES = 512 * 1024 * 1024;
   const MAX_VIEWPORT_PIXELS = 8 * 1024 * 1024;
   const RAW_BYTES_PER_PIXEL = new Map([
-    ['r8unorm', 1], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4],
+    ['r8unorm', 1], ['stencil8', 1], ['rg8unorm', 2], ['r16float', 2], ['rg16float', 4],
+    ['r32float', 4], ['rg32float', 8], ['r32uint', 4], ['rgba32uint', 16],
+    ['rgba8unorm', 4], ['rgba8unorm-srgb', 4],
     ['bgra8unorm', 4], ['bgra8unorm-srgb', 4],
     ['rgba16float', 8], ['rgba32float', 16],
   ]);
-  const FLOAT_RT_FORMATS = new Set(['rgba16float', 'rgba32float']);
+  const FLOAT_RT_FORMATS = new Set(['r16float', 'rg16float', 'rgba16float',
+    'r32float', 'rg32float', 'rgba32float']);
+  const UINT_RT_FORMATS = new Set(['r32uint', 'rgba32uint']);
+  const STENCIL_RT_FORMATS = new Set(['stencil8']);
+  const componentCount = format => format.startsWith('rgba') || format.startsWith('bgra') ? 4 :
+    format.startsWith('rg') ? 2 : 1;
   const MIN_SCALE = 0.001;
   const MAX_SCALE = 4096;
 
@@ -58,19 +65,34 @@
   }
 
   function decodeRawPixel(reader, view, offset, out) {
-    if (reader.format === 'r8unorm') {
+    const format = reader.format;
+    out[0] = out[1] = out[2] = 0;
+    out[3] = 1;
+    if (format === 'stencil8') {
+      out[0] = view.getUint8(offset);
+      out[1] = out[2] = out[0];
+    } else if (format === 'r8unorm') {
       out[0] = view.getUint8(offset) / 255;
-      out[1] = out[2] = 0;
-      out[3] = 1;
-    } else if (reader.bpp === 4) {
-      const bgra = reader.format.startsWith('bgra');
+      out[1] = out[2] = out[0];
+    } else if (format === 'rg8unorm') {
+      out[0] = view.getUint8(offset) / 255;
+      out[1] = view.getUint8(offset + 1) / 255;
+    } else if (format.startsWith('rgba8') || format.startsWith('bgra8')) {
+      const bgra = format.startsWith('bgra');
       out[0] = view.getUint8(offset + (bgra ? 2 : 0)) / 255;
       out[1] = view.getUint8(offset + 1) / 255;
       out[2] = view.getUint8(offset + (bgra ? 0 : 2)) / 255;
       out[3] = view.getUint8(offset + 3) / 255;
-    } else {
-      for (let i = 0; i < 4; i++) out[i] = reader.bpp === 8 ?
+    } else if (FLOAT_RT_FORMATS.has(format)) {
+      const count = componentCount(format);
+      const half = format.includes('16');
+      for (let i = 0; i < count; i++) out[i] = half ?
         halfFloat(view.getUint16(offset + i * 2, true)) : view.getFloat32(offset + i * 4, true);
+      if (count === 1) out[1] = out[2] = out[0];
+    } else if (UINT_RT_FORMATS.has(format)) {
+      const count = componentCount(format);
+      for (let i = 0; i < count; i++) out[i] = view.getUint32(offset + i * 4, true);
+      if (count === 1) out[1] = out[2] = out[0];
     }
     return out;
   }
@@ -361,16 +383,29 @@
     }
 
     function paintNative(reader, values, dest, index, factor) {
+      if (reader.format === 'stencil8' && source?.aspect === 'stencil') {
+        // A value of 1 is the common mask marker, but literal 1/255 looks black.
+        // This transform affects the viewport only; pixel inspection retains u8.
+        const shade = channel === 'alpha' ? 255 : values[0] > 0 ? 255 : 0;
+        dest[index] = dest[index + 1] = dest[index + 2] = shade;
+        dest[index + 3] = 255;
+        return;
+      }
       const floatRt = FLOAT_RT_FORMATS.has(reader.format);
+      const unsigned = UINT_RT_FORMATS.has(reader.format) || STENCIL_RT_FORMATS.has(reader.format);
+      const colorByte = value => unsigned ? byte(value * factor) :
+        source?.aspect === 'depth' ? byte(value * factor * 255) :
+          exposedColorByte(value, factor, floatRt);
       if (channel === 'rgba') {
-        dest[index] = exposedColorByte(values[0], factor, floatRt);
-        dest[index + 1] = exposedColorByte(values[1], factor, floatRt);
-        dest[index + 2] = exposedColorByte(values[2], factor, floatRt);
-        dest[index + 3] = byte(values[3] * 255);
+        dest[index] = colorByte(values[0]);
+        dest[index + 1] = colorByte(values[1]);
+        dest[index + 2] = colorByte(values[2]);
+        dest[index + 3] = unsigned && componentCount(reader.format) === 4 ?
+          byte(values[3]) : byte(values[3] * 255);
       } else {
         const component = channel === 'red' ? 0 : channel === 'green' ? 1 : channel === 'blue' ? 2 : 3;
-        const shade = component === 3 ? byte(values[3] * 255 * factor) :
-          exposedColorByte(values[component], factor, floatRt);
+        const shade = component === 3 ? unsigned ? byte(values[3] * factor) : byte(values[3] * 255 * factor) :
+          colorByte(values[component]);
         dest[index] = dest[index + 1] = dest[index + 2] = shade;
         dest[index + 3] = 255;
       }
@@ -573,6 +608,7 @@
         label: typeof next.label === 'string' ? next.label : '',
         format: typeof next.format === 'string' ? next.format : null,
         rawFormat: typeof next.rawFormat === 'string' ? next.rawFormat : null,
+        aspect: next.aspect === 'depth' || next.aspect === 'stencil' ? next.aspect : null,
         rawBytesPerRow: next.rawBytesPerRow,
         rawByteLength: next.rawByteLength,
         source: typeof next.source === 'string' ? next.source : null,
@@ -591,7 +627,8 @@
       displayMessage(imageUrl ? '正在加载图像…' : '正在准备原始 RT…');
       updateHud();
       schedule();
-      if (!imageUrl || (rawReader && FLOAT_RT_FORMATS.has(rawReader.format))) {
+      if (!imageUrl || (rawReader && (FLOAT_RT_FORMATS.has(rawReader.format) ||
+          UINT_RT_FORMATS.has(rawReader.format) || STENCIL_RT_FORMATS.has(rawReader.format)))) {
         if (!rawReader) {
           loading = false;
           error = rawError || '没有可查看的原始 RT';
@@ -599,7 +636,7 @@
           return state();
         }
         asset = { raw: true, width: rawReader.width, height: rawReader.height };
-        if (imageUrl) displayMessage('正在从原始 float RT 绘制 HDR 预览…');
+        if (imageUrl) displayMessage('正在从原始纹理字节绘制预览…');
         fit();
         return state();
       }
@@ -640,9 +677,9 @@
         y * reader.stride + (x + 1) * reader.bpp - 1);
       const offset = cached ? (x - cached.minX) * reader.bpp : 0;
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      const values = [...decodeRawPixel(reader, view, offset, [0, 0, 0, 0])];
-      const raw8 = reader.bpp === 1 ? [bytes[offset]] : reader.bpp === 4 ?
-        values.map(value => byte(value * 255)) : null;
+      const values = decodeRawPixel(reader, view, offset, [0, 0, 0, 0]).slice(0, componentCount(reader.format));
+      const raw8 = reader.format === 'stencil8' || reader.format.endsWith('8unorm') || reader.format.endsWith('8unorm-srgb') ?
+        [...bytes.subarray(offset, offset + reader.bpp)] : null;
       return { values, raw8, format: reader.format };
     }
 

@@ -1,7 +1,15 @@
-import type { RhiDevice, RhiGpuSubmissionProfile, RhiRenderPassEndCapture } from '../rendering/rhi/RhiDevice';
+import type { RhiDepthStencilAspectCapture, RhiDevice, RhiDrawBufferCapture, RhiDrawInputCapture, RhiGpuSubmissionProfile,
+  RhiRenderPassEndCapture } from '../rendering/rhi/RhiDevice';
 
 const MAX_RAW_BYTES = 512 * 1024 * 1024;
 const MAX_PASS_RECORDS = 512;
+const MAX_INPUT_RECORDS = 1024;
+const MAX_INPUT_RAW_BYTES = 256 * 1024 * 1024;
+const MAX_ASPECT_RECORDS = 1024;
+const MAX_ASPECT_RAW_BYTES = 512 * 1024 * 1024;
+const MAX_BUFFER_RECORDS = 1024;
+const MAX_BUFFER_ITEM_BYTES = 16 * 1024 * 1024;
+const MAX_BUFFER_RAW_BYTES = 256 * 1024 * 1024;
 const MAX_PNG_RGBA_BYTES = 128 * 1024 * 1024;
 const MAP_TIMEOUT_MS = 30_000;
 const PROFILE_TIMEOUT_MS = 10_000;
@@ -20,6 +28,67 @@ export interface CapturedPassPixels {
   rawBytesPerRow?: number;
 }
 
+/** 纹理在选中 Draw 执行前、同一个原生命令编码器上实际回读的状态。 */
+export interface CapturedInputPixels {
+  passOrdinal: number;
+  bindingName: string;
+  groupSlot: number;
+  binding: number;
+  textureId: number | null;
+  viewId: number | null;
+  mipLevel: number;
+  arrayLayer: number;
+  width: number;
+  height: number;
+  format: string;
+  reason?: string;
+  rawPixels?: Uint8Array;
+  rawBytesPerRow?: number;
+}
+
+/** Pass end 时读取的深度 / 模板；depth 原始数据是 f32，MSAA 只读 sample 0。 */
+export interface CapturedAspectPixels {
+  passOrdinal: number;
+  label: string;
+  targetLabel: string;
+  aspect: 'depth' | 'stencil';
+  textureId: number | null;
+  viewId: number | null;
+  width: number;
+  height: number;
+  sourceFormat: string;
+  rawFormat: 'r32float' | 'stencil8';
+  sampleCount: number;
+  sampleIndex: number | null;
+  reason?: string;
+  rawPixels?: Uint8Array;
+  rawBytesPerRow?: number;
+}
+
+/** 同一原生命令编码器中、Draw 开始前的实际 Buffer 字节。 */
+export interface CapturedDrawBuffer {
+  passOrdinal: number;
+  role: RhiDrawBufferCapture['role'];
+  bindingName?: string;
+  groupSlot?: number;
+  binding?: number;
+  streamName?: string;
+  vertexSlot?: number;
+  indexFormat?: 'uint16' | 'uint32';
+  bufferId: number | null;
+  bufferLabel: string;
+  totalSize: number;
+  /** Shader 绑定 / Draw 索引实际使用的请求范围。 */
+  offset: number;
+  size: number;
+  /** copyBufferToBuffer 要求 4 字节对齐；rawBytes 精确对应这个范围。 */
+  copiedOffset: number;
+  copiedSize: number;
+  rangeScope: RhiDrawBufferCapture['rangeScope'];
+  reason?: string;
+  rawBytes?: Uint8Array;
+}
+
 export interface CapturedGpuPass {
   ordinal: number;
   kind: 'render' | 'compute';
@@ -29,6 +98,9 @@ export interface CapturedGpuPass {
 
 export interface CapturedFrameDiagnostics {
   passes: CapturedPassPixels[];
+  inputs: CapturedInputPixels[];
+  aspects: CapturedAspectPixels[];
+  buffers: CapturedDrawBuffer[];
   gpuPasses: CapturedGpuPass[];
   gpuProfilerStatus: { state: 'enabled' | 'unsupported' | 'disabled'; reason?: string };
   warning?: string;
@@ -40,12 +112,31 @@ interface PendingPass {
   bytesPerRow?: number;
 }
 
+interface PendingInput {
+  info: CapturedInputPixels;
+  buffer?: GPUBuffer;
+  bytesPerRow?: number;
+}
+
+interface PendingAspect {
+  info: CapturedAspectPixels;
+  buffer?: GPUBuffer;
+  bytesPerRow?: number;
+}
+
+interface PendingDrawBuffer {
+  info: CapturedDrawBuffer;
+  buffer?: GPUBuffer;
+}
+
 function bytesPerPixel(format: string): number {
   if (format === 'rgba8unorm' || format === 'rgba8unorm-srgb' ||
-      format === 'bgra8unorm' || format === 'bgra8unorm-srgb') return 4;
+      format === 'bgra8unorm' || format === 'bgra8unorm-srgb' || format === 'r32float' ||
+      format === 'r32uint' || format === 'rg16float') return 4;
   if (format === 'r8unorm') return 1;
-  if (format === 'rgba16float') return 8;
-  if (format === 'rgba32float') return 16;
+  if (format === 'rg8unorm' || format === 'r16float') return 2;
+  if (format === 'rgba16float' || format === 'rg32float') return 8;
+  if (format === 'rgba32float' || format === 'rgba32uint') return 16;
   return 0;
 }
 
@@ -66,20 +157,36 @@ function visualize(raw: Uint8Array, width: number, height: number, bytesPerRow: 
     for (let x = 0; x < width; x++) {
       const dst = (y * width + x) * 4;
       const src = y * bytesPerRow + x * bytesPerPixel(format);
-      if (format === 'rgba16float' || format === 'rgba32float') {
+      if (format === 'rgba16float' || format === 'rgba32float' || format === 'rg16float' ||
+          format === 'rg32float' || format === 'r16float' || format === 'r32float') {
         // Visualize HDR values for PNG; the Inspector's raw payload remains the numeric source.
-        for (let channel = 0; channel < 3; channel++) {
-          const value = format === 'rgba16float' ? halfFloat(view.getUint16(src + channel * 2, true)) :
+        const channels = format.startsWith('rgba') ? 4 : format.startsWith('rg') ? 2 : 1;
+        const half = format.includes('16');
+        for (let channel = 0; channel < Math.min(channels, 3); channel++) {
+          const value = half ? halfFloat(view.getUint16(src + channel * 2, true)) :
             view.getFloat32(src + channel * 4, true);
           const mapped = Number.isFinite(value) ? Math.max(0, value) / (1 + Math.max(0, value)) : 0;
           rgba[dst + channel] = Math.round(Math.max(0, Math.min(1, mapped)) * 255);
         }
-        const alpha = format === 'rgba16float' ? halfFloat(view.getUint16(src + 6, true)) :
-          view.getFloat32(src + 12, true);
-        rgba[dst + 3] = Number.isFinite(alpha) ? Math.round(Math.max(0, Math.min(1, alpha)) * 255) : 0;
+        if (channels === 1) rgba[dst + 1] = rgba[dst + 2] = rgba[dst];
+        if (channels === 2) rgba[dst + 2] = 0;
+        if (channels === 4) {
+          const alpha = half ? halfFloat(view.getUint16(src + 6, true)) : view.getFloat32(src + 12, true);
+          rgba[dst + 3] = Number.isFinite(alpha) ? Math.round(Math.max(0, Math.min(1, alpha)) * 255) : 0;
+        } else rgba[dst + 3] = 255;
       } else if (format === 'r8unorm') {
         rgba[dst] = rgba[dst + 1] = rgba[dst + 2] = raw[src];
         rgba[dst + 3] = 255;
+      } else if (format === 'rg8unorm') {
+        rgba[dst] = raw[src]; rgba[dst + 1] = raw[src + 1];
+        rgba[dst + 2] = 0; rgba[dst + 3] = 255;
+      } else if (format === 'r32uint' || format === 'rgba32uint') {
+        const channels = format === 'r32uint' ? 1 : 4;
+        for (let channel = 0; channel < Math.min(channels, 3); channel++) {
+          rgba[dst + channel] = Math.min(255, view.getUint32(src + channel * 4, true));
+        }
+        if (channels === 1) rgba[dst + 1] = rgba[dst + 2] = rgba[dst];
+        rgba[dst + 3] = channels === 4 ? Math.min(255, view.getUint32(src + 12, true)) : 255;
       } else if (format.startsWith('bgra8')) {
         rgba[dst] = raw[src + 2];
         rgba[dst + 1] = raw[src + 1];
@@ -102,6 +209,58 @@ export function visualizeCapturedPassPixels(pass: CapturedPassPixels): Uint8Clam
   return visualize(pass.rawPixels, pass.width, pass.height, pass.rawBytesPerRow, pass.format);
 }
 
+/** Decode a real pre-Draw input snapshot for PNG; raw native bytes remain authoritative. */
+export function visualizeCapturedInputPixels(input: CapturedInputPixels): Uint8ClampedArray {
+  if (!input.rawPixels || !input.rawBytesPerRow) throw new Error('Draw 输入没有可回读的原始像素');
+  if (input.width * input.height * 4 > MAX_PNG_RGBA_BYTES) {
+    throw new Error('Draw 输入 PNG 预览超过 128 MiB 解码上限，原始纹理字节仍会导出');
+  }
+  return visualize(input.rawPixels, input.width, input.height, input.rawBytesPerRow, input.format);
+}
+
+/** PNG 仅作可视化；深度的精确 f32 / 模板的精确 u8 仍以 raw 文件为准。 */
+export function visualizeCapturedAspectPixels(aspect: CapturedAspectPixels): Uint8ClampedArray {
+  if (!aspect.rawPixels || !aspect.rawBytesPerRow) throw new Error('深度 / 模板没有可回读的原始像素');
+  if (aspect.width * aspect.height * 4 > MAX_PNG_RGBA_BYTES) {
+    throw new Error('深度 / 模板 PNG 预览超过 128 MiB 解码上限，原始字节仍会导出');
+  }
+  const out = new Uint8ClampedArray(aspect.width * aspect.height * 4);
+  const raw = aspect.rawPixels;
+  const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  for (let y = 0; y < aspect.height; y++) {
+    for (let x = 0; x < aspect.width; x++) {
+      const offset = y * aspect.rawBytesPerRow + x * (aspect.aspect === 'depth' ? 4 : 1);
+      const value = aspect.aspect === 'depth'
+        ? Math.round(Math.max(0, Math.min(1, view.getFloat32(offset, true))) * 255)
+        : raw[offset];
+      const dst = (y * aspect.width + x) * 4;
+      out[dst] = out[dst + 1] = out[dst + 2] = value;
+      out[dst + 3] = 255;
+    }
+  }
+  return out;
+}
+
+const DEPTH_READBACK_WGSL = `
+@group(0) @binding(0) var sourceDepth: texture_depth_2d;
+@group(0) @binding(1) var<storage, read_write> values: array<f32>;
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let size = textureDimensions(sourceDepth);
+  if (gid.x >= size.x || gid.y >= size.y) { return; }
+  values[gid.y * size.x + gid.x] = textureLoad(sourceDepth, vec2<i32>(gid.xy), 0);
+}`;
+
+const MSAA_DEPTH_READBACK_WGSL = `
+@group(0) @binding(0) var sourceDepth: texture_depth_multisampled_2d;
+@group(0) @binding(1) var<storage, read_write> values: array<f32>;
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let size = textureDimensions(sourceDepth);
+  if (gid.x >= size.x || gid.y >= size.y) { return; }
+  values[gid.y * size.x + gid.x] = textureLoad(sourceDepth, vec2<i32>(gid.xy), 0);
+}`;
+
 async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: number | undefined;
   try {
@@ -120,8 +279,21 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
 } {
   const device = rhi.native.device;
   const pending: PendingPass[] = [];
+  const pendingInputs: PendingInput[] = [];
+  const pendingAspects: PendingAspect[] = [];
+  const pendingBuffers: PendingDrawBuffer[] = [];
+  // 顺序编码：每次 depth compute 紧跟 copy 到独立 staging，后续 pass 可复用 storage 缓冲。
+  const depthScratchBuffers: GPUBuffer[] = [];
+  let depthScratch: GPUBuffer | null = null;
+  let depthScratchSize = 0;
   let allocated = 0;
+  let inputAllocated = 0;
+  let aspectAllocated = 0;
+  let bufferAllocated = 0;
   let omittedReadbacks = 0;
+  let omittedInputs = 0;
+  let omittedAspects = 0;
+  let omittedBuffers = 0;
   let omittedTimings = 0;
   let finished = false;
   let cancelled = false;
@@ -145,6 +317,21 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
         (!expectedLabel || profile.label === expectedLabel)) profileResolve(profile);
   });
   if (restoreProfiler) rhi.gpuProfiler?.setEnabled(true);
+
+  let depthPipeline: GPUComputePipeline | undefined;
+  let msaaDepthPipeline: GPUComputePipeline | undefined;
+  const pipelineForDepth = (sampleCount: number): GPUComputePipeline => {
+    if (sampleCount > 1) {
+      return (msaaDepthPipeline ??= device.createComputePipeline({
+        label: 'frame-debug MSAA depth sample 0', layout: 'auto',
+        compute: { module: device.createShaderModule({ code: MSAA_DEPTH_READBACK_WGSL }), entryPoint: 'main' },
+      }));
+    }
+    return (depthPipeline ??= device.createComputePipeline({
+      label: 'frame-debug depth', layout: 'auto',
+      compute: { module: device.createShaderModule({ code: DEPTH_READBACK_WGSL }), entryPoint: 'main' },
+    }));
+  };
 
   const onPassEnd = (event: RhiRenderPassEndCapture): void => {
     expectedFrame = event.frame;
@@ -192,8 +379,194 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
     }
   };
 
+  const onDrawInput = (event: RhiDrawInputCapture): void => {
+    if (pendingInputs.length >= MAX_INPUT_RECORDS) {
+      omittedInputs++;
+      return;
+    }
+    const info: CapturedInputPixels = {
+      passOrdinal: event.passOrdinal, bindingName: event.bindingName,
+      groupSlot: event.groupSlot, binding: event.binding,
+      textureId: event.textureId, viewId: event.viewId, mipLevel: event.mipLevel,
+      arrayLayer: event.arrayLayer, width: event.width, height: event.height, format: event.format,
+    };
+    const record: PendingInput = { info };
+    pendingInputs.push(record);
+    const bpp = bytesPerPixel(event.format);
+    if (event.reason || !event.texture) info.reason = event.reason ?? 'Draw 输入纹理不可回读';
+    else if (event.textureId === null || event.viewId === null) info.reason = '缺少 Inspector 纹理或视图 ID';
+    else if (!bpp) info.reason = `暂不支持 ${event.format || '未知'} 格式的 Draw 输入纹理回读`;
+    else if (event.width < 1 || event.height < 1 || !Number.isSafeInteger(event.width * event.height * bpp)) {
+      info.reason = 'Draw 输入纹理尺寸无效';
+    } else {
+      const bytesPerRow = Math.ceil(event.width * bpp / 256) * 256;
+      const size = bytesPerRow * event.height;
+      if (!Number.isSafeInteger(size) || size > device.limits.maxBufferSize) {
+        info.reason = '此 Draw 输入纹理超过 GPU 单缓冲回读上限';
+      } else if (size > MAX_INPUT_RAW_BYTES - inputAllocated) {
+        info.reason = '本帧 Draw 输入回读达到 256 MiB 上限';
+      } else {
+        let buffer: GPUBuffer | undefined;
+        try {
+          buffer = device.createBuffer({ label: `frame-debug input pass ${event.passOrdinal} ${event.bindingName} mip ${event.mipLevel}`,
+            size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+          event.encoder.copyTextureToBuffer({ texture: event.texture, mipLevel: event.mipLevel,
+            origin: { z: event.arrayLayer } },
+          { buffer, bytesPerRow, rowsPerImage: event.height },
+          { width: event.width, height: event.height, depthOrArrayLayers: 1 });
+          record.buffer = buffer;
+          record.bytesPerRow = bytesPerRow;
+          inputAllocated += size;
+        } catch (error) {
+          buffer?.destroy();
+          info.reason = `Draw 输入纹理拷贝失败：${String(error)}`;
+        }
+      }
+    }
+  };
+
+  const onDrawBuffer = (event: RhiDrawBufferCapture): void => {
+    if (pendingBuffers.length >= MAX_BUFFER_RECORDS) {
+      omittedBuffers++;
+      return;
+    }
+    const validRange = Number.isSafeInteger(event.offset) && Number.isSafeInteger(event.size) &&
+      event.offset >= 0 && event.size > 0 && event.offset + event.size <= event.totalSize;
+    const copiedOffset = validRange ? Math.floor(event.offset / 4) * 4 : 0;
+    const copiedEnd = validRange ? Math.ceil((event.offset + event.size) / 4) * 4 : 0;
+    const copiedSize = copiedEnd - copiedOffset;
+    const info: CapturedDrawBuffer = {
+      passOrdinal: event.passOrdinal, role: event.role,
+      ...(event.bindingName !== undefined ? { bindingName: event.bindingName } : {}),
+      ...(event.groupSlot !== undefined ? { groupSlot: event.groupSlot } : {}),
+      ...(event.binding !== undefined ? { binding: event.binding } : {}),
+      ...(event.streamName !== undefined ? { streamName: event.streamName } : {}),
+      ...(event.vertexSlot !== undefined ? { vertexSlot: event.vertexSlot } : {}),
+      ...(event.indexFormat !== undefined ? { indexFormat: event.indexFormat } : {}),
+      bufferId: event.bufferId, bufferLabel: event.bufferLabel, totalSize: event.totalSize,
+      offset: event.offset, size: event.size, copiedOffset, copiedSize, rangeScope: event.rangeScope,
+    };
+    const record: PendingDrawBuffer = { info };
+    pendingBuffers.push(record);
+    if (event.reason || !event.buffer) { info.reason = event.reason ?? 'Draw Buffer 不可回读'; return; }
+    if (event.bufferId === null) { info.reason = '缺少 Inspector Buffer ID'; return; }
+    if (!validRange || copiedEnd > event.totalSize || !Number.isSafeInteger(copiedSize)) {
+      info.reason = 'Draw Buffer 范围无法完整按 4 字节对齐回读'; return;
+    }
+    if (copiedSize > MAX_BUFFER_ITEM_BYTES) {
+      info.reason = '此 Draw Buffer 范围超过 16 MiB 单项回读上限'; return;
+    }
+    if (copiedSize > device.limits.maxBufferSize || copiedSize > MAX_BUFFER_RAW_BYTES - bufferAllocated) {
+      info.reason = '本帧 Draw Buffer 回读达到 GPU 或 256 MiB 总量上限'; return;
+    }
+    try {
+      const buffer = device.createBuffer({ label: `frame-debug buffer pass ${event.passOrdinal} ${event.role}`,
+        size: copiedSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      record.buffer = buffer;
+      event.encoder.copyBufferToBuffer(event.buffer, copiedOffset, buffer, 0, copiedSize);
+      bufferAllocated += copiedSize;
+    } catch (error) {
+      record.buffer?.destroy(); record.buffer = undefined;
+      info.reason = `Draw Buffer 拷贝失败：${String(error)}`;
+    }
+  };
+
+  const onAspectEnd = (event: RhiDepthStencilAspectCapture): void => {
+    expectedFrame = event.frame;
+    expectedLabel = event.submissionLabel;
+    if (pendingAspects.length >= MAX_ASPECT_RECORDS) {
+      omittedAspects++;
+      return;
+    }
+    const info: CapturedAspectPixels = {
+      passOrdinal: event.passOrdinal, label: event.label, targetLabel: event.targetLabel,
+      aspect: event.aspect, textureId: event.textureId, viewId: event.viewId,
+      width: event.width, height: event.height, sourceFormat: event.sourceFormat,
+      rawFormat: event.aspect === 'depth' ? 'r32float' : 'stencil8',
+      sampleCount: event.sampleCount, sampleIndex: event.aspect === 'depth' && event.sampleCount > 1 ? 0 : null,
+    };
+    const record: PendingAspect = { info };
+    pendingAspects.push(record);
+    const texture = event.texture;
+    if (event.reason || !texture) { info.reason = event.reason ?? '深度 / 模板附件不可访问'; return; }
+    if (event.textureId === null || event.viewId === null) {
+      info.reason = 'WebGPU Inspector 未提供深度 / 模板附件纹理或视图 ID'; return;
+    }
+    if (event.width < 1 || event.height < 1 || !Number.isSafeInteger(event.width * event.height * 4)) {
+      info.reason = '深度 / 模板附件尺寸无效'; return;
+    }
+    if (event.sampleCount !== 1 && event.sampleCount !== 4) {
+      info.reason = `不支持 ${event.sampleCount}× 多重采样附件回读`; return;
+    }
+    if (event.aspect === 'stencil' && event.sampleCount !== 1) {
+      info.reason = 'WebGPU 不允许直接拷贝多重采样模板；模板 MSAA 暂无无损回读路径'; return;
+    }
+    const bytesPerRow = event.aspect === 'depth' ? event.width * 4 : Math.ceil(event.width / 256) * 256;
+    const size = bytesPerRow * event.height;
+    if (!Number.isSafeInteger(size) || size > device.limits.maxBufferSize) {
+      info.reason = '此深度 / 模板附件超过 GPU 单缓冲回读上限'; return;
+    }
+    if (size > MAX_ASPECT_RAW_BYTES - aspectAllocated) {
+      info.reason = '本帧深度 / 模板回读达到 512 MiB 上限'; return;
+    }
+    if (event.aspect === 'depth') {
+      if ((texture.usage & GPUTextureUsage.TEXTURE_BINDING) === 0) {
+        info.reason = '深度附件缺少 TEXTURE_BINDING 用途，不能采样转换'; return;
+      }
+      if (size > device.limits.maxStorageBufferBindingSize) {
+        info.reason = '此深度附件超过 GPU 存储缓冲绑定上限'; return;
+      }
+      try {
+        const pipeline = pipelineForDepth(event.sampleCount);
+        const view = texture.createView({ label: `frame-debug depth ${event.passOrdinal}`,
+          aspect: 'depth-only', dimension: '2d' });
+        if (!depthScratch || depthScratchSize < size) {
+          depthScratch = device.createBuffer({ label: `frame-debug depth scratch ${size}`,
+            size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+          depthScratchBuffers.push(depthScratch);
+          depthScratchSize = size;
+        }
+        const computeBuffer = depthScratch;
+        const buffer = device.createBuffer({ label: `frame-debug depth read ${event.passOrdinal}`,
+          size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        record.buffer = buffer;
+        const bindGroup = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: view }, { binding: 1, resource: { buffer: computeBuffer } },
+        ] });
+        const pass = event.encoder.beginComputePass({ label: `frame-debug depth after render pass ${event.passOrdinal}` });
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.dispatchWorkgroups(Math.ceil(event.width / 8), Math.ceil(event.height / 8));
+        pass.end();
+        event.encoder.copyBufferToBuffer(computeBuffer, 0, buffer, 0, size);
+        record.bytesPerRow = bytesPerRow;
+        aspectAllocated += size;
+      } catch (error) {
+        record.buffer?.destroy(); record.buffer = undefined;
+        info.reason = `深度附件 GPU 转换失败：${String(error)}`;
+      }
+    } else {
+      if ((texture.usage & GPUTextureUsage.COPY_SRC) === 0) {
+        info.reason = '模板附件缺少 COPY_SRC 用途'; return;
+      }
+      try {
+        const buffer = device.createBuffer({ label: `frame-debug stencil read ${event.passOrdinal}`,
+          size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        record.buffer = buffer;
+        event.encoder.copyTextureToBuffer({ texture, aspect: 'stencil-only' },
+          { buffer, bytesPerRow, rowsPerImage: event.height },
+          { width: event.width, height: event.height, depthOrArrayLayers: 1 });
+        record.bytesPerRow = bytesPerRow;
+        aspectAllocated += size;
+      } catch (error) {
+        record.buffer?.destroy(); record.buffer = undefined;
+        info.reason = `模板附件 GPU 拷贝失败：${String(error)}`;
+      }
+    }
+  };
+
   const stopHook = rhi.frameDebugCapture?.captureNextSubmission({
-    kind: 'frame', onPassEnd,
+    kind: 'frame', onPassEnd, onDrawInput, onDrawBuffer, onAspectEnd,
     onSubmitted: () => submittedResolve(),
     onAborted: () => abortedReject(new Error('GPU 提交中止')),
   });
@@ -210,6 +583,23 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
       record.buffer = undefined;
       record.info.rawPixels = undefined;
     }
+    for (const record of pendingInputs) {
+      record.buffer?.destroy();
+      record.buffer = undefined;
+      record.info.rawPixels = undefined;
+    }
+    for (const record of pendingAspects) {
+      record.buffer?.destroy();
+      record.buffer = undefined;
+      record.info.rawPixels = undefined;
+    }
+    for (const record of pendingBuffers) {
+      record.buffer?.destroy();
+      record.buffer = undefined;
+      record.info.rawBytes = undefined;
+    }
+    for (const buffer of depthScratchBuffers) buffer.destroy();
+    depthScratchBuffers.length = 0;
     submittedResolve();
   };
 
@@ -221,6 +611,22 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
     try {
       await withTimeout(submitted, MAP_TIMEOUT_MS, 'GPU 帧提交超时');
       if (!cancelled) {
+        for (const record of pendingInputs) {
+          const buffer = record.buffer;
+          if (!buffer || record.info.reason) continue;
+          try {
+            await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU Draw 输入回读超时');
+            if (cancelled) continue;
+            record.info.rawPixels = new Uint8Array(buffer.getMappedRange()).slice();
+            record.info.rawBytesPerRow = record.bytesPerRow;
+          } catch (error) {
+            record.info.reason = `GPU Draw 输入回读失败：${String(error)}`;
+          } finally {
+            try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
+            buffer.destroy();
+            record.buffer = undefined;
+          }
+        }
         for (const record of pending) {
           const buffer = record.buffer;
           if (!buffer || record.info.reason) continue;
@@ -232,6 +638,37 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
             record.info.rawBytesPerRow = record.bytesPerRow;
           } catch (error) {
             record.info.reason = `GPU 画面回读失败：${String(error)}`;
+          } finally {
+            try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
+            buffer.destroy();
+            record.buffer = undefined;
+          }
+        }
+        for (const record of pendingAspects) {
+          const buffer = record.buffer;
+          if (!buffer || record.info.reason) continue;
+          try {
+            await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU 深度 / 模板回读超时');
+            if (cancelled) continue;
+            record.info.rawPixels = new Uint8Array(buffer.getMappedRange()).slice();
+            record.info.rawBytesPerRow = record.bytesPerRow;
+          } catch (error) {
+            record.info.reason = `GPU 深度 / 模板回读失败：${String(error)}`;
+          } finally {
+            try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
+            buffer.destroy();
+            record.buffer = undefined;
+          }
+        }
+        for (const record of pendingBuffers) {
+          const buffer = record.buffer;
+          if (!buffer || record.info.reason) continue;
+          try {
+            await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU Draw Buffer 回读超时');
+            if (cancelled) continue;
+            record.info.rawBytes = new Uint8Array(buffer.getMappedRange()).slice();
+          } catch (error) {
+            record.info.reason = `GPU Draw Buffer 回读失败：${String(error)}`;
           } finally {
             try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
             buffer.destroy();
@@ -259,12 +696,31 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
         record.buffer?.destroy();
         record.buffer = undefined;
       }
+      for (const record of pendingInputs) {
+        record.buffer?.destroy();
+        record.buffer = undefined;
+      }
+      for (const record of pendingAspects) {
+        record.buffer?.destroy();
+        record.buffer = undefined;
+      }
+      for (const record of pendingBuffers) {
+        record.buffer?.destroy();
+        record.buffer = undefined;
+      }
+      for (const buffer of depthScratchBuffers) buffer.destroy();
+      depthScratchBuffers.length = 0;
     }
     const omitted = [
       omittedReadbacks ? `${omittedReadbacks} 个颜色输出超过 ${MAX_PASS_RECORDS} 条回读记录上限` : '',
+      omittedInputs ? `${omittedInputs} 个 Draw 输入超过 ${MAX_INPUT_RECORDS} 条回读记录上限` : '',
+      omittedAspects ? `${omittedAspects} 个深度 / 模板附件超过 ${MAX_ASPECT_RECORDS} 条回读记录上限` : '',
+      omittedBuffers ? `${omittedBuffers} 个 Draw Buffer 超过 ${MAX_BUFFER_RECORDS} 条回读记录上限` : '',
       omittedTimings ? `${omittedTimings} 个 GPU 计时结果超过 ${MAX_PASS_RECORDS} 条记录上限` : '',
     ].filter(Boolean).join('；');
-    return { passes: pending.map(record => record.info), gpuPasses, gpuProfilerStatus,
+    return { passes: pending.map(record => record.info), inputs: pendingInputs.map(record => record.info),
+      aspects: pendingAspects.map(record => record.info), gpuPasses, gpuProfilerStatus,
+      buffers: pendingBuffers.map(record => record.info),
       ...(omitted ? { warning: omitted } : {}) };
   };
   return { finish, cancel };

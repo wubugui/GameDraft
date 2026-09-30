@@ -139,6 +139,49 @@ describe('建坏的管线只丢它自己的 draw(D7)', () => {
 });
 
 describe('一次性逐 Draw 抓帧状态', () => {
+  it('Draw 前只上报管线声明的输入纹理、逐 mip 且 ordinal 与后续原生 Pass 对齐', () => {
+    vi.stubGlobal('GPUTextureUsage', { COPY_SRC: 1 });
+    try {
+      const { dev } = setup();
+      const p = pipeline(dev, 'input-layout', BOUND_WGSL);
+      const tex = dev.rootScope.createTexture({
+        label: 'input', width: 8, height: 4, format: 'rgba8unorm', mipLevels: 2,
+        usage: RhiTextureUsage.SAMPLED,
+      });
+      const native = {
+        __id: 71, width: 8, height: 4, format: 'rgba8unorm', dimension: '2d',
+        depthOrArrayLayers: 1, sampleCount: 1, usage: 1,
+      };
+      const handle = (tex as unknown as { handle: { handle?: unknown; view: {
+        handle: Record<string, unknown>; props?: Record<string, unknown>;
+      } } }).handle;
+      handle.handle = native;
+      handle.view.handle.__id = 72;
+      handle.view.props = { baseMipLevel: 0, mipLevelCount: 2, baseArrayLayer: 0, arrayLayerCount: 1, dimension: '2d' };
+      const output = dev.rootScope.createTexture({
+        label: 'output', width: 8, height: 4, format: 'bgra8unorm', usage: RhiTextureUsage.RENDER_TARGET,
+      });
+      const target = dev.rootScope.createRenderTarget({ label: 'target', colors: [output] });
+      const events: string[] = [];
+      dev.frameDebugCapture.captureNextSubmission({ kind: 'submit',
+        onDrawInput: (input) => events.push(`input:${input.passOrdinal}:${input.bindingName}:${input.groupSlot}/${input.binding}:${input.mipLevel}:${input.width}x${input.height}:${input.textureId}:${input.viewId}:${input.reason ?? 'ok'}`),
+        onPassEnd: (pass) => events.push(`pass:${pass.passOrdinal}`),
+      });
+      expect(dev.submit('input-capture', (commands) => {
+        commands.captureDrawInputs?.(p, { uTex: tex, notInShader: output });
+        commands.beginRenderPass({ label: 'draw', target }).end();
+      })).toBe(true);
+      expect(events).toEqual([
+        'input:0:uTex:0/1:0:8x4:71:72:ok',
+        'input:0:uTex:0/1:1:4x2:71:72:ok',
+        'pass:0',
+      ]);
+      dev.destroy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('只标记命中种类的那次命令提交，其他帧和后续提交仍走普通路径', () => {
     const { dev } = setup();
     const seen: Array<boolean | undefined> = [];
@@ -172,6 +215,84 @@ describe('一次性逐 Draw 抓帧状态', () => {
       { ordinal: 1, label: 'scene / frame-debug draw 2/2' },
     ]);
     dev.destroy();
+  });
+
+  it('同一命令编码器在 Pass end 后上报真实深度和模板附件身份，逐 Draw 顺序保持一致', () => {
+    const { dev } = setup();
+    const color = dev.rootScope.createTexture({
+      label: 'color', width: 4, height: 4, format: 'bgra8unorm', usage: RhiTextureUsage.RENDER_TARGET,
+    });
+    const depth = dev.rootScope.createTexture({
+      label: 'depth', width: 4, height: 4, format: 'depth24plus-stencil8', usage: RhiTextureUsage.RENDER_TARGET,
+    });
+    const nativeDepth = { __id: 901, sampleCount: 1, usage: 0 };
+    (depth as unknown as { handle: { handle: object } }).handle.handle = nativeDepth;
+    const target = dev.rootScope.createRenderTarget({ label: 'color+depth', colors: [color], depth });
+    const fb = (target as unknown as { framebuffer: { depthStencilAttachment: { handle: { __id?: number } } } }).framebuffer;
+    fb.depthStencilAttachment.handle.__id = 902;
+    const events: string[] = [];
+    dev.frameDebugCapture.captureNextSubmission({ kind: 'submit',
+      onPassEnd: (pass) => events.push(`color:${pass.passOrdinal}`),
+      onAspectEnd: (aspect) => events.push(`${aspect.aspect}:${aspect.passOrdinal}:${aspect.textureId}:${aspect.viewId}`),
+    });
+    expect(dev.submit('depth-stencil', (commands) => {
+      commands.beginRenderPass({ label: 'draw 1', target }).end();
+      commands.beginRenderPass({ label: 'draw 2', target, colorOps: [{ load: 'load' }],
+        depthOp: { load: 'load' }, stencilOp: { load: 'load' } }).end();
+    })).toBe(true);
+    expect(events).toEqual([
+      'color:0', 'depth:0:901:902', 'stencil:0:901:902',
+      'color:1', 'depth:1:901:902', 'stencil:1:901:902',
+    ]);
+    dev.destroy();
+  });
+
+  it('Draw 前按真实管线布局上报 Uniform 段、物理顶点槽和本次索引范围', () => {
+    vi.stubGlobal('GPUBufferUsage', { COPY_SRC: 1 });
+    try {
+      const { dev } = setup();
+      const shader = dev.rootScope.createShader({ label: 'draw-buffers', wgsl: /* wgsl */ `
+@group(0) @binding(0) var<uniform> u: vec4<f32>;
+@vertex fn vs(@location(0) aPos: vec2<f32>) -> @builtin(position) vec4<f32> {
+  return vec4<f32>(aPos + u.xy, 0.0, 1.0);
+}
+@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }
+` });
+      const p = dev.rootScope.createRenderPipeline({ label: 'draw-buffers', shader,
+        colorFormats: ['bgra8unorm'],
+        vertexBuffers: [{ name: 'stream0', stride: 8,
+          attributes: [{ name: 'aPos', format: 'float32x2', offset: 0 }] }],
+      });
+      const uniform = dev.rootScope.createBuffer({ label: 'uniform', size: 512,
+        usage: RhiBufferUsage.UNIFORM | RhiBufferUsage.COPY_DST });
+      const vertex = dev.rootScope.createBuffer({ label: 'vertex', size: 256, usage: RhiBufferUsage.VERTEX });
+      const index = dev.rootScope.createBuffer({ label: 'index', size: 64,
+        usage: RhiBufferUsage.INDEX, indexFormat: 'uint16' });
+      for (const [buffer, id] of [[uniform, 101], [vertex, 102], [index, 103]] as const) {
+        (buffer as unknown as { handle: { handle: object } }).handle.handle = { __id: id, usage: 1 };
+      }
+      const color = dev.rootScope.createTexture({ label: 'color', width: 4, height: 4,
+        format: 'bgra8unorm', usage: RhiTextureUsage.RENDER_TARGET });
+      const target = dev.rootScope.createRenderTarget({ label: 'target', colors: [color] });
+      const events: string[] = [];
+      dev.frameDebugCapture.captureNextSubmission({ kind: 'submit', onPassEnd: () => {},
+        onDrawBuffer: (event) => events.push(`${event.role}:${event.bufferId}:${event.groupSlot ?? '-'}:${event.binding ?? '-'}:${event.vertexSlot ?? '-'}:${event.offset}:${event.size}:${event.rangeScope}:${event.reason ?? 'ok'}`),
+      });
+      expect(dev.submit('draw-buffers', commands => {
+        commands.captureDrawInputs?.(p, { u: { buffer: uniform, offset: 256, size: 16 } }, {
+          streams: [{ name: 'stream0', buffer: vertex }], indexBuffer: index, firstIndex: 2, indexCount: 3,
+        });
+        commands.beginRenderPass({ label: 'draw', target }).end();
+      })).toBe(true);
+      expect(events).toEqual([
+        'uniform:101:0:0:-:256:16:binding:ok',
+        'vertex:102:-:-:0:0:256:bound-suffix:ok',
+        'index:103:-:-:-:4:6:draw-indices:ok',
+      ]);
+      dev.destroy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
