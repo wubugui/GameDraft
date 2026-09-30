@@ -180,6 +180,13 @@
     .binding-resource>.binding-table th:nth-child(4) { width:15%; }
     .binding-resource>.binding-sub { margin-left:18px; }
     .binding-resource>button { margin:6px 18px; }
+    .binding-draw { margin:4px 0 7px; border-left:3px solid #6c9dc0; background:#30353a; }
+    .binding-draw>summary { padding:6px 9px; color:#dceefa; cursor:pointer; font-weight:650; }
+    .binding-group { margin:3px 0 3px 13px; border-left:2px solid #586979; background:#2b3035; }
+    .binding-group>summary { padding:5px 9px; color:#bbd6e9; cursor:pointer; }
+    .binding-entry { margin:3px 6px 3px 15px; padding:5px 8px; border-left:1px solid #53606a; border-bottom:1px solid #3f474e; overflow-wrap:anywhere; }
+    .binding-entry button { margin:3px 7px 3px 0; }
+    .binding-access { display:inline-block; margin:0 5px; padding:1px 5px; border:1px solid #667888; border-radius:3px; color:#c7ddea; font-size:10px; white-space:nowrap; }
     .tree-category { margin:0; }
     .tree-category-head { list-style:none; display:flex; align-items:center; gap:5px; min-height:24px; padding:2px 7px; background:#39434e; color:#e8f0f5; cursor:pointer; font-weight:650; }
     .tree-category-head::-webkit-details-marker { display:none; }
@@ -303,6 +310,17 @@
     .inspector-accordion>summary::before { content:'▸'; flex:none; width:10px; color:#aaa; font-size:10px; }
     .inspector-accordion[open]>summary::before { content:'▾'; }
     .inspector-accordion>summary:hover { background:#414141; }
+    .pixel-timeline-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:8px; }
+    .pixel-timeline-head strong { color:#c9e6f7; }
+    .pixel-timeline-wrap { max-height:320px; overflow:auto; border:1px solid #454545; }
+    .pixel-timeline-table { width:100%; border-collapse:collapse; font:11px/1.35 Consolas,monospace; }
+    .pixel-timeline-table th,.pixel-timeline-table td { padding:5px 7px; border-bottom:1px solid #424242; text-align:left; vertical-align:top; }
+    .pixel-timeline-table th { position:sticky; top:0; background:#343434; z-index:1; }
+    .pixel-timeline-table td:first-child { min-width:180px; }
+    .pixel-timeline-table td:nth-child(3) { white-space:nowrap; }
+    .pixel-timeline-table .pixel-change { color:#e8c67a; }
+    .pixel-timeline-table .pixel-gap { color:#d49b91; }
+    .pixel-timeline-table .pixel-current { background:#304861; }
     .inspector-page { padding:5px 10px 10px; }
     .detail-grid { grid-template-columns:minmax(115px,150px) minmax(0,1fr); }
     .detail-grid dt,.detail-grid dd { padding:3px 4px; border-bottom-color:#3d3d3d; }
@@ -422,6 +440,7 @@
       <section class="inspector-pane" aria-labelledby="detail-title">
         <div class="pane-head inspector-head"><h2 id="detail-title">事件信息</h2><span id="detail-index" class="muted small"></span></div>
         <div id="inspector-scroll">
+          <details id="page-pixel-timeline" class="inspector-accordion" data-page="pixel-timeline"><summary>Pixel Timeline / 像素观测轨迹 <span id="pixel-timeline-status" class="small muted"></span></summary><div class="inspector-page"><div id="pixel-timeline" class="panel-body"><p class="muted small">选择 Pass 输出并点击像素，查看这一帧真实 RT 读回中的数值轨迹。</p></div></div></details>
           <details id="page-detail" class="inspector-accordion" data-page="detail" open><summary>Details</summary><div class="inspector-page"><div id="event-detail"></div></div></details>
           <details id="page-inputs" class="inspector-accordion" data-page="inputs" open><summary>Textures / 输入与输出</summary><div class="inspector-page"><div id="binding-detail"></div></div></details>
           <details id="page-pipeline" class="inspector-accordion" data-page="pipeline" open><summary>Pipeline / 着色器</summary><div class="inspector-page"><div id="pipeline-detail"></div></div></details>

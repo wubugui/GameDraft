@@ -39,10 +39,17 @@
     focusScope: 'draw',
     activeSurface: null,
     navigationIndices: [],
+    expandedFrames: new Set(),
+    collapsedFrames: new Set(),
     expandedPasses: new Set(),
+    collapsedPasses: new Set(),
     expandedCategories: new Set(),
+    collapsedCategories: new Set(),
     expandedBatches: new Set(),
+    collapsedBatches: new Set(),
     expandedSteps: new Set(),
+    collapsedSteps: new Set(),
+    pixelTimeline: null,
   };
   const el = id => document.getElementById(id);
   const list = value => Array.isArray(value) ? value : [];
@@ -92,7 +99,7 @@
   }
   function treePassLabel(pass, withinEffect) {
     const label = pass?.frameDebugStep?.logicalLabel || pass?.label || `${pass?.type || 'pass'} pass`;
-    if (passCategory(pass).key === 'unlabeled') {
+    if (['unlabeled', 'other'].includes(passCategory(pass).key)) {
       if (!/^engine2d pass \d+$/i.test(label.trim())) return label;
       const target = list(pass.targets).find(item => item.kind === 'color') || list(pass.targets)[0];
       const targetId = target?.outputTextureId ?? target?.textureId;
@@ -136,8 +143,21 @@
   function passCategory(pass) {
     if (pass?.type === 'compute') return { key: 'compute', label: 'Compute' };
     const prefix = typeof pass?.label === 'string' ? pass.label.split(' / ', 1)[0] : '';
-    return { key: PASS_CATEGORIES[prefix] ? prefix : 'unlabeled',
-      label: PASS_CATEGORIES[prefix] || '未标注阶段' };
+    if (PASS_CATEGORIES[prefix]) return { key: prefix, label: PASS_CATEGORIES[prefix] };
+    if (!prefix || /^engine2d pass \d+$/i.test(prefix.trim())) {
+      return { key: 'unlabeled', label: '未标注阶段' };
+    }
+    return { key: 'other', label: '其他' };
+  }
+  function treeEffectSubject(pass, category) {
+    const segments = (pass.frameDebugStep?.logicalLabel || pass.label || '').split(' / ');
+    return `${category.label} · ${(segments[1] || pass.label || '未命名')
+      .replace(/gaussian-blur-(horizontal|vertical)-kernel-\d+/g, 'gaussian-blur')}`;
+  }
+  function treeEffectBegins(pass) {
+    const segments = (pass.frameDebugStep?.logicalLabel || pass.label || '').split(' / ');
+    return (!pass.frameDebugStep || pass.frameDebugStep.drawOrdinal === 1) &&
+      (String(segments[2] || '').startsWith('input') || String(segments[2] || '').startsWith('raster'));
   }
   function passFor(index) {
     return list(state.report?.passes).find(pass => Number(pass?.index) === Number(index));
@@ -214,6 +234,210 @@
       setPosition((vertical ? rect.left : rect.top) + delta);
     });
   }
+
+  let pixelTimelineAbort = null;
+  let pixelTimelineGeneration = 0;
+  function clearPixelTimeline(message = '选择 Pass 输出并点击像素，查看这一帧真实 RT 读回中的数值轨迹。') {
+    pixelTimelineAbort?.abort();
+    pixelTimelineAbort = null;
+    pixelTimelineGeneration++;
+    state.pixelTimeline = null;
+    el('pixel-timeline-status').textContent = '';
+    empty(el('pixel-timeline'), message);
+  }
+  function pixelTimelineTarget() {
+    if (state.previewMode !== 'frame') return null;
+    const choice = state.outputChoices.find(item => item.key === state.selectedOutputKey);
+    const snapshot = choice?.snapshot;
+    if (!choice || !snapshot) return null;
+    return {
+      textureId: snapshot.textureId,
+      frameOrdinal: Number(snapshot.frameOrdinal),
+      aspect: snapshot.aspect || null,
+      format: snapshot.rawFormat,
+      width: snapshot.width,
+      height: snapshot.height,
+      sampleIndex: snapshot.sampleIndex ?? 0,
+      role: choice.role,
+    };
+  }
+  function pixelTimelineEntries(target) {
+    const entries = [];
+    for (const pass of list(state.report?.passes)) {
+      if (Number(pass.frameOrdinal) !== target.frameOrdinal) continue;
+      const attached = list(pass.targets).some(item => target.aspect ?
+        item.kind === 'depth-stencil' && String(item.textureId) === String(target.textureId) :
+        item.kind === 'color' && String(item.outputTextureId ?? item.textureId) === String(target.textureId));
+      if (!attached) continue;
+      const snapshots = target.aspect ? list(pass.aspectSnapshots) : list(pass.snapshots);
+      const snapshot = snapshots.find(item => String(item.textureId) === String(target.textureId) &&
+        (item.aspect || null) === target.aspect && Number(item.sampleIndex ?? 0) === Number(target.sampleIndex));
+      let gap = !snapshot?.rawFile ? snapshot?.rawReason || snapshot?.reason ||
+        pass.outputUnavailableReason || '此 Pass 没有原始 RT 读回' : null;
+      if (!gap && (snapshot.rawFormat !== target.format || snapshot.width !== target.width ||
+          snapshot.height !== target.height)) gap = '格式或尺寸与所选输出不同';
+      entries.push({ pass, snapshot, gap,
+        commandIndex: Number(snapshot?.afterCommandIndex ?? pass.endCommand),
+        drawCommandIndex: snapshot?.captureMoment === 'post-draw' ? snapshot.drawCommandIndex : null });
+    }
+    return entries.sort((a, b) => a.commandIndex - b.commandIndex || Number(a.pass.index) - Number(b.pass.index));
+  }
+  function pixelValueText(sample) {
+    if (!sample) return '—';
+    if (sample.format === 'stencil8') return `Stencil ${sample.values[0]}`;
+    const values = sample.format.endsWith('8unorm') || sample.format.endsWith('8unorm-srgb') ?
+      sample.values.map(value => Math.round(value * 255)) :
+      sample.values.map(value => Number.isFinite(value) ? Number(value.toPrecision(8)) : String(value));
+    return `${sample.format.startsWith('bgra') || sample.format.startsWith('rgba') ? 'RGBA' : sample.format} (${values.join(', ')})`;
+  }
+  function samePixelValue(left, right) {
+    return left?.format === right?.format && left.rawBytes.length === right.rawBytes.length &&
+      left.rawBytes.every((value, index) => value === right.rawBytes[index]);
+  }
+  function highlightPixelTimeline() {
+    const holder = el('pixel-timeline');
+    for (const row of holder.querySelectorAll('[data-timeline-pass]')) {
+      row.classList.toggle('pixel-current', Number(row.dataset.timelinePass) === Number(state.selectedPass));
+    }
+  }
+  function beginPixelTimeline(pixel) {
+    const target = pixelTimelineTarget();
+    const clickKey = `${state.activeSurface?.signature || ''}:${pixel.x}:${pixel.y}`;
+    if (state.pixelTimeline?.clickKey === clickKey) return;
+    clearPixelTimeline();
+    if (!target || !Number.isSafeInteger(target.frameOrdinal) || target.textureId == null) return;
+    const holder = el('pixel-timeline');
+    const panel = el('page-pixel-timeline');
+    panel.open = true;
+    panel.scrollIntoView({ block: 'start' });
+    if (!state.frameChoice?.snapshot?.rawFile || !target.format) {
+      empty(holder, '所选输出只有 PNG 或无读回，不能生成原始像素观测轨迹。');
+      return;
+    }
+    const entries = pixelTimelineEntries(target);
+    if (!entries.length) {
+      empty(holder, '这一帧没有该输出纹理的 Pass 记录。');
+      return;
+    }
+    const controller = new AbortController();
+    pixelTimelineAbort = controller;
+    const generation = ++pixelTimelineGeneration;
+    const trace = { ...target, x: pixel.x, y: pixel.y, clickKey, entries, observations: [] };
+    state.pixelTimeline = trace;
+    clear(holder);
+    const heading = make('div', undefined, 'pixel-timeline-head');
+    heading.appendChild(make('strong', `${target.role} · Texture #${target.textureId} · 第 ${target.frameOrdinal} 帧 · (${pixel.x}, ${pixel.y})`));
+    const exportButton = make('button', '导出观测 JSON', 'plain-button');
+    exportButton.type = 'button';
+    exportButton.disabled = true;
+    heading.appendChild(exportButton);
+    holder.appendChild(heading);
+    holder.appendChild(make('p', '只列真实 Pass / Draw 结束的原始 RT 读回。数值变化不证明片元命中、深度测试结果或 Shader 输出；缺读回处标为断档。', 'inspect-note'));
+    const wrap = make('div', undefined, 'pixel-timeline-wrap');
+    const tableNode = make('table', undefined, 'pixel-timeline-table');
+    const thead = make('thead');
+    const labels = ['观测点', '结束命令', '原始像素值', '相对上次读回'];
+    const headerRow = make('tr');
+    for (const label of labels) headerRow.appendChild(make('th', label));
+    thead.appendChild(headerRow);
+    tableNode.appendChild(thead);
+    const tbody = make('tbody');
+    for (const entry of entries) {
+      const row = make('tr');
+      row.dataset.timelinePass = String(entry.pass.index);
+      const point = make('td');
+      const action = make('button', entry.drawCommandIndex != null ?
+        `Draw #${entry.drawCommandIndex} · P${entry.pass.index}` : `Pass #${entry.pass.index} 结束`, 'inline-link');
+      action.type = 'button';
+      action.title = describePass(entry.pass);
+      action.addEventListener('click', () => {
+        const index = entry.drawCommandIndex == null ? -1 : state.events.findIndex(event =>
+          Number(event?.commandIndex) === Number(entry.drawCommandIndex) &&
+          Number(event?.passIndex) === Number(entry.pass.index));
+        if (index >= 0) selectEvent(index, true);
+        else selectPass(entry.pass.index);
+      });
+      point.appendChild(action);
+      row.append(point, make('td', `#${printable(entry.commandIndex)}`));
+      entry.valueCell = make('td', entry.gap ? '未读回' : '读取中…');
+      entry.changeCell = make('td', entry.gap ? '断档' : '—');
+      row.append(entry.valueCell, entry.changeCell);
+      if (entry.gap) {
+        row.classList.add('pixel-gap');
+        entry.valueCell.title = entry.gap;
+      }
+      tbody.appendChild(row);
+    }
+    tableNode.appendChild(tbody);
+    wrap.appendChild(tableNode);
+    holder.appendChild(wrap);
+    highlightPixelTimeline();
+    el('pixel-timeline-status').textContent = `${entries.length} 个目标 Pass · 读取中`;
+    void (async () => {
+      let previous = null;
+      let changes = 0;
+      let gaps = 0;
+      for (const entry of entries) {
+        if (controller.signal.aborted || generation !== pixelTimelineGeneration) return;
+        let sample = null;
+        let reason = entry.gap;
+        if (!reason) {
+          try {
+            sample = await window.readGameDraftRawPixel({
+              rawUrl: assetUrl(entry.snapshot.rawFile), rawFormat: entry.snapshot.rawFormat,
+              width: entry.snapshot.width, height: entry.snapshot.height,
+              rawBytesPerRow: entry.snapshot.rawBytesPerRow,
+              rawByteLength: entry.snapshot.rawByteLength,
+            }, pixel.x, pixel.y, controller.signal);
+          } catch (error) {
+            if (controller.signal.aborted) return;
+            reason = error?.message || String(error);
+          }
+        }
+        if (controller.signal.aborted || generation !== pixelTimelineGeneration) return;
+        let comparison;
+        if (sample) {
+          comparison = previous ? samePixelValue(previous, sample) ? '不变' : '首次观测变化' : '起点 / 上游断档';
+          if (comparison === '首次观测变化') {
+            changes++;
+            entry.changeCell.classList.add('pixel-change');
+          }
+          previous = sample;
+          entry.valueCell.textContent = pixelValueText(sample);
+        } else {
+          gaps++;
+          previous = null;
+          comparison = '断档';
+          entry.valueCell.textContent = `不可读：${reason || '未知原因'}`;
+          entry.valueCell.classList.add('pixel-gap');
+        }
+        entry.changeCell.textContent = comparison;
+        trace.observations.push({ passIndex: entry.pass.index, passLabel: entry.pass.label,
+          commandIndex: entry.commandIndex, drawCommandIndex: entry.drawCommandIndex,
+          rawFile: entry.snapshot?.rawFile ?? null, rawSha256: entry.snapshot?.rawSha256 ?? null,
+          captureMoment: entry.snapshot?.captureMoment ?? null,
+          values: sample?.values ?? null, rawBytes: sample?.rawBytes ?? null, format: sample?.format ?? null,
+          comparison, reason: sample ? null : reason });
+        el('pixel-timeline-status').textContent = `${trace.observations.length}/${entries.length} 读回 · ${changes} 变化 · ${gaps} 断档`;
+      }
+      exportButton.disabled = false;
+      exportButton.addEventListener('click', () => {
+        const data = { kind: 'observed-rt-pixel-timeline', frameOrdinal: target.frameOrdinal,
+          textureId: target.textureId, aspect: target.aspect, sampleIndex: target.sampleIndex,
+          x: pixel.x, y: pixel.y, limitations: 'Only observed pass-end RT bytes; changes do not prove fragment coverage or shader output.',
+          observations: trace.observations };
+        const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+        const anchor = make('a');
+        anchor.href = url;
+        anchor.download = `pixel-frame-${target.frameOrdinal}-texture-${target.textureId}-${pixel.x}-${pixel.y}.json`;
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
+    })().catch(error => {
+      if (generation === pixelTimelineGeneration) el('pixel-timeline-status').textContent =
+        `读取失败：${error?.message || String(error)}`;
+    });
+  }
   function onPixelPicked(pixel) {
     const marker = `${pixel.x}, ${pixel.y}`;
     const png = pixel.nativeRtBytes ? '原始 RT 可见区域' :
@@ -223,6 +447,7 @@
     const at = state.activeSurface?.signature;
     const display = el('pixel-value');
     const show = value => { display.textContent = value; display.title = value; };
+    if (state.previewMode === 'frame') beginPixelTimeline(pixel);
     const formatNative = native => `${marker} · RT ${native.format} 通道值 (${native.values.map(value =>
       Number.isFinite(value) ? Number(value.toPrecision(7)) : String(value)).join(', ')})${native.raw8 ?
       ` · 原始字节 ${native.raw8.join(', ')}` : ''} · ${png}`;
@@ -334,6 +559,12 @@
     if (head.includes(query)) return true;
     return safeJson([event?.args, event?.bindGroups], 12000).toLocaleLowerCase().includes(query);
   }
+  function passMatchesTreeQuery(pass, query) {
+    if (!query) return true;
+    return [pass.label, treePassLabel(pass, false), pass.index,
+      ...list(pass.targets).map(target => target.outputTextureLabel || target.textureLabel ||
+        target.outputTextureId || target.textureId)].map(printable).join(' ').toLocaleLowerCase().includes(query);
+  }
   function renderEvents() {
     const query = el('event-search').value.trim().toLocaleLowerCase();
     const kind = el('event-kind').value;
@@ -351,6 +582,12 @@
     const holder = el('event-tree');
     const previousScroll = holder.scrollTop;
     clear(holder);
+    const disclosureOpen = (opened, closed, key, selected) =>
+      !closed.has(key) && (opened.has(key) || selected || !!query);
+    const rememberDisclosure = (opened, closed, key, open) => {
+      if (open) { opened.add(key); closed.delete(key); }
+      else { opened.delete(key); closed.add(key); }
+    };
     let shownTreeNodes = 0;
     let zeroDrawPassCount = 0;
     const visible = matches.slice(0, state.eventLimit);
@@ -387,13 +624,77 @@
         (kind === 'all' || !pass?.diagnosticAuxiliary) &&
         (ordinal === null || Number(pass?.frameOrdinal) === Number(ordinal)));
       const passIds = new Set(passes.map(pass => String(pass.index)));
+      // Build stable run identities before applying search or the event-page limit.
+      // An omitted diagnostic pass must not split the visible visual stage, while
+      // a visible command outside a pass does split the original command sequence.
+      const sourceNodes = passes.map(pass => ({ type: 'pass', value: pass,
+        order: Number(pass.beginCommand) || 0 }));
+      for (let index = 0; index < state.events.length; index++) {
+        const event = state.events[index];
+        if (!belongs(event) || !eventMatches(event, '', kind) ||
+            (event?.passIndex != null && passIds.has(String(event.passIndex)))) continue;
+        sourceNodes.push({ type: 'event', value: index, order: Number(event.commandIndex) || 0 });
+      }
+      sourceNodes.sort((a, b) => a.order - b.order || (a.type === 'pass' ? -1 : 1));
+      const categoryRun = new Map();
+      const effectRun = new Map();
+      const stepRun = new Map();
+      let sourceCategory = null;
+      let sourceCategoryKey = null;
+      let sourceEffect = null;
+      let sourceEffectKey = null;
+      let sourceStepKey = null;
+      let sourceStepOrdinal = 0;
+      let sourceStepLogical = null;
+      for (const sourceNode of sourceNodes) {
+        if (sourceNode.type === 'event') {
+          sourceCategory = sourceCategoryKey = sourceEffect = sourceEffectKey =
+            sourceStepKey = sourceStepLogical = null;
+          sourceStepOrdinal = 0;
+          continue;
+        }
+        const sourcePass = sourceNode.value;
+        const category = passCategory(sourcePass);
+        if (category.key !== sourceCategory) {
+          sourceCategory = category.key;
+          sourceCategoryKey = `${ordinal ?? 'all'}:stage:${sourcePass.index}`;
+          sourceEffect = sourceEffectKey = sourceStepKey = sourceStepLogical = null;
+          sourceStepOrdinal = 0;
+        }
+        categoryRun.set(String(sourcePass.index), sourceCategoryKey);
+        if (category.key === 'filter' || category.key === 'mask') {
+          const subject = treeEffectSubject(sourcePass, category);
+          if (!sourceEffectKey || treeEffectBegins(sourcePass) || subject !== sourceEffect) {
+            sourceEffect = subject;
+            sourceEffectKey = `${sourceCategoryKey}:effect:${sourcePass.index}`;
+            sourceStepKey = sourceStepLogical = null;
+            sourceStepOrdinal = 0;
+          }
+          effectRun.set(String(sourcePass.index), sourceEffectKey);
+        } else {
+          sourceEffect = sourceEffectKey = null;
+        }
+        const sourceStep = sourcePass.frameDebugStep;
+        if (sourceStep?.totalDraws > 1) {
+          const logical = `${sourceEffectKey || sourceCategoryKey}:${sourceStep.logicalLabel}:${sourceStep.totalDraws}`;
+          if (!sourceStepKey || logical !== sourceStepLogical ||
+              Number(sourceStep.drawOrdinal) !== sourceStepOrdinal + 1) {
+            sourceStepKey = `${logical}:step:${sourcePass.index}`;
+          }
+          sourceStepLogical = logical;
+          sourceStepOrdinal = Number(sourceStep.drawOrdinal);
+          stepRun.set(String(sourcePass.index), sourceStepKey);
+        } else {
+          sourceStepKey = sourceStepLogical = null;
+          sourceStepOrdinal = 0;
+        }
+      }
       const ungrouped = inFrame.filter(index => state.events[index]?.passIndex == null ||
         !passIds.has(String(state.events[index].passIndex)));
       const nodes = passes.filter(pass => (byPass.get(String(pass.index)) || []).length ||
-        (kind === 'visual' && pass.type === 'render' && pass.draws === 0 &&
-          (!query || [pass.label, treePassLabel(pass, false), pass.index, ...list(pass.targets).map(target =>
-            target.outputTextureLabel || target.textureLabel || target.outputTextureId || target.textureId)]
-            .map(printable).join(' ').toLocaleLowerCase().includes(query))))
+        ((kind === 'visual' || kind === 'all') &&
+          (pass.type === 'compute' ? Number(pass.dispatches ?? 0) === 0 : Number(pass.draws ?? 0) === 0) &&
+          passMatchesTreeQuery(pass, query)))
         .map(pass => ({ type: 'pass', value: pass, order: Number(pass.beginCommand) || 0 }));
       for (const index of ungrouped) nodes.push({ type: 'event', value: index,
         order: Number(state.events[index]?.commandIndex) || 0 });
@@ -402,45 +703,64 @@
       shownTreeNodes += nodes.length;
       zeroDrawPassCount += nodes.filter(node => node.type === 'pass' && node.value.draws === 0 &&
         !(byPass.get(String(node.value.index)) || []).length).length;
-      holder.appendChild(make('div', frame ?
-        `▾ 第 ${frame.frameOrdinal} 帧 · 命令 ${printable(frame.beginCommand)}–${printable(frame.endCommand)}` :
-        '▾ 捕获事件', 'tree-frame'));
+      const frameKey = String(ordinal ?? 'all');
+      const selectedPass = state.selectedPass == null ? null : passFor(state.selectedPass);
+      const selectedEvent = state.selectedEvent == null ? null : state.events[state.selectedEvent];
+      const selectedInFrame = ordinal === null ||
+        Number(selectedPass?.frameOrdinal ?? selectedEvent?.frameOrdinal) === Number(ordinal);
+      const frameGroup = make('details', undefined, 'tree-frame-group');
+      frameGroup.open = disclosureOpen(state.expandedFrames, state.collapsedFrames, frameKey, selectedInFrame);
+      const frameHead = make('summary', undefined, 'tree-frame');
+      const frameCaption = frame ?
+        `第 ${frame.frameOrdinal} 帧 · 命令 ${printable(frame.beginCommand)}–${printable(frame.endCommand)}` :
+        '捕获事件';
+      const frameTitle = make('span', `${frameGroup.open ? '▾' : '▸'} ${frameCaption}`, 'tree-label');
+      frameHead.appendChild(frameTitle);
+      frameHead.addEventListener('click', event => {
+        event.preventDefault();
+        frameGroup.open = !frameGroup.open;
+        frameTitle.textContent = `${frameGroup.open ? '▾' : '▸'} ${frameCaption}`;
+        rememberDisclosure(state.expandedFrames, state.collapsedFrames, frameKey, frameGroup.open);
+      });
+      frameGroup.appendChild(frameHead);
+      const frameContainer = make('div', undefined, 'tree-frame-children');
+      frameGroup.appendChild(frameContainer);
+      holder.appendChild(frameGroup);
       let categoryGroup = null;
       let categoryContainer = null;
       let categoryCount = null;
       let categoryLength = 0;
       let batchContainer = null;
       let batchGroup = null;
-      let batchSubject = null;
+      let currentBatchKey = null;
       let batchCount = null;
       let batchLength = 0;
       let stepContainer = null;
       let stepGroupKey = null;
-      let stepOrdinal = 0;
       let previousCategoryKey = null;
       for (const node of nodes) {
         if (node.type === 'event') {
           batchContainer = null;
+          currentBatchKey = null;
           stepContainer = null;
           previousCategoryKey = null;
           categoryContainer = null;
-          appendEvents(holder, [node.value]);
+          appendEvents(frameContainer, [node.value]);
           continue;
         }
         const pass = node.value;
         const category = passCategory(pass);
-        if (category.key !== previousCategoryKey) {
+        const runKey = categoryRun.get(String(pass.index)) || `${ordinal ?? 'all'}:stage:${pass.index}`;
+        if (runKey !== previousCategoryKey) {
           batchContainer = null;
+          currentBatchKey = null;
           stepContainer = null;
           stepGroupKey = null;
-          previousCategoryKey = category.key;
+          previousCategoryKey = runKey;
           categoryLength = 0;
-          const runKey = `${ordinal ?? 'all'}:${pass.index}`;
-          const stageSubject = (category.key === 'canvas' || category.key === 'offscreen') ?
-            String(pass.frameDebugStep?.logicalLabel || pass.label || '').split(' / ')[1] : '';
-          const stageLabel = stageSubject ? `${category.label} · ${stageSubject}` : category.label;
+          const stageLabel = category.label;
           categoryGroup = make('details', undefined, 'tree-category');
-          categoryGroup.open = state.expandedCategories.has(runKey) || !!query;
+          categoryGroup.open = disclosureOpen(state.expandedCategories, state.collapsedCategories, runKey, false);
           const summary = make('summary', undefined, 'tree-category-head');
           summary.title = stageLabel;
           summary.appendChild(make('span', stageLabel, 'tree-label'));
@@ -450,31 +770,28 @@
           summary.addEventListener('click', event => {
             event.preventDefault();
             currentCategoryGroup.open = !currentCategoryGroup.open;
-            if (currentCategoryGroup.open) state.expandedCategories.add(runKey);
-            else state.expandedCategories.delete(runKey);
+            rememberDisclosure(state.expandedCategories, state.collapsedCategories, runKey, currentCategoryGroup.open);
           });
           categoryGroup.appendChild(summary);
           categoryContainer = make('div', undefined, 'tree-category-children');
           categoryGroup.appendChild(categoryContainer);
-          holder.appendChild(categoryGroup);
+          frameContainer.appendChild(categoryGroup);
         }
         categoryLength++;
         categoryCount.textContent = `${categoryLength} Pass`;
-        if (state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index)) categoryGroup.open = true;
+        if (state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index) &&
+            !state.collapsedCategories.has(runKey)) categoryGroup.open = true;
         let passContainer = categoryContainer;
         if (category.key === 'filter' || category.key === 'mask') {
-          const segments = (pass.frameDebugStep?.logicalLabel || pass.label || '').split(' / ');
-          const subject = `${category.label} · ${(segments[1] || pass.label || '未命名').replace(/gaussian-blur-(horizontal|vertical)-kernel-\d+/g, 'gaussian-blur')}`;
-          const begins = (!pass.frameDebugStep || pass.frameDebugStep.drawOrdinal === 1) &&
-            (String(segments[2] || '').startsWith('input') || String(segments[2] || '').startsWith('raster'));
-          if (!batchContainer || begins || subject !== batchSubject) {
-            batchSubject = subject;
+          const subject = treeEffectSubject(pass, category);
+          const batchKey = effectRun.get(String(pass.index)) || `${runKey}:effect:${pass.index}`;
+          if (!batchContainer || batchKey !== currentBatchKey) {
+            currentBatchKey = batchKey;
             batchLength = 0;
             stepContainer = null;
             stepGroupKey = null;
-            const batchKey = `${ordinal ?? 'all'}:${pass.index}`;
             batchGroup = make('details', undefined, 'tree-batch');
-            batchGroup.open = state.expandedBatches.has(batchKey) || !!query;
+            batchGroup.open = disclosureOpen(state.expandedBatches, state.collapsedBatches, batchKey, false);
             const summary = make('summary', undefined, 'tree-batch-head');
             summary.title = subject;
             summary.appendChild(make('span', subject, 'tree-label'));
@@ -487,24 +804,23 @@
             summary.addEventListener('click', event => {
               event.preventDefault();
               currentBatchGroup.open = !currentBatchGroup.open;
-              if (currentBatchGroup.open) state.expandedBatches.add(batchKey);
-              else state.expandedBatches.delete(batchKey);
+              rememberDisclosure(state.expandedBatches, state.collapsedBatches, batchKey, currentBatchGroup.open);
             });
             categoryContainer.appendChild(batchGroup);
           }
           batchLength++;
           batchCount.textContent = `${batchLength} Pass`;
-          if (state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index)) batchGroup.open = true;
+          if (state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index) &&
+              !state.collapsedBatches.has(batchKey)) batchGroup.open = true;
           passContainer = batchContainer;
         }
         const step = pass.frameDebugStep;
         if (step?.totalDraws > 1) {
-          const logicalKey = `${ordinal ?? 'all'}:${category.key}:${step.logicalLabel}:${step.totalDraws}`;
-          if (!stepContainer || stepGroupKey !== logicalKey || step.drawOrdinal !== stepOrdinal + 1) {
-            stepGroupKey = logicalKey;
-            const expansionKey = `${ordinal ?? 'all'}:${pass.index}`;
+          const expansionKey = stepRun.get(String(pass.index)) || `${runKey}:step:${pass.index}`;
+          if (!stepContainer || stepGroupKey !== expansionKey) {
+            stepGroupKey = expansionKey;
             const group = make('details', undefined, 'tree-batch tree-step-group');
-            group.open = state.expandedSteps.has(expansionKey) || !!query;
+            group.open = disclosureOpen(state.expandedSteps, state.collapsedSteps, expansionKey, false);
             const summary = make('summary', undefined, 'tree-batch-head');
             summary.title = step.logicalLabel || pass.label || '';
             summary.appendChild(make('span', treePassLabel(pass, passContainer === batchContainer && !!batchContainer), 'tree-label'));
@@ -515,60 +831,37 @@
             summary.addEventListener('click', event => {
               event.preventDefault();
               group.open = !group.open;
-              if (group.open) state.expandedSteps.add(expansionKey);
-              else state.expandedSteps.delete(expansionKey);
+              rememberDisclosure(state.expandedSteps, state.collapsedSteps, expansionKey, group.open);
             });
             passContainer.appendChild(group);
           }
-          stepOrdinal = step.drawOrdinal;
-          if (state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index)) stepContainer.parentElement.open = true;
+          if (state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index) &&
+              !state.collapsedSteps.has(expansionKey)) stepContainer.parentElement.open = true;
           passContainer = stepContainer;
         } else {
           stepContainer = null;
           stepGroupKey = null;
-          stepOrdinal = 0;
         }
         const key = String(pass.index);
         const passEvents = byPass.get(key) || [];
-        if (kind === 'visual' && passEvents.length === 0 && Number(pass.draws ?? 0) === 0) {
+        if ((kind === 'visual' || kind === 'all') && passEvents.length === 0 &&
+            (pass.type === 'compute' ? Number(pass.dispatches ?? 0) === 0 : Number(pass.draws ?? 0) === 0)) {
           const head = make('button', undefined, 'tree-pass-head tree-pass-leaf');
           head.type = 'button';
           head.dataset.passIndex = key;
           head.classList.toggle('active', state.selectedPass === Number(pass.index));
           head.setAttribute('aria-selected', String(state.selectedPass === Number(pass.index)));
-          head.title = `${describePass(pass)}\n0 Draw；可能只有 clear/load 操作，以附件状态为准。`;
-          head.appendChild(make('span', `${treePassLabel(pass, passContainer === batchContainer && !!batchContainer)} · 0 Draw`, 'tree-label'));
+          const emptyOperation = pass.type === 'compute' ? '0 Dispatch' : '0 Draw';
+          head.title = `${describePass(pass)}\n${emptyOperation}；请检查 Pass 的附件及操作。`;
+          head.appendChild(make('span', `${treePassLabel(pass, passContainer === batchContainer && !!batchContainer)} · ${emptyOperation}`, 'tree-label'));
           head.appendChild(make('span', `P${pass.index}`, 'tree-meta'));
           head.addEventListener('click', () => selectPass(pass.index, { keepTreeScroll: true }));
           passContainer.appendChild(head);
           continue;
         }
-        if (kind === 'visual' && passEvents.length === 1) {
-          const eventIndex = passEvents[0];
-          const drawEvent = state.events[eventIndex];
-          const method = eventKind(String(drawEvent?.method || ''));
-          if (method === 'draw' || method === 'dispatch') {
-            const head = make('button', undefined, 'tree-pass-head tree-pass-leaf');
-            head.type = 'button';
-            head.dataset.eventIndex = String(eventIndex);
-            head.classList.toggle('active', state.selectedEvent === eventIndex);
-            head.setAttribute('aria-selected', String(state.selectedEvent === eventIndex));
-            const label = step?.totalDraws > 1 ? `Draw ${step.drawOrdinal}/${step.totalDraws}` :
-              treePassLabel(pass, passContainer === batchContainer && !!batchContainer);
-            const ordinalLabel = '';
-            head.title = `${describePass(pass)}\n#${printable(drawEvent.commandIndex ?? eventIndex)} ${printable(drawEvent.method)}${drawEvent.pipelineLabel ? `\n${drawEvent.pipelineLabel}` : ''}`;
-            head.appendChild(make('span', `${label}${ordinalLabel}`, 'tree-label'));
-            const gpuMs = pass.gpuTiming?.source === 'webgpu-timestamp-query' && finite(pass.gpuTiming.durationMs) ?
-              compactGpuMs(pass.gpuTiming.durationMs) : '';
-            head.appendChild(make('span', `#${printable(drawEvent.commandIndex ?? eventIndex)} · P${pass.index}${gpuMs ? ` · ${gpuMs}` : ''}`, 'tree-meta'));
-            head.addEventListener('click', () => selectEvent(eventIndex));
-            passContainer.appendChild(head);
-            continue;
-          }
-        }
         const group = make('details', undefined, 'tree-pass');
-        group.open = state.expandedPasses.has(key) ||
-          (state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index));
+        group.open = disclosureOpen(state.expandedPasses, state.collapsedPasses, key,
+          state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index));
         const head = make('summary', undefined, 'tree-pass-head');
         head.title = describePass(pass);
         head.appendChild(make('span', step?.totalDraws > 1 ? `Draw ${step.drawOrdinal}/${step.totalDraws}` :
@@ -579,13 +872,9 @@
         head.classList.toggle('active', state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index));
         head.addEventListener('click', event => {
           event.preventDefault();
-          if (group.open && state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index)) {
-            state.expandedPasses.delete(key);
-            renderEvents();
-          } else {
-            state.expandedPasses.add(key);
-            selectPass(pass.index, { keepTreeScroll: true });
-          }
+          group.open = !group.open;
+          rememberDisclosure(state.expandedPasses, state.collapsedPasses, key, group.open);
+          selectPass(pass.index, { keepTreeScroll: true });
         });
         group.appendChild(head);
         const children = make('div', undefined, 'tree-children');
@@ -1248,10 +1537,26 @@
     for (const id of list(pipeline?.shaderIds)) {
       const shader = resourceArray('shaders').find(item => String(item.id) === String(id));
       const code = shader?.code || '';
-      const pattern = /@group\s*\(\s*(\d+)\s*\)\s*@binding\s*\(\s*(\d+)\s*\)\s*var(?:\s*<[^>]*>)?\s+([A-Za-z_]\w*)\s*:\s*([^;]+);/g;
-      for (const match of code.matchAll(pattern)) names.set(`${match[1]}:${match[2]}`, { name: match[3], type: match[4].trim() });
+      const pattern = /@group\s*\(\s*(\d+)\s*\)\s*@binding\s*\(\s*(\d+)\s*\)\s*var(?:\s*<([^>]*)>)?\s+([A-Za-z_]\w*)\s*:\s*([^;]+);/g;
+      for (const match of code.matchAll(pattern)) {
+        const qualifier = (match[3] || '').split(',').map(part => part.trim());
+        const type = match[5].trim();
+        let access = 'unknown';
+        if (qualifier[0] === 'storage') access = qualifier[1] === 'read_write' ? 'read-write' :
+          qualifier[1] === 'read' || qualifier[1] === 'write' ? qualifier[1] : 'unknown';
+        else if (qualifier[0] === 'uniform' || /^texture_(?!storage)/.test(type) || /^sampler/.test(type)) access = 'read';
+        else if (/^texture_storage/.test(type)) {
+          const storageAccess = type.match(/,\s*(read_write|read|write)\s*>/);
+          access = storageAccess?.[1] === 'read_write' ? 'read-write' : storageAccess?.[1] || 'unknown';
+        }
+        names.set(`${match[1]}:${match[2]}`, { name: match[4], type, access });
+      }
     }
     return names;
+  }
+  function bindingAccessLabel(access) {
+    return ({ 'read': 'WGSL 只读', 'write': 'WGSL 只写',
+      'read-write': 'WGSL 可读写' })[access] || '访问方式未确认';
   }
   function renderBindingDetail() {
     const holder = el('binding-detail');
@@ -1262,118 +1567,147 @@
       Number(item?.passIndex) === Number(pass.index) && ['draw', 'dispatch'].includes(eventKind(String(item?.method || '')))) :
       focused ? [focused] : [];
     if (!pass && !draws.length) { holder.appendChild(make('p', '选择 Pass 或 Draw 查看绑定。', 'empty')); return; }
-    holder.appendChild(make('p', state.focusScope === 'pass' ? `汇总这个 Pass 的 ${draws.length} 个 Draw / Dispatch；展开资源可查每个绑定槽位。` :
-      `命令 #${focused?.commandIndex} 的绑定状态；绑定不等于 Shader 实际采样或读取。`, 'muted small'));
+    holder.appendChild(make('h3', `Pass #${pass?.index ?? focused?.passIndex} · ${draws.length} 个 Draw / Dispatch`, 'section-caption'));
+    holder.appendChild(make('p', '按命令 → Bind Group → Binding 查看当时的资源和范围；WGSL 声明只说明可访问方式，绑定本身不证明实际读写。', 'muted small'));
     holder.appendChild(make('h3', '输出附件', 'section-caption'));
-    const targets = list(pass?.targets || focused?.targets);
-    if (!targets.length) holder.appendChild(make('p', '没有已记录的输出附件。', 'muted'));
+    const outputs = outputChoicesFor(pass);
+    if (!outputs.length) holder.appendChild(make('p', pass?.type === 'compute' ?
+      'Compute Pass 没有渲染附件；可写 Buffer / Storage Texture 在下方绑定资源中标出。' :
+      '没有已记录的输出附件。', 'muted'));
     else {
-      const outputRows = targets.map(target => ({ target,
-        values: [`${target.kind} ${target.slot ?? ''}`, `#${target.outputTextureId ?? target.textureId} ${target.outputTextureLabel || target.textureLabel || ''}`,
-          target.format || '—', `${target.loadOp || '—'} / ${target.storeOp || '—'}`] }));
       const node = make('table', undefined, 'binding-table');
       node.innerHTML = '<thead><tr><th>目标</th><th>纹理</th><th>格式</th><th>Load / Store</th><th>查看</th></tr></thead>';
       const body = make('tbody');
-      for (const row of outputRows) {
+      for (const output of outputs) {
+        const target = output.target;
         const tr = make('tr');
-        for (const value of row.values) tr.appendChild(make('td', value));
+        for (const value of [output.role, output.label, target.format || '—',
+          `${target.loadOp || '—'} / ${target.storeOp || '—'}`]) tr.appendChild(make('td', value));
         const cell = make('td');
-        const button = make('button', '预览输出');
-        button.type = 'button';
-        button.addEventListener('click', () => previewTexture(row.target.outputTextureId ?? row.target.textureId));
-        cell.appendChild(button);
+        if (output.snapshot?.imageFile || output.snapshot?.rawFile) {
+          const button = make('button', '预览该输出', 'inline-link');
+          button.type = 'button';
+          button.addEventListener('click', () => {
+            state.selectedOutputKey = output.key;
+            state.previewMode = 'frame';
+            renderFrame();
+            renderPreviewMode();
+          });
+          cell.appendChild(button);
+        } else {
+          const unavailable = make('span', '未读回', 'binding-sub');
+          unavailable.title = output.unavailableReason;
+          cell.appendChild(unavailable);
+        }
         tr.appendChild(cell);
         body.appendChild(tr);
       }
       node.appendChild(body);
       holder.appendChild(node);
     }
-    holder.appendChild(make('h3', '绑定输入', 'section-caption'));
-    const rows = new Map();
+    holder.appendChild(make('h3', '绑定资源（输入与可写）', 'section-caption'));
+    if (!draws.length) holder.appendChild(make('p', '这个 Pass 没有 Draw / Dispatch 绑定状态。', 'muted'));
     for (const draw of draws) {
+      const drawNode = make('details', undefined, 'binding-resource binding-draw');
+      drawNode.open = draws.length === 1;
+      const drawSummary = make('summary');
+      drawSummary.appendChild(make('span', `#${draw.commandIndex} ${draw.method} · ${draw.pipelineLabel || `Pipeline #${printable(draw.pipelineId)}`}`));
+      drawSummary.appendChild(make('span', `${list(draw.bindGroups).length} Bind Group`, 'binding-sub'));
+      drawNode.appendChild(drawSummary);
       const names = shaderBindingNames(pipelineForEvent(draw));
-      for (const group of list(draw.bindGroups)) for (const entry of list(group.resources)) {
-        const resource = entry?.resource || {};
-        const name = names.get(`${group.slot}:${entry.binding}`);
-        const id = resource.textureId ?? resource.id;
-        const kind = resource.textureId != null ? 'Texture' : resource.type || 'Unknown';
-        const key = `${kind}:${id}:${resource.type === 'TextureView' ? resource.id : ''}:${resource.offset ?? ''}:${resource.size ?? ''}`;
-        if (!rows.has(key)) rows.set(key, { resource, id, kind, bindings: new Map(), draws: new Set() });
-        const row = rows.get(key);
-        row.draws.add(draw.commandIndex);
-        const bindingKey = `${group.slot}:${entry.binding}:${name?.name || ''}:${JSON.stringify(list(group.dynamicOffsets))}`;
-        if (!row.bindings.has(bindingKey)) row.bindings.set(bindingKey,
-          { group: group.slot, binding: entry.binding, name, draws: new Set(),
-            dynamicOffsets: list(group.dynamicOffsets),
-            range: resource.type === 'Buffer' ?
-              `base ${resource.offset ?? 0}, size ${resource.size ?? '—'} B` : '—' });
-        row.bindings.get(bindingKey).draws.add(draw.commandIndex);
+      const drawBuffers = bufferChoices(draw);
+      if (!list(draw.bindGroups).length) drawNode.appendChild(make('p', '没有记录 Bind Group。', 'muted small'));
+      for (const group of list(draw.bindGroups)) {
+        const groupNode = make('details', undefined, 'binding-resource binding-group');
+        groupNode.open = draws.length === 1;
+        const groupSummary = make('summary');
+        groupSummary.appendChild(make('span', `Bind Group ${group.slot} · #${printable(group.id)} ${group.label || ''}`));
+        groupSummary.appendChild(make('span', `${list(group.resources).length} Binding`, 'binding-sub'));
+        groupNode.appendChild(groupSummary);
+        if (list(group.dynamicOffsets).length) groupNode.appendChild(make('p',
+          `Group 动态偏移 [${group.dynamicOffsets.join(', ')}]；未解析到具体槽位，以下基础范围不含它。`, 'binding-sub'));
+        for (const entry of list(group.resources)) {
+          const resource = entry?.resource || {};
+          const name = names.get(`${group.slot}:${entry.binding}`);
+          const item = make('div', undefined, 'binding-entry');
+          item.appendChild(make('span', `Binding ${entry.binding} · ${name?.name || 'WGSL 名称未记录'}`, 'binding-name'));
+          const access = make('span', bindingAccessLabel(name?.access), 'binding-access');
+          access.dataset.access = name?.access || 'unknown';
+          item.appendChild(access);
+          const kind = resource.textureId != null ? 'TextureView' : resource.type || 'Unknown';
+          const id = resource.textureId ?? resource.id;
+          let detail = `${kind} #${printable(id)} ${resource.label || ''}`;
+          if (resource.type === 'TextureView') detail += ` · View #${resource.id}`;
+          if (resource.type === 'Buffer') {
+            const captured = drawBuffers.find(choice => Number(choice.groupSlot) === Number(group.slot) &&
+              Number(choice.binding) === Number(entry.binding) && String(choice.bufferId) === String(resource.id));
+            const offset = captured?.type === 'snapshot' ? captured.offset : resource.offset ?? 0;
+            const size = captured?.type === 'snapshot' ? captured.size : resource.size;
+            detail += ` · [${offset}, ${Number.isSafeInteger(size) ? offset + size : '末尾未记录'}) B`;
+            if (captured?.type === 'snapshot' && captured.captureMoment === 'pre-draw') detail += ' · Draw 前字节';
+          }
+          if (name?.type) detail += ` · ${name.type}`;
+          item.appendChild(make('span', detail, 'binding-sub'));
+          if (resource.type === 'Buffer') {
+            const button = make('button', '查看值 / 字节', 'inline-link');
+            button.type = 'button';
+            button.addEventListener('click', () => openDrawBuffer(draw, choice =>
+              Number(choice.groupSlot) === Number(group.slot) && Number(choice.binding) === Number(entry.binding) &&
+              String(choice.bufferId) === String(resource.id)));
+            item.appendChild(button);
+          } else if (resource.textureId != null) {
+            const button = make('button', '查看此 Draw 输入', 'inline-link');
+            button.type = 'button';
+            button.addEventListener('click', () => {
+              selectEvent(state.events.indexOf(draw));
+              previewTexture(resource.textureId, resource.type === 'TextureView' ? resource.id : null, true);
+            });
+            item.appendChild(button);
+          } else if (resource.type === 'Sampler' && resourceIndexById('samplers', resource.id) >= 0) {
+            const button = make('button', '查看采样器', 'inline-link');
+            button.type = 'button';
+            button.addEventListener('click', () => selectResource('samplers', resourceIndexById('samplers', resource.id)));
+            item.appendChild(button);
+          }
+          groupNode.appendChild(item);
+        }
+        drawNode.appendChild(groupNode);
       }
-    }
-    if (!rows.size) holder.appendChild(make('p', '未记录 Bind Group 输入。', 'muted'));
-    else {
-      for (const row of rows.values()) {
-        const group = make('details', undefined, 'binding-resource');
-        const summary = make('summary');
-        const names = [...new Set([...row.bindings.values()].map(item => item.name?.name).filter(Boolean))];
-        const bindingName = names.length ? `${names.slice(0, 2).join(' / ')}${names.length > 2 ? ` +${names.length - 2}` : ''} · ` : '';
-        summary.appendChild(make('span', `${bindingName}${row.kind} #${row.id} ${row.resource.label || ''}`));
-        summary.appendChild(make('span', `${row.bindings.size} 个槽位 · ${row.draws.size} Draw`, 'binding-sub'));
-        group.appendChild(summary);
-        const slotTable = make('table', undefined, 'binding-table');
-        const head = make('thead');
-        const headers = make('tr');
-        for (const label of ['Group / Binding', 'WGSL 名称 / 类型', '绑定范围 / Group 动态偏移', 'Draw']) {
-          headers.appendChild(make('th', label));
-        }
-        head.appendChild(headers);
-        slotTable.appendChild(head);
-        const body = make('tbody');
-        for (const binding of row.bindings.values()) {
-          const tr = make('tr');
-          tr.appendChild(make('td', `${binding.group} / ${binding.binding}`));
-          tr.appendChild(make('td', binding.name ? `${binding.name.name} · ${binding.name.type}` : 'WGSL 名称未记录'));
-          tr.appendChild(make('td', `${binding.range}${binding.dynamicOffsets.length ?
-            ` · Group [${binding.dynamicOffsets.join(', ')}]（未解成此槽有效偏移）` : ''}`));
-          tr.appendChild(make('td', [...binding.draws].map(id => `#${id}`).join(', ')));
-          body.appendChild(tr);
-        }
-        slotTable.appendChild(body);
-        group.appendChild(slotTable);
-        if (row.kind === 'Buffer') group.appendChild(make('p',
-          `绑定范围：offset ${row.resource.offset ?? 0}，size ${row.resource.size ?? '—'} B。`, 'binding-sub'));
-        if (row.kind === 'Texture') {
-          const button = make('button', '预览纹理');
+      const vertexInputs = list(draw.vertexBuffers);
+      const indexInput = String(draw.method || '').startsWith('drawIndexed') ? draw.indexBuffer : null;
+      if (vertexInputs.length || indexInput) {
+        const streams = make('details', undefined, 'binding-resource binding-group');
+        streams.open = draws.length === 1;
+        const streamSummary = make('summary');
+        streamSummary.appendChild(make('span', '顶点 / 索引输入'));
+        streamSummary.appendChild(make('span', `${vertexInputs.length + (indexInput ? 1 : 0)} Buffer`, 'binding-sub'));
+        streams.appendChild(streamSummary);
+        for (const vertex of vertexInputs) {
+          const item = make('div', undefined, 'binding-entry');
+          item.appendChild(make('span', `Vertex Slot ${vertex.slot}`, 'binding-name'));
+          item.appendChild(make('span', `Buffer #${vertex.id} ${vertex.label || ''} · [${vertex.offset ?? 0}, ${Number.isSafeInteger(vertex.size) ? (vertex.offset ?? 0) + vertex.size : '末尾未记录'}) B`, 'binding-sub'));
+          const button = make('button', '查看值 / 字节', 'inline-link');
           button.type = 'button';
-          button.addEventListener('click', () => previewTexture(row.id,
-            row.resource.type === 'TextureView' ? row.resource.id : null, true));
-          group.appendChild(button);
-        } else if (row.kind === 'Buffer') {
-          const button = make('button', '查看字节');
-          button.type = 'button';
-          button.addEventListener('click', () => {
-            const first = row.bindings.values().next().value;
-            const matching = draws.find(draw => list(draw.bindGroups).some(group =>
-              Number(group.slot) === Number(first.group) && list(group.resources).some(entry =>
-                Number(entry.binding) === Number(first.binding) &&
-                String(entry?.resource?.id) === String(row.id))));
-            if (!matching) { selectResource('buffers', resourceIndexById('buffers', row.id)); return; }
-            state.selectedEvent = state.events.indexOf(matching);
-            state.focusScope = 'draw';
-            state.selectedBufferPayloadId = null;
-            state.preferredBufferBinding = { groupSlot: first.group, binding: first.binding, bufferId: row.id };
-            renderBufferInspector();
-            setInspectorPage('buffers');
-          });
-          group.appendChild(button);
-        } else if (row.kind === 'Sampler' && resourceIndexById('samplers', row.id) >= 0) {
-          const button = make('button', '查看采样状态');
-          button.type = 'button';
-          button.addEventListener('click', () => selectResource('samplers', resourceIndexById('samplers', row.id)));
-          group.appendChild(button);
+          button.addEventListener('click', () => openDrawBuffer(draw, choice =>
+            choice.role === 'vertex' && Number(choice.vertexSlot) === Number(vertex.slot) &&
+            String(choice.bufferId) === String(vertex.id)));
+          item.appendChild(button);
+          streams.appendChild(item);
         }
-        holder.appendChild(group);
+        if (indexInput) {
+          const item = make('div', undefined, 'binding-entry');
+          item.appendChild(make('span', `Index · ${indexInput.format || '格式未记录'}`, 'binding-name'));
+          item.appendChild(make('span', `Buffer #${indexInput.id} ${indexInput.label || ''} · [${indexInput.offset ?? 0}, ${Number.isSafeInteger(indexInput.size) ? (indexInput.offset ?? 0) + indexInput.size : '末尾未记录'}) B`, 'binding-sub'));
+          const button = make('button', '查看值 / 字节', 'inline-link');
+          button.type = 'button';
+          button.addEventListener('click', () => openDrawBuffer(draw, choice =>
+            choice.role === 'index' && String(choice.bufferId) === String(indexInput.id)));
+          item.appendChild(button);
+          streams.appendChild(item);
+        }
+        drawNode.appendChild(streams);
       }
+      holder.appendChild(drawNode);
     }
   }
 
@@ -1718,6 +2052,14 @@
     const names = shaderBindingNames(pipelineForEvent(event));
     for (const payload of list(event.bufferPayloads)) {
       if (payload.bufferId == null) continue;
+      const group = payload.kind === 'bind-group' ? list(event.bindGroups).find(item =>
+        Number(item.slot) === Number(payload.slot)) : null;
+      const bound = payload.kind === 'bind-group' ? list(group?.resources).find(item =>
+        Number(item.binding) === Number(payload.binding) &&
+        String(item?.resource?.id) === String(payload.bufferId))?.resource :
+        payload.kind === 'vertex' ? list(event.vertexBuffers).find(item =>
+          Number(item.slot) === Number(payload.slot) && String(item.id) === String(payload.bufferId)) :
+          payload.kind === 'index' && String(event.indexBuffer?.id) === String(payload.bufferId) ? event.indexBuffer : null;
       const choice = {
         key: 'legacy:' + payload.payloadId, type: 'legacy', payload,
         kind: payload.kind, bufferId: payload.bufferId, bufferLabel: payload.bufferLabel,
@@ -1726,6 +2068,9 @@
         binding: payload.binding, role: payload.kind === 'vertex' ? 'vertex' :
           payload.kind === 'index' ? 'index' : 'bound',
         size: payload.bytes ?? payload.byteLength,
+        boundOffset: bound?.offset,
+        boundSize: bound?.size,
+        dynamicOffsets: list(group?.dynamicOffsets),
         bindingName: payload.kind === 'bind-group' ?
           names.get(payload.slot + ':' + payload.binding)?.name : null,
       };
@@ -1782,9 +2127,13 @@
     const location = choice.groupSlot != null ? 'G' + choice.groupSlot + '/B' + choice.binding :
       choice.vertexSlot != null ? 'Slot ' + choice.vertexSlot : '';
     const name = choice.bindingName || choice.streamName || choice.bufferLabel || '';
+    const boundOffset = choice.type === 'legacy' ? choice.boundOffset : choice.offset;
+    const boundSize = choice.type === 'legacy' ? choice.boundSize : choice.size;
+    const range = Number.isSafeInteger(boundOffset) ?
+      ` · [${boundOffset}, ${Number.isSafeInteger(boundSize) ? boundOffset + boundSize : '末尾未记录'}) B` : '';
     return evidence + ' · ' + bufferRoleLabel(choice) + ' ' + name +
       (location ? ' · ' + location : '') + ' · #' + printable(choice.bufferId) +
-      (Number.isSafeInteger(choice.size) ? ' · ' + choice.size + ' B' : '');
+      range;
   }
   function startBufferLoad(choice, file, expected) {
     if (!file || !Number.isSafeInteger(expected) || expected < 1 ||
@@ -1810,9 +2159,9 @@
       });
   }
   function renderBufferInspector() {
-    const event = state.focusScope === 'draw' ? state.events[state.selectedEvent] : null;
-    const draw = event && ['draw', 'dispatch'].includes(eventKind(String(event.method || ''))) &&
-      (state.selectedPass == null || Number(event.passIndex) === Number(state.selectedPass)) ? event : null;
+    const event = focusedDraw();
+    const draw = event && (state.selectedPass == null ||
+      Number(event.passIndex) === Number(state.selectedPass)) ? event : null;
     const choices = draw ? bufferChoices(draw) : [];
     const selector = el('buffer-select');
     clear(selector);
@@ -1828,8 +2177,13 @@
     el('buffer-page-status').textContent = '';
     if (!choices.length) {
       selector.disabled = true;
+      const pass = state.selectedPass == null ? null : passFor(state.selectedPass);
+      const drawCount = pass ? state.events.filter(item => Number(item?.passIndex) === Number(pass.index) &&
+        ['draw', 'dispatch'].includes(eventKind(String(item?.method || '')))).length : 0;
       el('buffer-note').textContent = draw ?
-        '该 Draw 没有可核实的 Buffer 绑定或字节。' : '选择一个 Draw 查看实际绑定的 Buffer。';
+        '该 Draw 没有可核实的 Buffer 绑定或字节。' : drawCount > 1 ?
+          `这个 Pass 有 ${drawCount} 个 Draw / Dispatch，请在左侧选择具体命令查看当时的 Buffer。` :
+          '选择一个 Draw 查看实际绑定的 Buffer。';
       return;
     }
     selector.disabled = false;
@@ -1888,9 +2242,13 @@
       file = payload?.bufferFile || null;
       expected = payload?.bytes;
       rangeSize = Number.isSafeInteger(payload?.bytes) ? payload.bytes : 0;
+      const boundRange = Number.isSafeInteger(choice.boundOffset) ?
+        `；此 Draw 的绑定范围 [${choice.boundOffset}, ${Number.isSafeInteger(choice.boundSize) ?
+          choice.boundOffset + choice.boundSize : '末尾未记录'}) B` +
+          (choice.dynamicOffsets.length ? '（Group 动态偏移未映射到具体槽位）' : '') : '';
       note = '旧 Inspector payload #' + choice.payload.payloadId + '，关联绑定命令 #' +
         choice.payload.sourceCommandIndex + ' / Draw #' + draw.commandIndex +
-        '。GPU 拷贝在 Pass 结束后编码，不能证明 Draw 前值；以下偏移属于 payload 文件，不代表绑定起点。' +
+        boundRange + '。GPU 拷贝在 Pass 结束后编码，不能证明 Draw 前值；以下偏移属于 payload 文件，不代表绑定起点。' +
         (!file ? ' 完整文件未导出：' + (payload?.bufferExportReason || '无记录') + '。' : '');
     } else {
       note = '该 Draw 绑定了 Buffer #' + choice.bufferId + ' ' + (choice.bufferLabel || '') +
@@ -2191,6 +2549,14 @@
         pass ? 'Pass 结束 GPU 读回' : frame ? frame.imageSource || '帧画布' : '捕获最终画布'),
       width: snapshot?.width || (pass ? null : frame?.width) || null,
       height: snapshot?.height || (pass ? null : frame?.height) || null };
+    if (state.pixelTimeline) {
+      const trace = state.pixelTimeline;
+      if (!snapshot?.rawFile || Number(snapshot.frameOrdinal) !== trace.frameOrdinal ||
+          String(snapshot.textureId) !== String(trace.textureId) ||
+          (snapshot.aspect || null) !== trace.aspect || Number(snapshot.sampleIndex ?? 0) !== Number(trace.sampleIndex)) {
+        clearPixelTimeline();
+      } else highlightPixelTimeline();
+    }
     el('frame-note').textContent = unavailableReason || (snapshot ?
       `${selected.label}：${postDraw ? `真实 Draw #${snapshot.drawCommandIndex} 后` : `真实 Pass #${snapshot.passIndex} 结束后`}的 GPU 读回${snapshot.afterCommandIndex != null ? `（命令 #${snapshot.afterCommandIndex}）` : ''}；来源 ${snapshot.source || '捕获 sidecar'}。${snapshot.imageFile ? '' : 'PNG 缺失；画布使用原始 RT。'}${postDraw && pass?.frameDebugStep ?
         `逻辑 Pass「${pass.frameDebugStep.logicalLabel}」的第 ${pass.frameDebugStep.drawOrdinal}/${pass.frameDebugStep.totalDraws} 个 Draw。` :
@@ -2204,6 +2570,7 @@
   function renderPreviewMode() {
     const texture = state.previewMode === 'texture';
     const mesh = state.previewMode === 'mesh';
+    if ((texture || mesh) && state.pixelTimeline) clearPixelTimeline();
     for (const [id, active] of [['preview-frame-button', !texture && !mesh],
       ['preview-texture-button', texture], ['preview-mesh-button', mesh]]) {
       const button = el(id);
@@ -2388,6 +2755,10 @@
   function renderAll(report) {
     if (!report || typeof report !== 'object' || Array.isArray(report)) throw new Error('report.json 不是有效的报告对象');
     state.report = report;
+    for (const key of ['expandedFrames', 'collapsedFrames', 'expandedPasses', 'collapsedPasses',
+      'expandedCategories', 'collapsedCategories', 'expandedBatches', 'collapsedBatches',
+      'expandedSteps', 'collapsedSteps']) state[key].clear();
+    clearPixelTimeline();
     state.events = list(report.events);
     state.resources = report.resources && typeof report.resources === 'object' ? report.resources : {};
     const textureTimeline = buildTextureWriteTimeline(report);
@@ -2404,8 +2775,6 @@
       state.selectedFrame === null || Number(event?.frameOrdinal) === state.selectedFrame);
     if (state.selectedEvent < 0) state.selectedEvent = null;
     state.selectedPass = state.selectedEvent === null ? null : state.events[state.selectedEvent]?.passIndex ?? null;
-    if (state.selectedPass !== null) state.expandedPasses.add(String(state.selectedPass));
-    if (state.selectedPass !== null) state.expandedCategories.add(passCategory(passFor(state.selectedPass)).key);
     el('fatal').textContent = '';
     renderTop();
     renderFrameSelector();
@@ -2498,10 +2867,6 @@
     }
     state.selectedPass = state.selectedEvent === null ? null : state.events[state.selectedEvent]?.passIndex ?? null;
     state.focusScope = 'draw';
-    state.expandedPasses.clear();
-    state.expandedCategories.clear();
-    if (state.selectedPass !== null) state.expandedPasses.add(String(state.selectedPass));
-    if (state.selectedPass !== null) state.expandedCategories.add(passCategory(passFor(state.selectedPass)).key);
     renderPasses();
     renderEvents();
     renderEventDetail();

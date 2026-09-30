@@ -110,7 +110,7 @@
         throw new Error('离线原始 RT 超过 64 MiB，请从游戏内打开分析器按范围读取');
       }
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      reader.offlineBytes ||= fetch(reader.url).then(async response => {
+      reader.offlineBytes ||= fetch(reader.url, { signal }).then(async response => {
         if (!response.ok) throw new Error(`离线原始 RT 读取失败：HTTP ${response.status}`);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (bytes.byteLength !== reader.length) throw new Error('离线原始 RT 文件长度不匹配');
@@ -148,6 +148,24 @@
     }
     if (received !== length) throw new Error('原始 RT 响应不完整');
     return result;
+  }
+
+  // Read a pixel from any verified RT sidecar without replacing the visible
+  // texture. The frame viewer uses this for a bounded, observed timeline.
+  async function readGameDraftRawPixel(next, x, y, signal) {
+    const reader = makeRawReader(next);
+    if (typeof reader.url !== 'string' || !reader.url ||
+        !Number.isSafeInteger(x) || !Number.isSafeInteger(y) ||
+        x < 0 || y < 0 || x >= reader.width || y >= reader.height) {
+      throw new RangeError('原始 RT 像素坐标或来源无效');
+    }
+    const start = y * reader.stride + x * reader.bpp;
+    const bytes = await fetchRawRange(reader, start, start + reader.bpp - 1, signal);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const values = decodeRawPixel(reader, view, 0, [0, 0, 0, 0]).slice(0, componentCount(reader.format));
+    const raw8 = reader.format === 'stencil8' || reader.format.endsWith('8unorm') ||
+      reader.format.endsWith('8unorm-srgb') ? [...bytes] : null;
+    return { values, raw8, rawBytes: [...bytes], format: reader.format };
   }
 
   function createGameDraftSurfaceInspector(mount, onPixel) {
@@ -899,4 +917,5 @@
   }
 
   window.createGameDraftSurfaceInspector = createGameDraftSurfaceInspector;
+  window.readGameDraftRawPixel = readGameDraftRawPixel;
 })();
