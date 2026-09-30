@@ -13,7 +13,7 @@ import { exportTextureImages } from './analysis_png.mjs';
 import { attachFrameSidecars } from './analysis_sidecars.mjs';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const MAX_CAPTURE_BYTES = 512 * 1024 * 1024;
+const MAX_CAPTURE_BYTES = 1024 * 1024 * 1024;
 const MAX_METADATA_BYTES = 64 * 1024 * 1024;
 const MAX_EXPORT_FILES = 256;
 const MAX_BUFFER_PREVIEW_BYTES = 1024;
@@ -39,7 +39,7 @@ export async function readCapture(path) {
   try {
     const { size } = await handle.stat();
     if (!Number.isSafeInteger(size) || size < 16 || size > MAX_CAPTURE_BYTES) {
-      throw new Error('capture file must be between 16 bytes and 512 MiB');
+      throw new Error('capture file must be between 16 bytes and 1 GiB');
     }
     const head = Buffer.alloc(Math.min(size, 64));
     await readExactly(handle, head, 0);
@@ -81,6 +81,57 @@ export async function readCapture(path) {
     return { captureFile, size, metadata, payloads };
   } finally {
     await handle.close();
+  }
+}
+
+function requireCompleteSidecars(sidecars) {
+  const manifest = sidecars.sourceManifest;
+  if (!manifest || !Array.isArray(manifest.diagnosticFrames) ||
+      sidecars.diagnosticFrames.length !== manifest.actualFrames ||
+      sidecars.resourceFrames.length !== manifest.actualFrames) {
+    throw new Error(`full-frame sidecar manifest or diagnostic frame mapping is incomplete: ${
+      sidecars.errors[0]?.reason ?? `${sidecars.diagnosticFrames.length}/${manifest?.actualFrames ?? '?'} diagnostic frames`}`);
+  }
+  // PNGs are previews. A bad optional PNG may remain visible as a sidecar
+  // error, while every required raw readback must survive verification/export.
+  const rawError = sidecars.errors.find(item =>
+    typeof item.file !== 'string' || !item.file.toLowerCase().endsWith('.png'));
+  if (rawError) throw new Error(`required sidecar failed validation: ${rawError.reason}`);
+  if (manifest.diagnosticFrames.some(frame => frame.passCaptureWarning?.trim())) {
+    throw new Error('full-frame sidecar diagnostics contain a capture warning');
+  }
+  if ((manifest.inputSnapshots ?? []).some(item => !item.rawFile) ||
+      (manifest.bufferSnapshots ?? []).some(item => !item.rawFile)) {
+    throw new Error('full-frame Draw input or Buffer has no pre-Draw raw snapshot');
+  }
+  for (const [source, attached, key] of [
+    [manifest.passSnapshots, sidecars.passSnapshots,
+      item => `${item.frameOrdinal}:${item.passIndex}:${item.textureId}`],
+    [manifest.inputSnapshots ?? [], sidecars.inputSnapshots,
+      item => `${item.frameOrdinal}:${item.inputOrdinal}`],
+    [manifest.aspectSnapshots ?? [], sidecars.aspectSnapshots,
+      item => `${item.frameOrdinal}:${item.passIndex}:${item.aspect}`],
+    [manifest.bufferSnapshots ?? [], sidecars.bufferSnapshots,
+      item => `${item.frameOrdinal}:${item.bufferOrdinal}`],
+    [manifest.resourceTextureSnapshots ?? [], sidecars.resourceTextureSnapshots,
+      item => `${item.frameOrdinal}:${item.resourceOrdinal}`],
+    [manifest.resourceBufferSnapshots ?? [], sidecars.resourceBufferSnapshots,
+      item => `${item.frameOrdinal}:${item.resourceOrdinal}`],
+  ]) {
+    const verified = new Map(attached.filter(item => item.rawFile).map(item => [key(item), item]));
+    for (const item of source.filter(item => item.rawFile)) {
+      if (!verified.has(key(item))) {
+        throw new Error(`required raw sidecar was not exported: ${item.rawFile}`);
+      }
+    }
+  }
+  for (const [source, attached, name] of [
+    [manifest.resourceTextureSnapshots ?? [], sidecars.resourceTextureSnapshots, 'texture'],
+    [manifest.resourceBufferSnapshots ?? [], sidecars.resourceBufferSnapshots, 'Buffer'],
+  ]) {
+    if (source.length !== attached.length || source.some(item => !item.rawFile)) {
+      throw new Error(`frame-end ${name} inventory has an unexported raw snapshot`);
+    }
   }
 }
 
@@ -352,19 +403,29 @@ export async function analyzeCapture(path, options = {}) {
   }
   const images = await exportTextureImages(capture, outputDir, report.resources.textures, report.frames);
   const sidecars = await attachFrameSidecars(capture.captureFile, outputDir,
-    report.frames, report.passes, report.events, report.resources);
+    report.frames, report.passes, report.events, report.resources,
+    { preferHardLinks: options.preferHardLinks === true });
+  if (options.strictSidecars || Array.isArray(sidecars.sourceManifest?.diagnosticFrames)) {
+    requireCompleteSidecars(sidecars);
+  }
   report.frameImage = sidecars.frameImage ?? images.frameImage;
   report.imageExportSummary = { ...images.summary, sidecarFrames: sidecars.attached,
     passSidecars: sidecars.passSnapshots.filter(snapshot => snapshot.imageFile).length,
     inputSidecars: sidecars.inputSnapshots.filter(snapshot => snapshot.imageFile).length,
     aspectSidecars: sidecars.aspectSnapshots.filter(snapshot => snapshot.imageFile).length,
-    bufferSidecars: sidecars.bufferSnapshots.filter(snapshot => snapshot.rawFile).length };
+    bufferSidecars: sidecars.bufferSnapshots.filter(snapshot => snapshot.rawFile).length,
+    resourceTextureSidecars: sidecars.resourceTextureSnapshots.filter(snapshot => snapshot.rawFile).length,
+    resourceBufferSidecars: sidecars.resourceBufferSnapshots.filter(snapshot => snapshot.rawFile).length };
   report.sidecarErrors = sidecars.errors;
   report.sidecarManifest = sidecars.manifest;
   report.passSnapshots = sidecars.passSnapshots;
   report.inputSnapshots = sidecars.inputSnapshots;
   report.aspectSnapshots = sidecars.aspectSnapshots;
   report.bufferSnapshots = sidecars.bufferSnapshots;
+  report.resourceTextureSnapshots = sidecars.resourceTextureSnapshots;
+  report.resourceBufferSnapshots = sidecars.resourceBufferSnapshots;
+  report.resourceFrames = sidecars.resourceFrames;
+  report.diagnosticFrames = sidecars.diagnosticFrames;
   report.imageNote = [
     sidecars.passSnapshots.some(snapshot => snapshot.captureMoment === 'post-draw') ?
       'Verified frame-debug one-Draw physical Pass readbacks show the output after that Draw.' :
@@ -375,6 +436,8 @@ export async function analyzeCapture(path, options = {}) {
       'Verified depth/stencil sidecars show attachment contents at Pass end; multisampled depth may show only sample 0.' : '',
     sidecars.bufferSnapshots.some(snapshot => snapshot.captureMoment === 'pre-draw') ?
       'Verified RHI Buffer sidecars show exact byte ranges copied before the selected Draw.' : '',
+    sidecars.resourceTextureSnapshots.length || sidecars.resourceBufferSnapshots.length ?
+      'Frame-end resource sidecars contain every captured live RHI texture subresource and whole Buffer.' : '',
     'Inspector texture mip images show capture-final state. Per-frame sidecars come from game canvas readback.',
   ].filter(Boolean).join(' ');
   report.passUnavailable = sidecars.passUnavailable;
@@ -418,6 +481,7 @@ export async function analyzeCapture(path, options = {}) {
   await writeFile(viewerDataFile, `window.__GAMEDRAFT_CAPTURE_REPORT__ = ${safeJson};\n`, { flag: 'wx' });
   return {
     outputDir, reportFile, report, exports: report.exports,
+    verifiedSidecarFiles: sidecars.verifiedFiles,
     frameImage: report.frameImage ? join(outputDir, report.frameImage) : null,
     viewerFile, eventCount: report.events.length,
     imageCount: images.summary.exported + sidecars.attached +

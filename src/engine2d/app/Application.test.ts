@@ -199,6 +199,54 @@ describe('Application.init', () => {
     app.destroy();
   });
 
+  it('sequential readback holds game updates, resumes without disk-time delta, and respects stop/destroy', () => {
+    let now = 100;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    try {
+      const ticker = new Ticker();
+      const tick = vi.fn();
+      ticker.add(tick);
+      ticker.start();
+      const release = ticker.suspend();
+      const releaseNested = ticker.suspend();
+      expect(ticker.started).toBe(true);
+      expect(rafQueue.size).toBe(0);
+      ticker.update(1000);
+      flushFrame(1000);
+      expect(tick).not.toHaveBeenCalled();
+      ticker.maxFPS = 30;
+      ticker.step(16);
+      expect(tick).toHaveBeenCalledTimes(1);
+      expect(ticker.deltaMS).toBe(16);
+      expect(rafQueue.size).toBe(0);
+      ticker.maxFPS = 0;
+      tick.mockClear();
+      ticker.update(1500);
+      expect(tick).not.toHaveBeenCalled();
+      release();
+      release();
+      expect(rafQueue.size).toBe(0);
+      now = 2000;
+      releaseNested();
+      expect(rafQueue.size).toBe(1);
+      flushFrame(2016);
+      expect(tick).toHaveBeenCalledTimes(1);
+      expect(ticker.deltaMS).toBe(16);
+
+      const releaseStopped = ticker.suspend();
+      ticker.stop();
+      releaseStopped();
+      expect(ticker.started).toBe(false);
+      expect(rafQueue.size).toBe(0);
+      ticker.start();
+      const releaseDestroyed = ticker.suspend();
+      ticker.destroy();
+      releaseDestroyed();
+      expect(rafQueue.size).toBe(0);
+      expect(() => ticker.update(3000)).not.toThrow();
+    } finally { clock.mockRestore(); }
+  });
+
   it('sharedTicker:用 Ticker.shared,destroy 只摘掉自己挂的(render + 玩家循环)、不销毁共享 ticker', async () => {
     const app = new Application();
     await app.init({ sharedTicker: true, autoStart: false });
@@ -337,6 +385,16 @@ function runPluginScenario(plugins: PluginSet, lowPriority: number): string[] {
   log.push(`listeners ${resizeListeners.length} raf ${rafQueue.size} ticker ${String(app.ticker)}`);
   return log;
 }
+
+describe('Application · 初始化失败之后的销毁', () => {
+  it('建渲染器失败(拿不到 WebGPU 适配器)→ destroy 不抛错、不去碰没装上的插件和不存在的渲染器', async () => {
+    const { createRenderer } = await import('../gpu/createRenderer');
+    vi.mocked(createRenderer).mockRejectedValueOnce(new Error('[RHI:unsupported] WebGPU 设备创建失败:Failed to request WebGPU adapter'));
+    const app = new Application();
+    await expect(app.init({ width: 64, height: 64 })).rejects.toThrow(/WebGPU/);
+    expect(() => app.destroy(true)).not.toThrow();
+  });
+});
 
 describe('ResizePlugin / TickerPlugin 与 pixi.js 8.17 对照', () => {
   it('同一套操作,渲染器收到的调用序列、监听增减完全相同', () => {

@@ -56,6 +56,29 @@ describe('过场台词拍的配音收尾', () => {
   beforeEach(installRafStub);
   afterEach(() => { vi.restoreAllMocks(); });
 
+  it('抓帧冻结排除写盘墙钟，定时字幕只在恢复后的剩余时长到期时推进', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(performance, 'now').mockImplementation(() => Date.now());
+    try {
+      const rig = makeRig();
+      let completed = false;
+      const pending = run(rig.mgr, SUB('定时台词', { autoAdvance: 1000 })).then(() => { completed = true; });
+      await vi.advanceTimersByTimeAsync(40);
+      expect(typeof (rig.mgr as any).dialogueResolve).toBe('function');
+      await vi.advanceTimersByTimeAsync(250);
+      const remainingMs = (rig.mgr as any).dialogueAdvanceNotBefore - 120 + 1000 - Date.now();
+      const release = rig.mgr.suspendForCapture();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(completed).toBe(false);
+      release(); release();
+      await vi.advanceTimersByTimeAsync(remainingMs - 1);
+      expect(completed).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(completed).toBe(true);
+      await pending;
+    } finally { vi.useRealTimers(); }
+  });
+
   it('默认：配音跟本条字幕一起结束', async () => {
     const rig = makeRig();
     const p = run(rig.mgr, SUB('短句', { voice: 'v1', autoAdvance: 'voice' }));

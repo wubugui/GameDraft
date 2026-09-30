@@ -139,6 +139,38 @@ describe('建坏的管线只丢它自己的 draw(D7)', () => {
 });
 
 describe('一次性逐 Draw 抓帧状态', () => {
+  it('frame 提交前枚举子作用域活资源，逐 mip 与整 Buffer 在同一编码器上报告', () => {
+    vi.stubGlobal('GPUBufferUsage', { COPY_SRC: 1 });
+    vi.stubGlobal('GPUTextureUsage', { COPY_SRC: 1, TEXTURE_BINDING: 2 });
+    try {
+      const { dev } = setup();
+      const child = dev.rootScope.createChild('scene');
+      const texture = child.createTexture({ label: 'atlas', width: 8, height: 4,
+        format: 'rgba8unorm', mipLevels: 2, usage: RhiTextureUsage.SAMPLED });
+      (texture as unknown as { handle: { handle: object } }).handle.handle = {
+        __id: 501, dimension: '2d', depthOrArrayLayers: 1, sampleCount: 1, usage: 3,
+      };
+      const buffer = child.createBuffer({ label: 'computed', size: 16, usage: RhiBufferUsage.STORAGE });
+      (buffer as unknown as { handle: { handle: object } }).handle.handle = { __id: 502, usage: 1 };
+      const dead = child.createBuffer({ label: 'dead', size: 4, usage: RhiBufferUsage.STORAGE });
+      dead.destroy();
+      const events: string[] = [];
+      dev.frameDebugCapture.captureNextSubmission({ kind: 'frame', onPassEnd: () => {},
+        onResourceTexture: (item) => events.push(`texture:${item.textureOrdinal}:${item.mipLevel}:${item.width}x${item.height}:${item.textureId}:${item.reason ?? 'ok'}`),
+        onResourceBuffer: (item) => events.push(`buffer:${item.bufferOrdinal}:${item.totalSize}:${item.bufferId}:${item.reason ?? 'ok'}`),
+        onResourceInventory: (inventory) => events.push(`inventory:${inventory.textureCount}:${inventory.bufferCount}:${inventory.textureSubresourceCount}`),
+      });
+      expect(dev.runFrame(() => {})).toBe(true);
+      expect(events).toEqual([
+        'texture:0:0:8x4:501:ok', 'texture:0:1:4x2:501:ok',
+        'buffer:0:16:502:ok', 'inventory:1:1:2',
+      ]);
+      dev.destroy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('Draw 前只上报管线声明的输入纹理、逐 mip 且 ordinal 与后续原生 Pass 对齐', () => {
     vi.stubGlobal('GPUTextureUsage', { COPY_SRC: 1 });
     try {

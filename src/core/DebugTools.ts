@@ -113,6 +113,9 @@ export interface DebugToolsDeps {
   isDevMode: () => boolean;
   /** 本次游戏实例的 bootId，供 RenderDoc 服务准确指向当前窗口。 */
   getCaptureBootId: () => string;
+  getCaptureReadiness: () => { ready: boolean; reason: string };
+  suspendGameForCapture: () => () => void;
+  advanceCaptureFrame: () => void;
   /** 叙事调试器桥：装了没 / 连上没 / 走哪个端口 / 还有多少没发出去 */
   getNarrativeDebugStatus: () => { installed: boolean; connected: boolean; port: number; queued: number };
   /** 现场开关叙事调试器（会记进工程文件，下次进游戏自动带上） */
@@ -300,12 +303,14 @@ export class DebugTools {
   private webgpuUiError = '';
   private webgpuBusy = false;
   private webgpuBurstFrames = 8;
-  private webgpuDetailedFrame = 1;
+  private webgpuDirectory = '';
+  private webgpuDirectoryBusy = false;
+  private webgpuDirectoryError = '';
   private webgpuHistory: WebGpuCaptureHistoryItem[] = [];
   private webgpuHistoryLoading = false;
   private webgpuHistoryError = '';
   private webgpuViews = new Set<{ root: HTMLElement; attached: boolean; status: HTMLElement; input: HTMLInputElement;
-    detailInput: HTMLInputElement;
+    directoryInput: HTMLInputElement; directorySave: HTMLButtonElement; directoryStatus: HTMLElement;
     single: HTMLButtonElement; burst: HTMLButtonElement; stop: HTMLButtonElement;
     view: HTMLButtonElement; historySelect: HTMLSelectElement;
     historyOpen: HTMLButtonElement; historyRefresh: HTMLButtonElement;
@@ -322,8 +327,11 @@ export class DebugTools {
       bootId: this.deps.getCaptureBootId(),
       sceneId: () => this.deps.getCurrentSceneId(),
       isGpuReady: () => this.deps.renderer.rhi !== null,
+      getCaptureReadiness: () => this.deps.getCaptureReadiness(),
       getRhi: () => this.deps.renderer.rhi,
       setFrameHook: (hook) => this.deps.renderer.app.setFrameCaptureHook(hook),
+      suspendFrameLoop: () => this.deps.suspendGameForCapture(),
+      advanceFrameLoop: () => this.deps.advanceCaptureFrame(),
       readFramePixels: () => this.deps.renderer.app.renderer.readCanvasPixels(),
       onChange: () => this.paintWebGpuViews(),
     });
@@ -2112,8 +2120,7 @@ export class DebugTools {
     this.paintWebGpuViews();
     try {
       if (action === 'stop') await client.stop();
-      else await client.request(action === 'single' ? 1 : this.webgpuBurstFrames,
-        action === 'single' ? 1 : this.webgpuDetailedFrame);
+      else await client.request(action === 'single' ? 1 : this.webgpuBurstFrames);
     } catch (error) {
       this.webgpuUiError = String(error);
       this.deps.debugPanelUI.log(`WebGPU 抓帧：${this.webgpuUiError}`);
@@ -2140,6 +2147,32 @@ export class DebugTools {
     }
   }
 
+  private async refreshWebGpuDirectory(): Promise<void> {
+    if (this.webgpuDirectoryBusy || !this.webgpuCapture) return;
+    this.webgpuDirectoryBusy = true;
+    this.webgpuDirectoryError = '';
+    try {
+      this.webgpuDirectory = (await this.webgpuCapture.captureSettings()).outputDirectory;
+    } catch (error) { this.webgpuDirectoryError = String(error); }
+    finally { this.webgpuDirectoryBusy = false; this.paintWebGpuViews(); }
+  }
+
+  private async saveWebGpuDirectory(outputDirectory: string): Promise<void> {
+    if (this.webgpuDirectoryBusy || !this.webgpuCapture) return;
+    this.webgpuDirectoryBusy = true;
+    this.webgpuDirectoryError = '';
+    this.paintWebGpuViews();
+    try {
+      this.webgpuDirectory = (await this.webgpuCapture.setCaptureDirectory(outputDirectory.trim())).outputDirectory;
+      const normalize = (path: string): string => path.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+      if (normalize(this.webgpuDirectory) !== normalize(outputDirectory.trim())) {
+        this.webgpuDirectoryError = '当前目录由 GAMEDRAFT_WEBGPU_CAPTURE_DIR 环境变量指定；已保存的目录将在移除该变量后生效。';
+      }
+      for (const view of this.webgpuViews) delete view.directoryInput.dataset.dirty;
+    } catch (error) { this.webgpuDirectoryError = String(error); }
+    finally { this.webgpuDirectoryBusy = false; this.paintWebGpuViews(); }
+  }
+
   private paintWebGpuHistoryView(view: {
     historySelect: HTMLSelectElement; historyOpen: HTMLButtonElement;
     historyRefresh: HTMLButtonElement; historyStatus: HTMLElement;
@@ -2153,7 +2186,9 @@ export class DebugTools {
         option.value = item.id;
         const date = new Date(item.createdAt);
         const when = Number.isNaN(date.getTime()) ? item.createdAt : date.toLocaleString();
-        option.textContent = `${when} · ${item.actualFrames} 帧 · 详析第 ${item.detailedFrameIndex ?? 1} 帧 · ${item.id.slice(0, 8)}`;
+        const coverage = item.resourceFrames?.length === item.actualFrames ? '逐帧完整资源' :
+          `旧版详析第 ${item.detailedFrameIndex ?? 1} 帧`;
+        option.textContent = `${when} · ${item.actualFrames} 帧 · ${coverage} · ${item.id.slice(0, 8)}`;
         view.historySelect.appendChild(option);
       }
       view.historySelect.dataset.ids = ids;
@@ -2168,7 +2203,7 @@ export class DebugTools {
   }
 
   private paintWebGpuView(view: { root: HTMLElement; attached: boolean; status: HTMLElement; input: HTMLInputElement;
-    detailInput: HTMLInputElement;
+    directoryInput: HTMLInputElement; directorySave: HTMLButtonElement; directoryStatus: HTMLElement;
     single: HTMLButtonElement; burst: HTMLButtonElement; stop: HTMLButtonElement;
     view: HTMLButtonElement; historySelect: HTMLSelectElement;
     historyOpen: HTMLButtonElement; historyRefresh: HTMLButtonElement;
@@ -2180,16 +2215,18 @@ export class DebugTools {
       completed: '已完成', failed: '失败', stopped: '已停止',
     };
     const lines = [`本窗口：${current?.ready ? '可抓帧' : `尚不可抓帧（${current?.reason || '等待 Inspector、WebGPU 和 RHI 就绪'}）`}`];
+    if (current?.frozen) lines.push('游戏已冻结：等待完整读回 / 文件写盘 / 分析完成；完成或停止后恢复。');
     const gpuTimer = this.deps.renderer.rhi?.gpuProfiler?.status();
     lines.push(`GPU Pass 计时：${!gpuTimer || gpuTimer.state === 'unsupported'
       ? `不可用（${gpuTimer?.state === 'unsupported' ? gpuTimer.reason : 'RHI 未就绪'}）`
-      : gpuTimer.state === 'enabled' ? '已启用' : '可用，抓取详细分析帧时启用'}`);
+      : gpuTimer.state === 'enabled' ? '已启用' : '可用，抓帧时启用'}`);
     if (job) {
       lines.push(`任务：${job.id} · ${names[job.state]}`);
       const progress = job.state === 'capturing' || job.state === 'uploading'
         ? current?.framesCaptured ?? 0 : job.actualFrames;
-      lines.push(`进度：${progress} / ${job.requestedFrames} 帧${job.state === 'stopped' && current?.framesCaptured ? '（本地采集未保存）' : ''}`);
-      lines.push(`逐 Pass 详细分析：第 ${job.detailedFrameIndex ?? 1} 帧`);
+      lines.push(`已采集：${progress} / ${job.requestedFrames} 帧${job.state === 'stopped' && current?.framesCaptured ? '（本地采集未保存）' : job.state !== 'completed' ? '（不代表写盘及分析完成）' : ''}`);
+      lines.push(`资源读回：${job.resourceFrames?.length ? `${job.resourceFrames.length} 帧已落盘` :
+        job.state === 'completed' ? `旧版仅第 ${job.detailedFrameIndex ?? 1} 帧` : '每帧全部 Buffer、贴图和 RT'}`);
       if (job.captureFile) lines.push(`项目外文件：${job.captureFile}`);
       else if (job.outputDir) lines.push(`项目外目录：${job.outputDir}`);
       if (job.error) lines.push(`失败原因：${job.error}`);
@@ -2198,15 +2235,19 @@ export class DebugTools {
     if (this.webgpuUiError) lines.push(`操作失败：${this.webgpuUiError}`);
     view.status.textContent = lines.join('\n');
     if (document.activeElement !== view.input) view.input.value = String(this.webgpuBurstFrames);
-    view.detailInput.max = String(this.webgpuBurstFrames);
-    if (document.activeElement !== view.detailInput) view.detailInput.value = String(this.webgpuDetailedFrame);
+    if (!view.directoryInput.dataset.dirty && document.activeElement !== view.directoryInput) {
+      view.directoryInput.value = this.webgpuDirectory;
+    }
     const active = job && ['pending', 'capturing', 'uploading'].includes(job.state);
     view.single.disabled = this.webgpuBusy || !current?.ready || !!active;
     view.burst.disabled = this.webgpuBusy || !current?.ready || !!active;
     view.stop.disabled = this.webgpuBusy || !active;
     view.view.disabled = job?.state !== 'completed';
     view.input.disabled = !!active;
-    view.detailInput.disabled = !!active;
+    view.directoryInput.disabled = !!active || this.webgpuDirectoryBusy;
+    view.directorySave.disabled = !!active || this.webgpuDirectoryBusy;
+    view.directoryStatus.textContent = this.webgpuDirectoryBusy ? '正在保存/读取目录…' :
+      this.webgpuDirectoryError || '目录设置保存在本机；新抓帧写入这里。';
     this.paintWebGpuHistoryView(view);
   }
 
@@ -2224,6 +2265,7 @@ export class DebugTools {
   private buildWebGpuCaptureSection(): DebugSectionContent {
     const root = document.createElement('div');
     root.className = 'debug-dock__section-extra';
+    root.dataset.captureControls = 'true';
     const status = document.createElement('pre');
     status.className = 'debug-dock__pre';
     const controls = document.createElement('div');
@@ -2240,28 +2282,25 @@ export class DebugTools {
     input.addEventListener('change', () => {
       const raw = Number(input.value);
       this.webgpuBurstFrames = Number.isFinite(raw) ? Math.min(120, Math.max(2, Math.trunc(raw))) : 8;
-      this.webgpuDetailedFrame = Math.min(this.webgpuDetailedFrame, this.webgpuBurstFrames);
       input.value = String(this.webgpuBurstFrames);
       this.paintWebGpuViews();
     });
     inputLabel.appendChild(input);
-    const detailLabel = document.createElement('label');
-    detailLabel.textContent = '详细分析第几帧：';
-    const detailInput = document.createElement('input');
-    detailInput.type = 'number';
-    detailInput.min = '1';
-    detailInput.max = String(this.webgpuBurstFrames);
-    detailInput.step = '1';
-    detailInput.value = String(this.webgpuDetailedFrame);
-    detailInput.style.width = '5em';
-    detailInput.addEventListener('change', () => {
-      const raw = Number(detailInput.value);
-      this.webgpuDetailedFrame = Number.isFinite(raw) ?
-        Math.min(this.webgpuBurstFrames, Math.max(1, Math.trunc(raw))) : 1;
-      detailInput.value = String(this.webgpuDetailedFrame);
-      this.paintWebGpuViews();
-    });
-    detailLabel.appendChild(detailInput);
+    const directoryControls = document.createElement('div');
+    directoryControls.className = 'debug-dock__actions';
+    const directoryInput = document.createElement('input');
+    directoryInput.type = 'text';
+    directoryInput.setAttribute('aria-label', '抓帧输出目录');
+    directoryInput.placeholder = '抓帧输出目录（项目外）';
+    directoryInput.style.cssText = 'flex:1;min-width:12em';
+    directoryInput.addEventListener('input', () => { directoryInput.dataset.dirty = 'true'; });
+    const directorySave = document.createElement('button');
+    directorySave.type = 'button';
+    directorySave.className = 'debug-dock__btn';
+    directorySave.textContent = '保存目录';
+    directorySave.addEventListener('click', () => void this.saveWebGpuDirectory(directoryInput.value));
+    const directoryStatus = document.createElement('span');
+    directoryControls.append(directoryInput, directorySave, directoryStatus);
     const button = (label: string, action: 'single' | 'burst' | 'stop'): HTMLButtonElement => {
       const el = document.createElement('button');
       el.type = 'button';
@@ -2283,7 +2322,7 @@ export class DebugTools {
       const url = `/__gamedraft-api/webgpu-viewer?jobId=${encodeURIComponent(job.id)}`;
       window.open(url, '_blank', 'noopener');
     });
-    controls.append(single, inputLabel, detailLabel, burst, stop, viewButton);
+    controls.append(single, inputLabel, burst, stop, viewButton);
     const historyControls = document.createElement('div');
     historyControls.className = 'debug-dock__actions';
     const historySelect = document.createElement('select');
@@ -2314,13 +2353,14 @@ export class DebugTools {
     historyRefresh.addEventListener('click', () => void this.refreshWebGpuHistory());
     const historyStatus = document.createElement('span');
     historyControls.append(historySelect, historyOpen, historyRefresh, historyStatus);
-    root.append(status, controls, historyControls);
-    const view = { root, attached: false, status, input, detailInput, single, burst, stop, view: viewButton,
+    root.append(status, directoryControls, controls, historyControls);
+    const view = { root, attached: false, status, input, directoryInput, directorySave, directoryStatus, single, burst, stop, view: viewButton,
       historySelect, historyOpen, historyRefresh, historyStatus };
     this.webgpuViews.add(view);
     this.paintWebGpuView(view);
     void this.refreshWebGpuHistory();
-    return { text: '连续帧逐帧抓画布与命令；指定其中一帧额外抓逐 Pass 输出、绑定纹理、Buffer 和 GPU 耗时。', extra: root };
+    void this.refreshWebGpuDirectory();
+    return { text: '每帧完整读回 Buffer、贴图、RT 和 GPU 耗时，顺序落盘后再抓下一帧。', extra: root };
   }
 
   private setupDebugPanelSections(): void {

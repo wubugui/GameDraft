@@ -170,9 +170,10 @@ export class Application<R extends RendererBase = WebGPURenderer> {
     plugins.forEach((plugin) => {
       plugin.destroy.call(this as unknown as Application);
     });
-    this.stage.destroy(options);
+    this.stage?.destroy(options);
     this.stage = null as unknown as Container;
-    this.renderer.destroy(rendererDestroyOptions);
+    // init 里建渲染器失败时没有渲染器可拆。
+    this.renderer?.destroy(rendererDestroyOptions);
     this.renderer = null as unknown as R;
   }
 }

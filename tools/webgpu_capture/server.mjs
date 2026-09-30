@@ -3,7 +3,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createReadStream, existsSync } from 'node:fs';
-import { lstat, mkdir, open, readFile, readdir, realpath, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,23 +11,29 @@ import { analyzeCapture, readCapture, summarizeCapture } from './analyze.mjs';
 import { inspectorCaptureFrames, verifiedDrawBufferBinding, verifiedInputBinding } from './analysis_sidecars.mjs';
 
 const MAX_FRAMES = 120;
-const MAX_CAPTURE_BYTES = 512 * 1024 * 1024;
+const MAX_CAPTURE_BYTES = 1024 * 1024 * 1024;
 const MAX_FRAME_IMAGE_BYTES = 32 * 1024 * 1024;
-const MAX_FRAME_IMAGES_BYTES = 512 * 1024 * 1024;
-const MAX_PASS_RAW_BYTES = 512 * 1024 * 1024;
+const MAX_FRAME_IMAGES_BYTES = 16 * 1024 * 1024 * 1024;
+const MAX_PASS_RAW_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_DIAGNOSTIC_ENTRIES = 512;
 const MAX_INPUT_ENTRIES = 1024;
 const MAX_ASPECT_ENTRIES = 1024;
-const MAX_BUFFER_ENTRIES = 1024;
-const MAX_BUFFER_ITEM_BYTES = 16 * 1024 * 1024;
+const MAX_BUFFER_ENTRIES = 8192;
+const MAX_BUFFER_ITEM_BYTES = 256 * 1024 * 1024;
 const MAX_BUFFER_RAW_BYTES = 256 * 1024 * 1024;
 const MAX_INPUT_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_INPUT_IMAGES_BYTES = 512 * 1024 * 1024;
-const MAX_INPUT_RAW_BYTES = 512 * 1024 * 1024;
+const MAX_INPUT_RAW_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ASPECT_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_ASPECT_IMAGES_BYTES = 512 * 1024 * 1024;
 const MAX_ASPECT_RAW_BYTES = 512 * 1024 * 1024;
-const MAX_SIDECAR_MANIFEST_BYTES = 4 * 1024 * 1024;
+const MAX_RESOURCE_TEXTURE_ENTRIES = 8192;
+const MAX_RESOURCE_BUFFER_ENTRIES = 4096;
+const MAX_RESOURCE_TEXTURE_ITEM_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_RESOURCE_TEXTURE_RAW_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_RESOURCE_BUFFER_RAW_BYTES = 1024 * 1024 * 1024;
+const MAX_SIDECAR_JOB_BYTES = 32 * 1024 * 1024 * 1024;
+const MAX_SIDECAR_MANIFEST_BYTES = 64 * 1024 * 1024;
 const RAW_FORMAT_BYTES = new Map([
   ['r8unorm', 1], ['rg8unorm', 2], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4],
   ['bgra8unorm', 4], ['bgra8unorm-srgb', 4],
@@ -40,12 +46,13 @@ const MAX_METADATA_BYTES = 64 * 1024 * 1024;
 const MAX_HEADER_BYTES = 64;
 const MIN_CAPTURE_BYTES = 16;
 const CLIENT_TTL_MS = 15000;
-const JOB_TTL_MS = 5 * 60 * 1000;
+const JOB_TTL_MS = 60 * 60 * 1000;
 const MAX_HISTORY = 20;
 const MAX_DISK_HISTORY = 100;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_ANALYSIS_REPORT_BYTES = 64 * 1024 * 1024;
 const MAX_ANALYSIS_INDEX_BYTES = 8 * 1024 * 1024;
+const MAX_VIEWER_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 const JOB_ID = /^[0-9a-f]{32}$/;
 const DATE_DIR = /^\d{4}-\d{2}-\d{2}$/;
 const ANALYSIS_DIR = /^analysis-\d{4}-\d{2}-\d{2}T[0-9-]+Z-[0-9a-f]{8}$/;
@@ -110,6 +117,36 @@ async function validateCaptureBinary(file, fileBytes) {
   } finally {
     await handle.close();
   }
+}
+
+function inspectorTextureWriteBetween(capture, report, textureId, fromCommand, toCommand) {
+  if (!Number.isSafeInteger(textureId) || !Number.isInteger(fromCommand) ||
+      !Number.isInteger(toCommand) || fromCommand > toCommand) return true;
+  for (const pass of report.passes) {
+    if (pass.type !== 'render' || pass.endCommand <= fromCommand ||
+        pass.endCommand >= toCommand) continue;
+    if (pass.targets?.some(target => [target.textureId, target.resolveTextureId,
+      target.outputTextureId].includes(textureId))) return true;
+  }
+  const destinationArgument = new Map([
+    ['writeTexture', 0], ['copyBufferToTexture', 1],
+    ['copyTextureToTexture', 1], ['copyExternalImageToTexture', 1],
+  ]);
+  for (let index = fromCommand + 1; index < toCommand; index++) {
+    const command = capture.metadata.commands[index];
+    const method = command?.method;
+    if (method === 'dispatchWorkgroups' || method === 'dispatchWorkgroupsIndirect') return true;
+    if (destinationArgument.has(method)) {
+      const destination = command.args?.[destinationArgument.get(method)];
+      const destinationId = destination?.texture?.__id ?? destination?.__id;
+      if (!Number.isSafeInteger(destinationId) || destinationId === textureId) return true;
+    } else if (typeof method === 'string' && /texture/i.test(method) &&
+        !['getCurrentTexture', 'createView', 'copyTextureToBuffer'].includes(method)) {
+      // Unknown texture operation: sharing would require an unproved write check.
+      return true;
+    }
+  }
+  return false;
 }
 
 function validBootId(value) {
@@ -180,9 +217,20 @@ function insideGitCheckout(candidate) {
   }
 }
 
-async function outputRoot(projectRoot) {
-  const base = process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR ||
-    join(process.env.LOCALAPPDATA || join(homedir(), '.local', 'share'), 'GameDraft', 'webgpu-captures');
+function defaultOutputDirectory() {
+  return join(process.env.LOCALAPPDATA || join(homedir(), '.local', 'share'),
+    'GameDraft', 'webgpu-captures');
+}
+
+function settingsFile() {
+  return join(process.env.LOCALAPPDATA || join(homedir(), '.local', 'share'),
+    'GameDraft', 'webgpu-capture-settings.json');
+}
+
+async function outputRoot(projectRoot, base = defaultOutputDirectory(), create = true) {
+  if (typeof base !== 'string' || !isAbsolute(base) || !base.trim() || base.length > 2048) {
+    throw new Error('capture outputDirectory must be an absolute path');
+  }
   const candidate = await futureRealpath(base);
   if (insideGitCheckout(candidate)) {
     throw new Error('WebGPU captures must be stored outside every project worktree');
@@ -193,7 +241,7 @@ async function outputRoot(projectRoot) {
       throw new Error('WebGPU captures must be stored outside every project worktree');
     }
   }
-  await mkdir(candidate, { recursive: true });
+  if (create) await mkdir(candidate, { recursive: true });
   const actual = await realpath(candidate);
   for (const root of gitWorktrees(projectRoot)) {
     if (contains(await futureRealpath(root), actual)) {
@@ -223,6 +271,8 @@ function publicJob(job) {
     requestedFrames: job.frames,
     detailedFrameIndex: job.detailedFrameIndex,
     actualFrames: job.actualFrames ?? 0,
+    resourceFrames: job.resourceFrames ??
+      (job.diagnostics instanceof Map ? [...job.diagnostics.keys()].sort((a, b) => a - b) : []),
     bytes: job.bytes ?? 0,
     sha256: job.sha256 ?? null,
     outputDir: job.state === 'completed' ? job.outputDir : null,
@@ -233,7 +283,7 @@ function publicJob(job) {
   };
 }
 
-export function createWebGpuCaptureController(projectRoot) {
+export function createWebGpuCaptureController(projectRoot, { writeManifest = writeFile } = {}) {
   const root = resolve(projectRoot);
   const clients = new Map();
   const jobs = new Map();
@@ -242,6 +292,78 @@ export function createWebGpuCaptureController(projectRoot) {
   let activeJobId = null;
   let requestInFlight = false;
   let closed = false;
+
+  async function loadSettings() {
+    let data;
+    try { data = JSON.parse(await readFile(settingsFile(), 'utf8')); }
+    catch (error) {
+      if (error?.code === 'ENOENT') return { outputDirectory: null, historyDirectories: [] };
+      throw new Error(`capture settings cannot be read: ${text(error)}`);
+    }
+    if (!data || data.schemaVersion !== 1 ||
+        (data.outputDirectory !== null && data.outputDirectory !== undefined &&
+          (typeof data.outputDirectory !== 'string' || !isAbsolute(data.outputDirectory))) ||
+        !Array.isArray(data.historyDirectories) || data.historyDirectories.length > 32 ||
+        data.historyDirectories.some(path => typeof path !== 'string' || !isAbsolute(path))) {
+      throw new Error('capture settings file is invalid');
+    }
+    return { outputDirectory: data.outputDirectory ?? null,
+      historyDirectories: data.historyDirectories };
+  }
+
+  async function getSettings() {
+    const settings = await loadSettings();
+    return { outputDirectory: process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR ||
+      settings.outputDirectory || defaultOutputDirectory() };
+  }
+
+  async function saveSettings(settings) {
+    const file = settingsFile();
+    await mkdir(dirname(file), { recursive: true });
+    const temp = `${file}.${randomBytes(8).toString('hex')}.tmp`;
+    try {
+      await writeFile(temp, JSON.stringify({ schemaVersion: 1, ...settings }, null, 2) + '\n', { flag: 'wx' });
+      await rename(temp, file);
+    } catch (error) {
+      try { await unlink(temp); } catch { /* Preserve the first error. */ }
+      throw error;
+    }
+  }
+
+  async function setSettings({ outputDirectory } = {}) {
+    if (closed) throw new Error('capture controller is closed');
+    const selected = await outputRoot(root, outputDirectory);
+    const old = await loadSettings();
+    const historyDirectories = [...new Set([
+      old.outputDirectory || defaultOutputDirectory(), ...old.historyDirectories,
+    ].filter(path => resolve(path).toLowerCase() !== selected.toLowerCase()))].slice(0, 32);
+    await saveSettings({ outputDirectory: selected, historyDirectories });
+    return getSettings();
+  }
+
+  async function rememberOutputDirectory(base) {
+    const old = await loadSettings();
+    if (resolve(base).toLowerCase() === resolve(old.outputDirectory || defaultOutputDirectory()).toLowerCase() ||
+        old.historyDirectories.some(path => resolve(path).toLowerCase() === resolve(base).toLowerCase())) return;
+    await saveSettings({ outputDirectory: old.outputDirectory,
+      historyDirectories: [base, ...old.historyDirectories].slice(0, 32) });
+  }
+
+  async function readableOutputRoots() {
+    if (process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR) {
+      try { return [await outputRoot(root, process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR, false)]; }
+      catch { return []; }
+    }
+    const settings = await loadSettings();
+    const candidates = [settings.outputDirectory, ...settings.historyDirectories,
+      defaultOutputDirectory()];
+    const roots = [];
+    for (const candidate of [...new Set(candidates.filter(Boolean))]) {
+      try { roots.push(await outputRoot(root, candidate, false)); }
+      catch { /* Stale or unsafe saved roots cannot expose files. */ }
+    }
+    return [...new Set(roots)];
+  }
 
   function liveClients() {
     const now = Date.now();
@@ -289,6 +411,10 @@ export function createWebGpuCaptureController(projectRoot) {
         manifest.requestedFrames > MAX_FRAMES ||
         !Number.isInteger(manifest.actualFrames) || manifest.actualFrames < 1 ||
         manifest.actualFrames > manifest.requestedFrames ||
+        (manifest.resourceFrames !== undefined &&
+          (!Array.isArray(manifest.resourceFrames) ||
+            manifest.resourceFrames.length !== manifest.actualFrames ||
+            manifest.resourceFrames.some((frame, index) => frame !== index + 1))) ||
         !/^[0-9a-f]{64}$/.test(manifest.sha256) ||
         !Number.isInteger(manifest.bytes) || manifest.bytes < MIN_CAPTURE_BYTES ||
         manifest.bytes > MAX_CAPTURE_BYTES) {
@@ -315,9 +441,11 @@ export function createWebGpuCaptureController(projectRoot) {
     }
     return {
       id, bootId: manifest.targetBootId, frames: manifest.requestedFrames,
-      detailedFrameIndex, actualFrames: manifest.actualFrames, bytes: info.size,
+      detailedFrameIndex, actualFrames: manifest.actualFrames,
+      resourceFrames: Array.isArray(manifest.resourceFrames) ? manifest.resourceFrames : [],
+      bytes: info.size,
       sha256: manifest.sha256, outputDir, file, state: 'completed', error: null,
-      createdAt, updatedAt: Date.parse(manifest.capturedAt) || createdAt, dateDir: day,
+      createdAt, updatedAt: Date.parse(manifest.capturedAt) || createdAt, dateDir: day, base,
       fileMtimeMs: info.mtimeMs, manifestMtimeMs: manifestInfo.mtimeMs,
     };
   }
@@ -350,7 +478,7 @@ export function createWebGpuCaptureController(projectRoot) {
     }
     if (!diskLoads.has(id)) {
       const load = (async () => {
-        const base = await outputRoot(root);
+        for (const base of await readableOutputRoots()) {
         for (const day of await savedDates(base)) {
           try {
             const job = await savedJob(base, day, id);
@@ -358,6 +486,7 @@ export function createWebGpuCaptureController(projectRoot) {
             if (diskJobs.size > MAX_DISK_HISTORY) diskJobs.delete(diskJobs.keys().next().value);
             return job;
           } catch { /* Other dates, incomplete uploads, and forged files are ignored. */ }
+        }
         }
         throw new Error('completed capture job not found');
       })().finally(() => diskLoads.delete(id));
@@ -370,8 +499,8 @@ export function createWebGpuCaptureController(projectRoot) {
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_DISK_HISTORY) {
       throw new Error(`limit must be an integer from 1 to ${MAX_DISK_HISTORY}`);
     }
-    const base = await outputRoot(root);
     const candidates = [];
+    for (const base of await readableOutputRoots()) {
     for (const day of await savedDates(base)) {
       let dateDir;
       try { dateDir = await checkedDirectory(base, join(base, day)); }
@@ -382,6 +511,7 @@ export function createWebGpuCaptureController(projectRoot) {
         catch { /* Never expose an incomplete, linked, or forged capture. */ }
       }
     }
+    }
     candidates.sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
     const result = [];
     for (const candidate of candidates) {
@@ -390,10 +520,11 @@ export function createWebGpuCaptureController(projectRoot) {
         const cached = diskJobs.get(candidate.id);
         const job = cached && await unchangedSavedJob(cached) &&
           cached.sha256 === candidate.sha256 && cached.bytes === candidate.bytes ? cached :
-          await savedJob(base, candidate.dateDir, candidate.id);
+          await savedJob(candidate.base, candidate.dateDir, candidate.id);
         diskJobs.set(candidate.id, job);
         result.push({ id: job.id, state: 'completed', requestedFrames: job.frames,
           detailedFrameIndex: job.detailedFrameIndex, actualFrames: job.actualFrames,
+          resourceFrames: job.resourceFrames,
           bytes: job.bytes, sha256: job.sha256,
           createdAt: new Date(job.createdAt).toISOString(), captureFile: job.file });
       } catch { /* A bad recent record must not hide the next valid job. */ }
@@ -419,7 +550,8 @@ export function createWebGpuCaptureController(projectRoot) {
 
   function list() { return liveClients().map(publicClient); }
 
-  async function request({ targetBootId = '', frames = 1, detailedFrameIndex = 1 } = {}) {
+  async function request({ targetBootId = '', frames = 1, detailedFrameIndex = 1,
+    outputDirectory } = {}) {
     if (closed) throw new Error('capture controller is closed');
     expireJobs();
     if (!Number.isInteger(frames) || frames < 1 || frames > MAX_FRAMES) {
@@ -438,7 +570,10 @@ export function createWebGpuCaptureController(projectRoot) {
     if (!client) throw new Error('no matching capture-ready game instance');
     requestInFlight = true;
     try {
-      const base = await outputRoot(root);
+      const settings = await loadSettings();
+      const base = await outputRoot(root, process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR ||
+        outputDirectory || settings.outputDirectory || defaultOutputDirectory());
+      if (!process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR) await rememberOutputDirectory(base);
       if (closed) throw new Error('capture controller is closed');
       const id = randomBytes(16).toString('hex');
       const outputDir = join(base, new Date().toISOString().slice(0, 10), id);
@@ -449,10 +584,13 @@ export function createWebGpuCaptureController(projectRoot) {
         outputDir, file: join(outputDir, 'capture.wgpuc'),
         url: client.url, sceneId: client.sceneId,
         createdAt: now, updatedAt: now, error: null,
-        uploadInProgress: false, frameImages: new Map(), passImages: new Map(), passRaw: new Map(), diagnostics: null,
+        uploadInProgress: false, frameImages: new Map(), passImages: new Map(), passRaw: new Map(), diagnostics: new Map(),
         inputImages: new Map(), inputRaw: new Map(), inputRawInProgress: new Set(),
         aspectImages: new Map(), aspectRaw: new Map(), aspectRawInProgress: new Set(),
         bufferRaw: new Map(), bufferRawInProgress: new Set(),
+        resourceTextureImages: new Map(), resourceTextureRaw: new Map(),
+        resourceTextureRawInProgress: new Set(),
+        resourceBufferRaw: new Map(), resourceBufferRawInProgress: new Set(),
         frameImageInProgress: new Set(), frameImageBytes: 0,
         reservedFrameImageBytes: 0, passRawInProgress: new Set(), passRawBytes: 0,
         reservedPassRawBytes: 0, inputImageBytes: 0, reservedInputImageBytes: 0,
@@ -460,6 +598,7 @@ export function createWebGpuCaptureController(projectRoot) {
         aspectImageBytes: 0, reservedAspectImageBytes: 0,
         aspectRawBytes: 0, reservedAspectRawBytes: 0,
         bufferRawBytes: 0, reservedBufferRawBytes: 0,
+        sidecarBudgets: new Map(), sidecarBytes: 0, reservedSidecarBytes: 0,
       };
       jobs.set(id, job);
       activeJobId = id;
@@ -489,18 +628,35 @@ export function createWebGpuCaptureController(projectRoot) {
     return publicJob(matched || null);
   }
 
-  // Ordinals are local to the one frame selected for deep diagnostics. An
-  // omitted frame is accepted only for older single-frame clients.
+  // Ordinals are local to each frame. An omitted frame is accepted only for
+  // older single-frame clients.
   function diagnosticFrameIndex(job, frameIndex) {
     const frame = frameIndex === undefined && job.frames === 1 ? 1 : frameIndex;
-    if (!Number.isInteger(frame) || frame !== job.detailedFrameIndex) {
-      throw new Error('diagnostic frameIndex must equal the selected detailedFrameIndex');
+    if (!Number.isInteger(frame) || frame < 1 || frame > job.frames) {
+      throw new Error('diagnostic frameIndex must be within requested frames');
     }
     return frame;
   }
 
-  function diagnosticFilePrefix(job) {
-    return job.frames === 1 ? '' : `frame-${String(job.detailedFrameIndex).padStart(4, '0')}-`;
+  function diagnosticFilePrefix(job, frame) {
+    return job.frames === 1 ? '' : `frame-${String(frame).padStart(4, '0')}-`;
+  }
+
+  function diagnosticKey(frame, ordinal, subOrdinal) {
+    return subOrdinal === undefined ? `${frame}:${ordinal}` : `${frame}:${ordinal}:${subOrdinal}`;
+  }
+
+  function sidecarBudget(job, kind, frame) {
+    const key = `${kind}:${frame}`;
+    if (!job.sidecarBudgets.has(key)) job.sidecarBudgets.set(key, { used: 0, reserved: 0 });
+    return job.sidecarBudgets.get(key);
+  }
+
+  function requireSidecarBudget(job, budget, bytes, limit, kind) {
+    if (budget.used + budget.reserved + bytes > limit ||
+        job.sidecarBytes + job.reservedSidecarBytes + bytes > MAX_SIDECAR_JOB_BYTES) {
+      throw new Error(`${kind} exceeds per-frame or 32 GiB capture sidecar limit`);
+    }
   }
 
   function viewerFiles(report) {
@@ -516,6 +672,9 @@ export function createWebGpuCaptureController(projectRoot) {
       ...(report.aspectSnapshots || []).map(snapshot => snapshot.imageFile),
       ...(report.aspectSnapshots || []).map(snapshot => snapshot.rawFile),
       ...(report.bufferSnapshots || []).map(snapshot => snapshot.rawFile),
+      ...(report.resourceTextureSnapshots || []).map(snapshot => snapshot.imageFile),
+      ...(report.resourceTextureSnapshots || []).map(snapshot => snapshot.rawFile),
+      ...(report.resourceBufferSnapshots || []).map(snapshot => snapshot.rawFile),
       ...(report.payloads || []).map(payload => payload.bufferFile),
       ...(report.resources?.textures || []).map(texture => texture.imageFile),
       ...(report.resources?.shaders || []).map(shader => shader.codeFile),
@@ -527,14 +686,23 @@ export function createWebGpuCaptureController(projectRoot) {
       !name.split('/').some(part => !part || part === '.' || part === '..' || part.includes('\\'));
   }
 
-  async function analyzedWithIndex(job) {
-    const analysis = await analyzeCapture(job.file);
+  async function analyzedWithIndex(job, strictSidecars = false) {
+    const analysis = await analyzeCapture(job.file, { strictSidecars, preferHardLinks: true });
     const files = {};
     const base = await realpath(analysis.outputDir);
     for (const name of viewerFiles(analysis.report)) {
       if (!validViewerPath(name)) throw new Error('analysis report lists an invalid file');
-      const { physical, info } = await checkedFile(base, resolve(base, name), MAX_CAPTURE_BYTES);
-      files[name] = { bytes: info.size, sha256: await fileSha256(physical) };
+      const { physical, info } = await checkedFile(base, resolve(base, name), MAX_VIEWER_FILE_BYTES);
+      const verified = analysis.verifiedSidecarFiles?.get(name);
+      const linkedInfo = verified ? await lstat(physical, { bigint: true }) : null;
+      const sameVerifiedInode = verified && /^[0-9a-f]{64}$/.test(verified.sha256) &&
+        linkedInfo.isFile() && linkedInfo.ino > 0n &&
+        linkedInfo.dev === verified.dev && linkedInfo.ino === verified.ino &&
+        linkedInfo.size === verified.size && BigInt(info.size) === verified.size &&
+        linkedInfo.mtimeNs === verified.mtimeNs &&
+        linkedInfo.ctimeNs === verified.ctimeNs;
+      files[name] = { bytes: info.size,
+        sha256: sameVerifiedInode ? verified.sha256 : await fileSha256(physical) };
     }
     const index = { schemaVersion: 1, jobId: job.id, captureSha256: job.sha256, files };
     const encoded = JSON.stringify(index) + '\n';
@@ -571,7 +739,7 @@ export function createWebGpuCaptureController(projectRoot) {
         if ([...listed].some(name => !validViewerPath(name) ||
             !/^[0-9a-f]{64}$/.test(integrity.files[name]?.sha256) ||
             !Number.isInteger(integrity.files[name]?.bytes) ||
-            integrity.files[name].bytes < 0 || integrity.files[name].bytes > MAX_CAPTURE_BYTES)) continue;
+            integrity.files[name].bytes < 0 || integrity.files[name].bytes > MAX_VIEWER_FILE_BYTES)) continue;
         if (await fileSha256(reportFile) !== integrity.files['report.json'].sha256) continue;
         const safeJson = JSON.stringify(report).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')
           .replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
@@ -616,7 +784,7 @@ export function createWebGpuCaptureController(projectRoot) {
       throw new Error('capture viewer file has an invalid path');
     }
     const base = await realpath(analysis.outputDir);
-    const { physical, info } = await checkedFile(base, resolve(base, requested), MAX_CAPTURE_BYTES);
+    const { physical, info } = await checkedFile(base, resolve(base, requested), MAX_VIEWER_FILE_BYTES);
     const expected = analysis.integrity?.files?.[requested];
     if (!expected || expected.bytes !== info.size) {
       throw new Error('capture viewer file differs from its integrity index');
@@ -632,7 +800,7 @@ export function createWebGpuCaptureController(projectRoot) {
   }
 
   async function uploadPngImage({ jobId, targetBootId, frameIndex, passOrdinal, colorIndex,
-    inputOrdinal, aspectOrdinal, stream, contentLength }, kind) {
+    inputOrdinal, aspectOrdinal, resourceOrdinal, stream, contentLength }, kind) {
     if (closed) throw new Error('capture controller is closed');
     const job = getJob(jobId, targetBootId);
     const frame = kind === 'frame' ? Number(frameIndex) : diagnosticFrameIndex(job, frameIndex);
@@ -640,6 +808,7 @@ export function createWebGpuCaptureController(projectRoot) {
     const color = Number(colorIndex);
     const input = Number(inputOrdinal);
     const aspect = Number(aspectOrdinal);
+    const resource = Number(resourceOrdinal);
     if (!Number.isInteger(frame) || frame < 1 || frame > job.frames) throw new Error('frameIndex must be within the requested capture');
     if (kind === 'pass' && (!Number.isInteger(pass) || pass < 0 || pass >= MAX_DIAGNOSTIC_ENTRIES ||
         !Number.isInteger(color) || color < 0 || color > 7)) {
@@ -653,10 +822,17 @@ export function createWebGpuCaptureController(projectRoot) {
         aspect < 0 || aspect >= MAX_ASPECT_ENTRIES)) {
       throw new Error('aspect image requires a valid aspect ordinal');
     }
-    const key = kind === 'pass' ? `${pass}:${color}` : kind === 'input' ? input :
-      kind === 'aspect' ? aspect : frame;
+    if (kind === 'resource-texture' && (!Number.isInteger(resource) ||
+        resource < 0 || resource >= MAX_RESOURCE_TEXTURE_ENTRIES)) {
+      throw new Error('resource texture image requires a valid resource ordinal');
+    }
+    const key = kind === 'pass' ? diagnosticKey(frame, pass, color) :
+      kind === 'input' ? diagnosticKey(frame, input) :
+      kind === 'aspect' ? diagnosticKey(frame, aspect) :
+      kind === 'resource-texture' ? diagnosticKey(frame, resource) : frame;
     const images = kind === 'pass' ? job.passImages : kind === 'input' ? job.inputImages :
-      kind === 'aspect' ? job.aspectImages : job.frameImages;
+      kind === 'aspect' ? job.aspectImages : kind === 'resource-texture' ?
+        job.resourceTextureImages : job.frameImages;
     const bytesField = kind === 'input' ? 'inputImageBytes' :
       kind === 'aspect' ? 'aspectImageBytes' : 'frameImageBytes';
     const reservedField = kind === 'input' ? 'reservedInputImageBytes' :
@@ -664,9 +840,14 @@ export function createWebGpuCaptureController(projectRoot) {
     const singleLimit = kind === 'input' ? MAX_INPUT_IMAGE_BYTES :
       kind === 'aspect' ? MAX_ASPECT_IMAGE_BYTES : MAX_FRAME_IMAGE_BYTES;
     const totalLimit = kind === 'input' ? MAX_INPUT_IMAGES_BYTES :
-      kind === 'aspect' ? MAX_ASPECT_IMAGES_BYTES : MAX_FRAME_IMAGES_BYTES;
+      kind === 'aspect' ? MAX_ASPECT_IMAGES_BYTES :
+      kind === 'resource-texture' ? MAX_RESOURCE_TEXTURE_RAW_BYTES : MAX_FRAME_IMAGES_BYTES;
+    const budget = kind === 'frame' ? null : sidecarBudget(job, `${kind}-image`, frame);
     if (!['pending', 'capturing'].includes(job.state) || job.uploadInProgress) {
       throw new Error('capture job is not accepting images');
+    }
+    if (kind !== 'frame' && job.diagnostics.has(frame)) {
+      throw new Error('frame diagnostics already uploaded');
     }
     if (images.has(key) || job.frameImageInProgress.has(`${kind}:${key}`)) {
       throw new Error('image already uploaded or uploading');
@@ -676,18 +857,22 @@ export function createWebGpuCaptureController(projectRoot) {
     }
     if (contentLength != null && (!Number.isInteger(Number(contentLength)) ||
         Number(contentLength) < 24 || Number(contentLength) > singleLimit ||
-        job[bytesField] + job[reservedField] + Number(contentLength) > totalLimit)) {
+        (kind === 'frame' && job[bytesField] + job[reservedField] + Number(contentLength) > totalLimit) ||
+        (budget && (budget.used + budget.reserved + Number(contentLength) > totalLimit ||
+          job.sidecarBytes + job.reservedSidecarBytes + Number(contentLength) > MAX_SIDECAR_JOB_BYTES)))) {
       throw new Error(`${kind} image exceeds capture image size limit`);
     }
-    const prefix = kind === 'frame' ? '' : diagnosticFilePrefix(job);
+    const prefix = kind === 'frame' ? '' : diagnosticFilePrefix(job, frame);
     const name = kind === 'pass' ? `${prefix}pass-${String(pass).padStart(4, '0')}-color-${color}.png` :
       kind === 'input' ? `${prefix}input-${String(input).padStart(4, '0')}.png` :
       kind === 'aspect' ? `${prefix}aspect-${String(aspect).padStart(4, '0')}.png` :
+      kind === 'resource-texture' ? `${prefix}resource-texture-${String(resource).padStart(4, '0')}.png` :
         `frame-${String(frame).padStart(4, '0')}.png`;
     const file = join(job.outputDir, name);
     job.frameImageInProgress.add(`${kind}:${key}`);
     let handle;
     let bytes = 0;
+    let reservedBytes = 0;
     const sha = createHash('sha256');
     try {
       handle = await open(file, 'wx+');
@@ -695,8 +880,14 @@ export function createWebGpuCaptureController(projectRoot) {
         if (closed || !['pending', 'capturing'].includes(job.state)) throw new Error('capture stopped while uploading frame image');
         const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
         bytes += chunk.length;
-        job[reservedField] += chunk.length;
-        if (bytes > singleLimit || job[bytesField] + job[reservedField] > totalLimit) {
+        if (bytes > singleLimit) throw new Error(`${kind} image exceeds capture image size limit`);
+        if (budget) {
+          requireSidecarBudget(job, budget, chunk.length, totalLimit, `${kind} image`);
+          budget.reserved += chunk.length;
+          job.reservedSidecarBytes += chunk.length;
+        } else job[reservedField] += chunk.length;
+        reservedBytes += chunk.length;
+        if (!budget && job[bytesField] + job[reservedField] > totalLimit) {
           throw new Error(`${kind} image exceeds capture image size limit`);
         }
         sha.update(chunk);
@@ -724,18 +915,21 @@ export function createWebGpuCaptureController(projectRoot) {
       handle = null;
       if (closed || !['pending', 'capturing'].includes(job.state)) throw new Error('capture stopped while uploading frame image');
       images.set(key, { file, name, bytes, width, height, sha256: sha.digest('hex') });
-      job[bytesField] += bytes;
+      if (budget) { budget.used += bytes; job.sidecarBytes += bytes; }
+      else job[bytesField] += bytes;
       job.updatedAt = Date.now();
       return { jobId: job.id, frameIndex: frame, passOrdinal: kind === 'pass' ? pass : null,
         inputOrdinal: kind === 'input' ? input : null,
         aspectOrdinal: kind === 'aspect' ? aspect : null,
+        resourceOrdinal: kind === 'resource-texture' ? resource : null,
         colorIndex: kind === 'pass' ? color : null, file, bytes, width, height };
     } catch (error) {
       try { await handle?.close(); } catch { /* Keep the first failure. */ }
       try { await unlink(file); } catch { /* File may not exist. */ }
       throw error;
     } finally {
-      job[reservedField] -= bytes;
+      if (budget) { budget.reserved -= reservedBytes; job.reservedSidecarBytes -= reservedBytes; }
+      else job[reservedField] -= reservedBytes;
       job.frameImageInProgress.delete(`${kind}:${key}`);
     }
   }
@@ -744,9 +938,11 @@ export function createWebGpuCaptureController(projectRoot) {
   function uploadPassImage(args = {}) { return uploadPngImage(args, 'pass'); }
   function uploadInputImage(args = {}) { return uploadPngImage(args, 'input'); }
   function uploadAspectImage(args = {}) { return uploadPngImage(args, 'aspect'); }
+  function uploadResourceTextureImage(args = {}) { return uploadPngImage(args, 'resource-texture'); }
 
   async function uploadRaw({ jobId, targetBootId, frameIndex, passOrdinal, colorIndex,
-    inputOrdinal, aspectOrdinal, format, width, height, bytesPerRow, stream, contentLength } = {}, kind) {
+    inputOrdinal, aspectOrdinal, resourceOrdinal, format, width, height, bytesPerRow,
+    stream, contentLength } = {}, kind) {
     if (closed) throw new Error('capture controller is closed');
     const job = getJob(jobId, targetBootId);
     const frame = diagnosticFrameIndex(job, frameIndex);
@@ -754,6 +950,7 @@ export function createWebGpuCaptureController(projectRoot) {
     const color = Number(colorIndex);
     const input = Number(inputOrdinal);
     const aspect = Number(aspectOrdinal);
+    const resource = Number(resourceOrdinal);
     const w = Number(width);
     const h = Number(height);
     const stride = Number(bytesPerRow);
@@ -762,49 +959,56 @@ export function createWebGpuCaptureController(projectRoot) {
         (!Number.isInteger(pass) || pass < 0 || pass >= MAX_DIAGNOSTIC_ENTRIES ||
         !Number.isInteger(color) || color < 0 || color > 7)) ||
         (kind === 'input' && (!Number.isInteger(input) || input < 0 || input >= MAX_INPUT_ENTRIES)) ||
-        (kind === 'aspect' && (!Number.isInteger(aspect) || aspect < 0 || aspect >= MAX_ASPECT_ENTRIES))) {
+        (kind === 'aspect' && (!Number.isInteger(aspect) || aspect < 0 || aspect >= MAX_ASPECT_ENTRIES)) ||
+        (kind === 'resource-texture' && (!Number.isInteger(resource) || resource < 0 ||
+          resource >= MAX_RESOURCE_TEXTURE_ENTRIES))) {
       throw new Error(`raw ${kind} output requires a valid ordinal`);
     }
     if (!bpp || kind === 'aspect' && !['r32float', 'stencil8'].includes(format) ||
         !Number.isSafeInteger(w) || !Number.isSafeInteger(h) || w < 1 || h < 1 ||
         w > 16384 || h > 16384 || !Number.isSafeInteger(stride) ||
-        stride !== Math.ceil(w * bpp / 256) * 256) {
+        stride !== Math.ceil(w * bpp / 256) * 256 &&
+          !(kind === 'resource-texture' && stride === w * bpp)) {
       throw new Error(`raw ${kind} output format, dimensions, or row stride is invalid`);
     }
     const expected = stride * h;
     if (!Number.isSafeInteger(expected) || expected > (kind === 'input' ? MAX_INPUT_RAW_BYTES :
-        kind === 'aspect' ? MAX_ASPECT_RAW_BYTES : MAX_PASS_RAW_BYTES) ||
+        kind === 'aspect' ? MAX_ASPECT_RAW_BYTES : kind === 'resource-texture' ?
+          MAX_RESOURCE_TEXTURE_ITEM_BYTES : MAX_PASS_RAW_BYTES) ||
         contentLength != null && Number(contentLength) !== expected) {
       throw new Error(`raw ${kind} output byte length exceeds the limit or differs from dimensions`);
     }
     if (!['pending', 'capturing'].includes(job.state) || job.uploadInProgress) {
       throw new Error(`capture job is not accepting raw ${kind} output`);
     }
-    const key = kind === 'input' ? input : kind === 'aspect' ? aspect : `${pass}:${color}`;
-    const raw = kind === 'input' ? job.inputRaw : kind === 'aspect' ? job.aspectRaw : job.passRaw;
+    const key = kind === 'input' ? diagnosticKey(frame, input) :
+      kind === 'aspect' ? diagnosticKey(frame, aspect) :
+      kind === 'resource-texture' ? diagnosticKey(frame, resource) : diagnosticKey(frame, pass, color);
+    const raw = kind === 'input' ? job.inputRaw : kind === 'aspect' ? job.aspectRaw :
+      kind === 'resource-texture' ? job.resourceTextureRaw : job.passRaw;
     const inProgress = kind === 'input' ? job.inputRawInProgress :
-      kind === 'aspect' ? job.aspectRawInProgress : job.passRawInProgress;
-    const bytesField = kind === 'input' ? 'inputRawBytes' :
-      kind === 'aspect' ? 'aspectRawBytes' : 'passRawBytes';
-    const reservedField = kind === 'input' ? 'reservedInputRawBytes' :
-      kind === 'aspect' ? 'reservedAspectRawBytes' : 'reservedPassRawBytes';
+      kind === 'aspect' ? job.aspectRawInProgress : kind === 'resource-texture' ?
+        job.resourceTextureRawInProgress : job.passRawInProgress;
     const totalLimit = kind === 'input' ? MAX_INPUT_RAW_BYTES :
-      kind === 'aspect' ? MAX_ASPECT_RAW_BYTES : MAX_PASS_RAW_BYTES;
+      kind === 'aspect' ? MAX_ASPECT_RAW_BYTES : kind === 'resource-texture' ?
+        MAX_RESOURCE_TEXTURE_RAW_BYTES : MAX_PASS_RAW_BYTES;
+    const budget = sidecarBudget(job, `${kind}-raw`, frame);
+    if (job.diagnostics.has(frame)) throw new Error('frame diagnostics already uploaded');
     if (raw.has(key) || inProgress.has(key)) throw new Error(`raw ${kind} output already uploaded`);
     if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') throw new Error(`raw ${kind} output stream is required`);
-    if (expected > totalLimit - job[bytesField] - job[reservedField]) {
-      throw new Error(`raw ${kind} outputs exceed 512 MiB capture limit`);
-    }
-    const prefix = diagnosticFilePrefix(job);
+    requireSidecarBudget(job, budget, expected, totalLimit, `raw ${kind} output`);
+    const prefix = diagnosticFilePrefix(job, frame);
     const name = kind === 'input' ? `${prefix}input-${String(input).padStart(4, '0')}.bin` :
       kind === 'aspect' ? `${prefix}aspect-${String(aspect).padStart(4, '0')}.bin` :
+      kind === 'resource-texture' ? `${prefix}resource-texture-${String(resource).padStart(4, '0')}.bin` :
       `${prefix}pass-raw-${String(pass).padStart(4, '0')}-color-${color}.bin`;
     const file = join(job.outputDir, name);
     let handle;
     let bytes = 0;
     const sha = createHash('sha256');
     inProgress.add(key);
-    job[reservedField] += expected;
+    budget.reserved += expected;
+    job.reservedSidecarBytes += expected;
     try {
       handle = await open(file, 'wx');
       for await (const part of stream) {
@@ -828,20 +1032,23 @@ export function createWebGpuCaptureController(projectRoot) {
       const item = { file, name, bytes, width: w, height: h, format, bytesPerRow: stride,
         sha256: sha.digest('hex') };
       raw.set(key, item);
-      job[bytesField] += bytes;
+      budget.used += bytes;
+      job.sidecarBytes += bytes;
       job.updatedAt = Date.now();
       return { jobId: job.id, frameIndex: frame,
         passOrdinal: kind === 'pass' ? pass : null,
         colorIndex: kind === 'pass' ? color : null,
         inputOrdinal: kind === 'input' ? input : null,
         aspectOrdinal: kind === 'aspect' ? aspect : null,
+        resourceOrdinal: kind === 'resource-texture' ? resource : null,
         file, bytes, format, width: w, height: h, bytesPerRow: stride };
     } catch (error) {
       try { await handle?.close(); } catch { /* Keep the first failure. */ }
       try { await unlink(file); } catch { /* File may not exist. */ }
       throw error;
     } finally {
-      job[reservedField] -= expected;
+      budget.reserved -= expected;
+      job.reservedSidecarBytes -= expected;
       inProgress.delete(key);
     }
   }
@@ -849,20 +1056,30 @@ export function createWebGpuCaptureController(projectRoot) {
   function uploadPassRaw(args = {}) { return uploadRaw(args, 'pass'); }
   function uploadInputRaw(args = {}) { return uploadRaw(args, 'input'); }
   function uploadAspectRaw(args = {}) { return uploadRaw(args, 'aspect'); }
+  function uploadResourceTextureRaw(args = {}) { return uploadRaw(args, 'resource-texture'); }
 
-  async function uploadBufferRaw({ jobId, targetBootId, frameIndex, bufferOrdinal, stream, contentLength } = {}) {
+  async function uploadBufferRawKind({ jobId, targetBootId, frameIndex, bufferOrdinal,
+    resourceOrdinal, stream, contentLength } = {}, kind) {
     if (closed) throw new Error('capture controller is closed');
     const job = getJob(jobId, targetBootId);
     const frame = diagnosticFrameIndex(job, frameIndex);
-    const ordinal = Number(bufferOrdinal);
+    const resource = kind === 'resource-buffer';
+    const ordinal = Number(resource ? resourceOrdinal : bufferOrdinal);
+    const key = diagnosticKey(frame, ordinal);
+    const budget = sidecarBudget(job, kind, frame);
+    const itemLimit = resource ? MAX_RESOURCE_BUFFER_RAW_BYTES : MAX_BUFFER_ITEM_BYTES;
+    const totalLimit = resource ? MAX_RESOURCE_BUFFER_RAW_BYTES : MAX_BUFFER_RAW_BYTES;
+    const raw = resource ? job.resourceBufferRaw : job.bufferRaw;
+    const inProgress = resource ? job.resourceBufferRawInProgress : job.bufferRawInProgress;
     if (!Number.isInteger(ordinal) ||
-        ordinal < 0 || ordinal >= MAX_BUFFER_ENTRIES) {
+        ordinal < 0 || ordinal >= (resource ? MAX_RESOURCE_BUFFER_ENTRIES : MAX_BUFFER_ENTRIES)) {
       throw new Error('raw Draw buffer requires a valid buffer ordinal');
     }
     if (!['pending', 'capturing'].includes(job.state) || job.uploadInProgress) {
       throw new Error('capture job is not accepting raw Draw buffers');
     }
-    if (job.bufferRaw.has(ordinal) || job.bufferRawInProgress.has(ordinal)) {
+    if (job.diagnostics.has(frame)) throw new Error('frame diagnostics already uploaded');
+    if (raw.has(key) || inProgress.has(key)) {
       throw new Error('raw Draw buffer already uploaded');
     }
     if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') {
@@ -870,15 +1087,17 @@ export function createWebGpuCaptureController(projectRoot) {
     }
     if (contentLength != null && (!Number.isSafeInteger(Number(contentLength)) ||
         Number(contentLength) < 4 || Number(contentLength) % 4 !== 0 ||
-        Number(contentLength) > MAX_BUFFER_ITEM_BYTES ||
-        Number(contentLength) > MAX_BUFFER_RAW_BYTES - job.bufferRawBytes - job.reservedBufferRawBytes)) {
+        Number(contentLength) > itemLimit ||
+        budget.used + budget.reserved + Number(contentLength) > totalLimit ||
+        job.sidecarBytes + job.reservedSidecarBytes + Number(contentLength) > MAX_SIDECAR_JOB_BYTES)) {
       throw new Error('raw Draw buffer length exceeds limit or is not 4-byte aligned');
     }
-    const name = `${diagnosticFilePrefix(job)}buffer-${String(ordinal).padStart(4, '0')}.bin`;
+    const name = `${diagnosticFilePrefix(job, frame)}${resource ? 'resource-buffer' : 'buffer'}-${String(ordinal).padStart(4, '0')}.bin`;
     const file = join(job.outputDir, name);
-    job.bufferRawInProgress.add(ordinal);
+    inProgress.add(key);
     const sha = createHash('sha256');
     let bytes = 0;
+    let reservedBytes = 0;
     let handle;
     try {
       handle = await open(file, 'wx');
@@ -888,11 +1107,13 @@ export function createWebGpuCaptureController(projectRoot) {
         }
         const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
         bytes += chunk.length;
-        job.reservedBufferRawBytes += chunk.length;
-        if (bytes > MAX_BUFFER_ITEM_BYTES ||
-            job.bufferRawBytes + job.reservedBufferRawBytes > MAX_BUFFER_RAW_BYTES) {
+        if (bytes > itemLimit) {
           throw new Error('raw Draw buffers exceed capture size limit');
         }
+        requireSidecarBudget(job, budget, chunk.length, totalLimit, 'raw Draw buffers');
+        budget.reserved += chunk.length;
+        job.reservedSidecarBytes += chunk.length;
+        reservedBytes += chunk.length;
         sha.update(chunk);
         let offset = 0;
         while (offset < chunk.length) {
@@ -911,21 +1132,28 @@ export function createWebGpuCaptureController(projectRoot) {
       if (closed || !['pending', 'capturing'].includes(job.state)) {
         throw new Error('capture stopped while uploading raw Draw buffer');
       }
-      job.bufferRaw.set(ordinal, { file, name, bytes, sha256: sha.digest('hex') });
-      job.bufferRawBytes += bytes;
+      raw.set(key, { file, name, bytes, sha256: sha.digest('hex') });
+      budget.used += bytes;
+      job.sidecarBytes += bytes;
       job.updatedAt = Date.now();
-      return { jobId: job.id, frameIndex: frame, bufferOrdinal: ordinal, file, bytes };
+      return { jobId: job.id, frameIndex: frame,
+        ...(resource ? { resourceOrdinal: ordinal } : { bufferOrdinal: ordinal }), file, bytes };
     } catch (error) {
       try { await handle?.close(); } catch { /* Keep the first failure. */ }
       try { await unlink(file); } catch { /* File may not exist. */ }
       throw error;
     } finally {
-      job.reservedBufferRawBytes -= bytes;
-      job.bufferRawInProgress.delete(ordinal);
+      budget.reserved -= reservedBytes;
+      job.reservedSidecarBytes -= reservedBytes;
+      inProgress.delete(key);
     }
   }
 
+  function uploadBufferRaw(args = {}) { return uploadBufferRawKind(args, 'buffer'); }
+  function uploadResourceBufferRaw(args = {}) { return uploadBufferRawKind(args, 'resource-buffer'); }
+
   function diagnostics({ jobId, targetBootId, frameIndex, passes, inputs = [], aspects = [], buffers = [],
+    resourceInventory, resourceTextures, resourceBuffers,
     gpuPasses, gpuProfilerStatus, warning } = {}) {
     if (closed) throw new Error('capture controller is closed');
     const job = getJob(jobId, targetBootId);
@@ -933,7 +1161,7 @@ export function createWebGpuCaptureController(projectRoot) {
     if (!['pending', 'capturing'].includes(job.state) || job.uploadInProgress) {
       throw new Error('detailed diagnostics require an active capture');
     }
-    if (job.diagnostics) throw new Error('capture diagnostics already uploaded');
+    if (job.diagnostics.has(frame)) throw new Error('capture diagnostics already uploaded for this frame');
     if (!Array.isArray(passes) || passes.length > MAX_DIAGNOSTIC_ENTRIES ||
         !Array.isArray(inputs) || inputs.length > MAX_INPUT_ENTRIES ||
         !Array.isArray(aspects) || aspects.length > MAX_ASPECT_ENTRIES ||
@@ -952,8 +1180,8 @@ export function createWebGpuCaptureController(projectRoot) {
         throw new Error('invalid pass diagnostic');
       }
       passKeys.add(`${item.passOrdinal}:${item.colorIndex}`);
-      const image = job.passImages.get(`${item.passOrdinal}:${item.colorIndex}`);
-      const raw = job.passRaw.get(`${item.passOrdinal}:${item.colorIndex}`);
+      const image = job.passImages.get(diagnosticKey(frame, item.passOrdinal, item.colorIndex));
+      const raw = job.passRaw.get(diagnosticKey(frame, item.passOrdinal, item.colorIndex));
       if (!item.reason && !image && !raw) {
         throw new Error('pass diagnostic refers to an output that was not uploaded');
       }
@@ -973,6 +1201,8 @@ export function createWebGpuCaptureController(projectRoot) {
       }
     }
     const inputOrdinals = new Set();
+    const inputByOrdinal = new Map();
+    const inputAliases = [];
     for (const item of inputs) {
       if (!item || !Number.isInteger(item.inputOrdinal) || item.inputOrdinal < 0 ||
           item.inputOrdinal >= MAX_INPUT_ENTRIES || inputOrdinals.has(item.inputOrdinal) ||
@@ -988,15 +1218,29 @@ export function createWebGpuCaptureController(projectRoot) {
           !Number.isSafeInteger(item.mipLevel) || item.mipLevel < 0 || item.mipLevel > 63 ||
           !Number.isSafeInteger(item.arrayLayer) || item.arrayLayer < 0 || item.arrayLayer > 16383 ||
           !Number.isSafeInteger(item.width) || item.width < 0 || item.width > 16384 ||
-          !Number.isSafeInteger(item.height) || item.height < 0 || item.height > 16384 ||
-          typeof item.format !== 'string' || item.format.length > 80 ||
-          (item.reason !== undefined && (typeof item.reason !== 'string' || item.reason.length > 500)) ||
+           !Number.isSafeInteger(item.height) || item.height < 0 || item.height > 16384 ||
+           typeof item.format !== 'string' || item.format.length > 80 ||
+           (item.contentVersion !== undefined &&
+             (!Number.isSafeInteger(item.contentVersion) || item.contentVersion < 0)) ||
+           (item.rawAliasInputOrdinal !== undefined &&
+             (!Number.isSafeInteger(item.contentVersion) ||
+               !Number.isInteger(item.rawAliasInputOrdinal) || item.rawAliasInputOrdinal < 0 ||
+               item.rawAliasInputOrdinal >= item.inputOrdinal)) ||
+           (item.reason !== undefined && (typeof item.reason !== 'string' || item.reason.length > 500)) ||
           (item.rawReason !== undefined && (typeof item.rawReason !== 'string' || item.rawReason.length > 500))) {
         throw new Error('invalid input diagnostic');
       }
       inputOrdinals.add(item.inputOrdinal);
-      const image = job.inputImages.get(item.inputOrdinal);
-      const raw = job.inputRaw.get(item.inputOrdinal);
+      inputByOrdinal.set(item.inputOrdinal, item);
+      const image = job.inputImages.get(diagnosticKey(frame, item.inputOrdinal));
+      const raw = job.inputRaw.get(diagnosticKey(frame, item.inputOrdinal));
+      if (item.rawAliasInputOrdinal !== undefined) {
+        if (image || raw || item.reason || item.rawReason) {
+          throw new Error('aliased input must not upload another file or report an unavailable reason');
+        }
+        inputAliases.push(item);
+        continue;
+      }
       if (!image && !raw && !item.reason) {
         throw new Error('input diagnostic has no uploaded pixels or unavailable reason');
       }
@@ -1013,6 +1257,28 @@ export function createWebGpuCaptureController(projectRoot) {
           throw new Error('raw input differs from diagnostic');
         }
       } else if (raw) throw new Error('raw input has no diagnostic metadata');
+    }
+    const resolvedInputAliases = [];
+    for (const item of inputAliases) {
+      const source = inputByOrdinal.get(item.rawAliasInputOrdinal);
+      const sourceKey = diagnosticKey(frame, item.rawAliasInputOrdinal);
+      const raw = job.inputRaw.get(sourceKey);
+      const image = job.inputImages.get(sourceKey);
+      if (!source || source.rawAliasInputOrdinal !== undefined || !raw ||
+          source.textureId === null || item.textureId !== source.textureId ||
+          item.viewId !== source.viewId || item.mipLevel !== source.mipLevel ||
+          item.arrayLayer !== source.arrayLayer || item.format !== source.format ||
+          item.width !== source.width || item.height !== source.height ||
+          item.contentVersion !== source.contentVersion ||
+          item.rawBytesPerRow !== source.rawBytesPerRow ||
+          item.rawByteLength !== source.rawByteLength ||
+          raw.format !== item.format || raw.width !== item.width ||
+          raw.height !== item.height || raw.bytesPerRow !== item.rawBytesPerRow ||
+          raw.bytes !== item.rawByteLength ||
+          (image && (image.width !== item.width || image.height !== item.height))) {
+        throw new Error(`input ${item.inputOrdinal} raw alias differs from its same-frame uploaded source`);
+      }
+      resolvedInputAliases.push({ key: diagnosticKey(frame, item.inputOrdinal), raw, image });
     }
     const aspectOrdinals = new Set();
     const aspectKeys = new Set();
@@ -1044,8 +1310,8 @@ export function createWebGpuCaptureController(projectRoot) {
       }
       aspectOrdinals.add(item.aspectOrdinal);
       aspectKeys.add(`${item.passOrdinal}:${item.aspect}`);
-      const image = job.aspectImages.get(item.aspectOrdinal);
-      const raw = job.aspectRaw.get(item.aspectOrdinal);
+      const image = job.aspectImages.get(diagnosticKey(frame, item.aspectOrdinal));
+      const raw = job.aspectRaw.get(diagnosticKey(frame, item.aspectOrdinal));
       if (!image && !raw && !item.reason) {
         throw new Error('aspect diagnostic has no uploaded pixels or unavailable reason');
       }
@@ -1097,7 +1363,7 @@ export function createWebGpuCaptureController(projectRoot) {
         throw new Error('invalid pre-Draw buffer diagnostic');
       }
       bufferOrdinals.add(item.bufferOrdinal);
-      const raw = job.bufferRaw.get(item.bufferOrdinal);
+      const raw = job.bufferRaw.get(diagnosticKey(frame, item.bufferOrdinal));
       if (!raw && !item.reason && !item.rawReason) {
         throw new Error('buffer diagnostic has no uploaded bytes or unavailable reason');
       }
@@ -1130,72 +1396,190 @@ export function createWebGpuCaptureController(projectRoot) {
     if (warning !== undefined && (typeof warning !== 'string' || warning.length > 500)) {
       throw new Error('invalid diagnostic warning');
     }
-    job.diagnostics = { frameIndex: frame, passes, inputs, aspects, buffers, gpuPasses,
-      gpuProfilerStatus, warning };
+    if (!resourceInventory || !Number.isInteger(resourceInventory.textureCount) ||
+        resourceInventory.textureCount < 0 || resourceInventory.textureCount > MAX_RESOURCE_TEXTURE_ENTRIES ||
+        !Number.isInteger(resourceInventory.textureSubresourceCount) ||
+        resourceInventory.textureSubresourceCount < 0 ||
+        resourceInventory.textureSubresourceCount > MAX_RESOURCE_TEXTURE_ENTRIES ||
+        !Number.isInteger(resourceInventory.bufferCount) ||
+        resourceInventory.bufferCount < 0 || resourceInventory.bufferCount > MAX_RESOURCE_BUFFER_ENTRIES ||
+        !Array.isArray(resourceTextures) ||
+        resourceTextures.length !== resourceInventory.textureSubresourceCount ||
+        !Array.isArray(resourceBuffers) || resourceBuffers.length !== resourceInventory.bufferCount) {
+      throw new Error('frame-end resource inventory is missing or inconsistent');
+    }
+    const textureOrdinals = new Set();
+    const textureObjects = new Map();
+    for (let index = 0; index < resourceTextures.length; index++) {
+      const item = resourceTextures[index];
+      if (!item || item.resourceOrdinal !== index ||
+          !Number.isInteger(item.textureOrdinal) || item.textureOrdinal < 0 ||
+          item.textureOrdinal >= resourceInventory.textureCount ||
+          (item.textureId !== null && (!Number.isSafeInteger(item.textureId) || item.textureId < 0)) ||
+          typeof item.label !== 'string' || item.label.length > 200 ||
+          !Number.isInteger(item.width) || item.width < 1 || item.width > 16384 ||
+          !Number.isInteger(item.height) || item.height < 1 || item.height > 16384 ||
+          typeof item.sourceFormat !== 'string' || item.sourceFormat.length > 80 ||
+          !RAW_FORMAT_BYTES.has(item.rawFormat) ||
+          !Number.isInteger(item.mipLevel) || item.mipLevel < 0 || item.mipLevel > 63 ||
+          !Number.isInteger(item.arrayLayer) || item.arrayLayer < 0 || item.arrayLayer > 16383 ||
+          !['color', 'depth', 'stencil'].includes(item.aspect) ||
+          !Number.isInteger(item.sampleCount) || item.sampleCount < 1 || item.sampleCount > 32 ||
+          item.captureMoment !== 'frame-end' ||
+          (item.reason !== undefined && (typeof item.reason !== 'string' || item.reason.length > 500)) ||
+          (item.rawReason !== undefined && (typeof item.rawReason !== 'string' || item.rawReason.length > 500))) {
+        throw new Error('invalid frame-end resource texture diagnostic');
+      }
+      const priorId = textureObjects.get(item.textureOrdinal);
+      if (priorId !== undefined && priorId !== item.textureId) {
+        throw new Error('resource texture ordinal changes Inspector texture ID');
+      }
+      textureObjects.set(item.textureOrdinal, item.textureId);
+      textureOrdinals.add(item.textureOrdinal);
+      const image = job.resourceTextureImages.get(diagnosticKey(frame, index));
+      const raw = job.resourceTextureRaw.get(diagnosticKey(frame, index));
+      if (image && (image.width !== item.width || image.height !== item.height)) {
+        throw new Error('frame-end resource texture PNG dimensions differ from diagnostic');
+      }
+      if (raw && (raw.width !== item.width || raw.height !== item.height ||
+          raw.format !== item.rawFormat || raw.bytesPerRow !== item.rawBytesPerRow ||
+          raw.bytes !== item.rawByteLength)) {
+        throw new Error('frame-end resource texture raw differs from diagnostic');
+      }
+      if (!raw && !item.reason && !item.rawReason) {
+        throw new Error('frame-end resource texture has no raw pixels or unavailable reason');
+      }
+    }
+    if (textureOrdinals.size !== resourceInventory.textureCount ||
+        Array.from({ length: resourceInventory.textureCount }, (_, ordinal) => ordinal)
+          .some(ordinal => !textureOrdinals.has(ordinal))) {
+      throw new Error('frame-end texture inventory ordinals are incomplete');
+    }
+    for (let index = 0; index < resourceBuffers.length; index++) {
+      const item = resourceBuffers[index];
+      if (!item || item.resourceOrdinal !== index ||
+          (item.bufferId !== null && (!Number.isSafeInteger(item.bufferId) || item.bufferId < 0)) ||
+          typeof item.label !== 'string' || item.label.length > 200 ||
+          !Number.isSafeInteger(item.totalSize) || item.totalSize < 0 ||
+          item.copiedOffset !== 0 || item.copiedSize !== item.totalSize ||
+          item.captureMoment !== 'frame-end' ||
+          (item.reason !== undefined && (typeof item.reason !== 'string' || item.reason.length > 500)) ||
+          (item.rawReason !== undefined && (typeof item.rawReason !== 'string' || item.rawReason.length > 500))) {
+        throw new Error('invalid frame-end resource Buffer diagnostic');
+      }
+      const raw = job.resourceBufferRaw.get(diagnosticKey(frame, index));
+      if (raw && (raw.bytes !== item.totalSize || item.rawByteLength !== raw.bytes)) {
+        throw new Error('frame-end resource Buffer raw differs from full Buffer size');
+      }
+      if (!raw && !item.reason && !item.rawReason) {
+        throw new Error('frame-end resource Buffer has no raw bytes or unavailable reason');
+      }
+    }
+    for (const alias of resolvedInputAliases) {
+      job.inputRaw.set(alias.key, alias.raw);
+      if (alias.image) job.inputImages.set(alias.key, alias.image);
+    }
+    job.diagnostics.set(frame, { frameIndex: frame, passes, inputs, aspects, buffers, gpuPasses,
+      resourceInventory, resourceTextures, resourceBuffers, gpuProfilerStatus, warning });
     job.updatedAt = Date.now();
     return { jobId: job.id, frameIndex: frame,
-      passImages: job.passImages.size, passRecords: passes.length,
-      inputImages: job.inputImages.size, inputRecords: inputs.length,
-      aspectImages: job.aspectImages.size, aspectRecords: aspects.length,
-      bufferRaw: job.bufferRaw.size, bufferRecords: buffers.length,
+      passImages: [...job.passImages.keys()].filter(key => key.startsWith(`${frame}:`)).length,
+      passRecords: passes.length,
+      inputImages: [...job.inputImages.keys()].filter(key => key.startsWith(`${frame}:`)).length,
+      inputRecords: inputs.length,
+      aspectImages: [...job.aspectImages.keys()].filter(key => key.startsWith(`${frame}:`)).length,
+      aspectRecords: aspects.length,
+      bufferRaw: [...job.bufferRaw.keys()].filter(key => key.startsWith(`${frame}:`)).length,
+      bufferRecords: buffers.length,
+      resourceTextures: resourceTextures.length, resourceBuffers: resourceBuffers.length,
       gpuPasses: gpuPasses.length };
   }
 
   async function writeSidecars(job, actualFrames) {
-    const detail = job.diagnostics;
-    if (job.inputImages.size || job.inputRaw.size) {
-      const recorded = new Set(detail?.inputs?.map(item => item.inputOrdinal) ?? []);
-      for (const ordinal of [...job.inputImages.keys(), ...job.inputRaw.keys()]) {
-        if (!recorded.has(ordinal)) {
-          throw new Error(`uploaded input ${ordinal} has no diagnostic metadata`);
+    for (let frameIndex = 1; frameIndex <= actualFrames; frameIndex++) {
+      const detail = job.diagnostics.get(frameIndex);
+      if (!detail) throw new Error(`frame ${frameIndex} has no diagnostic metadata`);
+      for (const [kind, files, records, ordinal] of [
+        ['pass image', job.passImages, detail.passes, item => diagnosticKey(frameIndex, item.passOrdinal, item.colorIndex)],
+        ['pass raw', job.passRaw, detail.passes, item => diagnosticKey(frameIndex, item.passOrdinal, item.colorIndex)],
+        ['input image', job.inputImages, detail.inputs, item => diagnosticKey(frameIndex, item.inputOrdinal)],
+        ['input raw', job.inputRaw, detail.inputs, item => diagnosticKey(frameIndex, item.inputOrdinal)],
+        ['aspect image', job.aspectImages, detail.aspects, item => diagnosticKey(frameIndex, item.aspectOrdinal)],
+        ['aspect raw', job.aspectRaw, detail.aspects, item => diagnosticKey(frameIndex, item.aspectOrdinal)],
+        ['Draw buffer', job.bufferRaw, detail.buffers, item => diagnosticKey(frameIndex, item.bufferOrdinal)],
+        ['resource texture image', job.resourceTextureImages, detail.resourceTextures,
+          item => diagnosticKey(frameIndex, item.resourceOrdinal)],
+        ['resource texture raw', job.resourceTextureRaw, detail.resourceTextures,
+          item => diagnosticKey(frameIndex, item.resourceOrdinal)],
+        ['resource Buffer raw', job.resourceBufferRaw, detail.resourceBuffers,
+          item => diagnosticKey(frameIndex, item.resourceOrdinal)],
+      ]) {
+        const recorded = new Set(records.map(ordinal));
+        for (const key of files.keys()) {
+          if (key.startsWith(`${frameIndex}:`) && !recorded.has(key)) {
+            throw new Error(`uploaded ${kind} ${key} has no diagnostic metadata`);
+          }
         }
       }
     }
-    if (job.aspectImages.size || job.aspectRaw.size) {
-      const recorded = new Set(detail?.aspects?.map(item => item.aspectOrdinal) ?? []);
-      for (const ordinal of [...job.aspectImages.keys(), ...job.aspectRaw.keys()]) {
-        if (!recorded.has(ordinal)) {
-          throw new Error(`uploaded aspect ${ordinal} has no diagnostic metadata`);
+    for (const frameIndex of job.diagnostics.keys()) {
+      if (frameIndex > actualFrames) throw new Error(`frame ${frameIndex} diagnostics exceed actualFrames`);
+    }
+    for (const files of [job.passImages, job.passRaw, job.inputImages, job.inputRaw,
+      job.aspectImages, job.aspectRaw, job.bufferRaw, job.resourceTextureImages,
+      job.resourceTextureRaw, job.resourceBufferRaw]) {
+      for (const key of files.keys()) {
+        if (Number(key.split(':', 1)[0]) > actualFrames) {
+          throw new Error(`uploaded frame ${key} diagnostic file exceeds actualFrames`);
         }
       }
     }
-    if (job.bufferRaw.size) {
-      const recorded = new Set(detail?.buffers?.map(item => item.bufferOrdinal) ?? []);
-      for (const ordinal of job.bufferRaw.keys()) {
-        if (!recorded.has(ordinal)) {
-          throw new Error(`uploaded Draw buffer ${ordinal} has no diagnostic metadata`);
-        }
-      }
+    if ([...job.frameImages.keys()].some(frameIndex => frameIndex > actualFrames)) {
+      throw new Error('uploaded frame image exceeds actualFrames');
     }
-    if (!detail && !job.frameImages.size) return null;
-    const report = summarizeCapture(await readCapture(job.file));
+    const capture = await readCapture(job.file);
+    const report = summarizeCapture(capture);
     // Inspector can append command-only trailing frames. Never guess which
     // repeated Pass label belongs to the requested logical capture frame.
     const captureFrames = inspectorCaptureFrames(report.frames, report.passes, actualFrames);
     const frameMappingComplete = captureFrames.length === actualFrames;
-    const targetFrame = frameMappingComplete ? captureFrames[job.detailedFrameIndex - 1] : null;
-    const targetOrdinal = targetFrame?.frameOrdinal ?? null;
-    const passes = report.passes.filter(pass => pass.frameOrdinal === targetOrdinal);
-    const gamePasses = passes.filter(pass => !pass.diagnosticAuxiliary);
-    const renderPasses = passes.filter(pass => pass.type === 'render');
-    const frameIdentityIssue = detail && (!targetFrame ?
-      `selected frame ${job.detailedFrameIndex} cannot be uniquely mapped to ${actualFrames} Inspector frames` :
-      !detail.passes.every(item => renderPasses[item.passOrdinal]?.label === item.label) ||
-        !detail.aspects.every(item => renderPasses[item.passOrdinal]?.label === item.label) ?
-        'selected frame pass labels or order differ from the Inspector capture' : null);
-    // Do not attach any deep data when the selected frame itself is uncertain.
-    const selectedDetail = frameIdentityIssue ? null : detail;
+    if (!frameMappingComplete) throw new Error(`${actualFrames} capture frames cannot be uniquely mapped to Inspector frames`);
     const passSnapshots = [];
     const passUnavailable = [];
     const inputSnapshots = [];
     const aspectSnapshots = [];
     const bufferSnapshots = [];
+    const resourceTextureSnapshots = [];
+    const resourceBufferSnapshots = [];
     const gpuTimings = [];
+    const diagnosticFrames = [];
+    for (let frameIndex = 1; frameIndex <= actualFrames; frameIndex++) {
+    const detail = job.diagnostics.get(frameIndex);
+    const targetFrame = captureFrames[frameIndex - 1];
+    const targetOrdinal = targetFrame.frameOrdinal;
+    const passes = report.passes.filter(pass => pass.frameOrdinal === targetOrdinal);
+    const gamePasses = passes.filter(pass => !pass.diagnosticAuxiliary);
+    const renderPasses = passes.filter(pass => pass.type === 'render');
+    // A warning means at least one diagnostic was truncated, including GPU
+    // readback and timing limits. A completed capture must not hide that loss.
+    if (detail.warning?.trim()) {
+      throw new Error(`frame ${frameIndex} diagnostics are incomplete: ${detail.warning}`);
+    }
+    if (!detail.passes.every(item => renderPasses[item.passOrdinal]?.label === item.label) ||
+        !detail.aspects.every(item => renderPasses[item.passOrdinal]?.label === item.label) ||
+        !detail.inputs.every(item => renderPasses[item.passOrdinal]) ||
+        !detail.buffers.every(item => renderPasses[item.passOrdinal])) {
+      throw new Error(`frame ${frameIndex} pass labels or order differ from the Inspector capture`);
+    }
+    const selectedDetail = detail;
+    diagnosticFrames.push({ frameIndex, frameOrdinal: targetOrdinal,
+      gpuProfilerStatus: detail.gpuProfilerStatus, passCaptureWarning: detail.warning ?? null,
+      resourceInventory: detail.resourceInventory });
     for (const item of selectedDetail?.passes ?? []) {
       const pass = renderPasses[item.passOrdinal];
       const target = pass?.targets?.find(value => value.kind === 'color' && value.slot === item.colorIndex);
-      const image = job.passImages.get(`${item.passOrdinal}:${item.colorIndex}`);
-      const raw = job.passRaw.get(`${item.passOrdinal}:${item.colorIndex}`);
+      const image = job.passImages.get(diagnosticKey(frameIndex, item.passOrdinal, item.colorIndex));
+      const raw = job.passRaw.get(diagnosticKey(frameIndex, item.passOrdinal, item.colorIndex));
       const base = { frameOrdinal: targetOrdinal, passIndex: pass?.index ?? null, label: item.label,
         colorIndex: item.colorIndex };
       if (!pass || pass.label !== item.label || !target) {
@@ -1233,13 +1617,25 @@ export function createWebGpuCaptureController(projectRoot) {
     }
     for (const item of selectedDetail?.inputs ?? []) {
       const pass = renderPasses[item.passOrdinal];
-      const image = job.inputImages.get(item.inputOrdinal);
-      const raw = job.inputRaw.get(item.inputOrdinal);
+      const aliasSource = item.rawAliasInputOrdinal === undefined ? null :
+        detail.inputs.find(source => source.inputOrdinal === item.rawAliasInputOrdinal);
+      const sourcePass = aliasSource ? renderPasses[aliasSource.passOrdinal] : null;
+      const rawSourceBeforeCommandIndex = sourcePass?.frameDebugStep?.drawCommandIndex;
+      if (aliasSource && (pass?.frameDebugStep?.drawCommandIndex == null ||
+          inspectorTextureWriteBetween(capture, report, item.textureId,
+            rawSourceBeforeCommandIndex, pass.frameDebugStep.drawCommandIndex))) {
+        throw new Error(`frame ${frameIndex} Draw input ${item.inputOrdinal} raw alias crosses an Inspector texture write or unverified Draw`);
+      }
+      const image = job.inputImages.get(diagnosticKey(frameIndex, item.inputOrdinal));
+      const raw = job.inputRaw.get(diagnosticKey(frameIndex, item.inputOrdinal));
       const binding = verifiedInputBinding(pass, report.events, report.resources, item);
       const base = {
         frameOrdinal: targetOrdinal, passIndex: pass?.index ?? null,
         inputOrdinal: item.inputOrdinal, passOrdinal: item.passOrdinal,
         bindingName: item.bindingName, textureId: item.textureId, viewId: item.viewId,
+        ...(item.contentVersion !== undefined ? { contentVersion: item.contentVersion } : {}),
+        ...(aliasSource ? { rawAliasInputOrdinal: item.rawAliasInputOrdinal,
+          rawSourceBeforeCommandIndex } : {}),
         ...(item.groupSlot !== undefined ? { groupSlot: item.groupSlot, binding: item.binding } : {}),
         mipLevel: item.mipLevel, arrayLayer: item.arrayLayer,
         width: item.width, height: item.height, format: item.format,
@@ -1269,7 +1665,7 @@ export function createWebGpuCaptureController(projectRoot) {
     }
     for (const item of selectedDetail?.buffers ?? []) {
       const pass = renderPasses[item.passOrdinal];
-      const raw = job.bufferRaw.get(item.bufferOrdinal);
+      const raw = job.bufferRaw.get(diagnosticKey(frameIndex, item.bufferOrdinal));
       const binding = verifiedDrawBufferBinding(pass, report.events, report.resources, item);
       const base = {
         frameOrdinal: targetOrdinal, passIndex: pass?.index ?? null,
@@ -1303,8 +1699,8 @@ export function createWebGpuCaptureController(projectRoot) {
       const pass = renderPasses[item.passOrdinal];
       const target = pass?.targets?.find(value => value.kind === 'depth-stencil');
       const sourceTexture = report.resources.textures.find(value => value.id === target?.textureId);
-      const image = job.aspectImages.get(item.aspectOrdinal);
-      const raw = job.aspectRaw.get(item.aspectOrdinal);
+      const image = job.aspectImages.get(diagnosticKey(frameIndex, item.aspectOrdinal));
+      const raw = job.aspectRaw.get(diagnosticKey(frameIndex, item.aspectOrdinal));
       const base = {
         frameOrdinal: targetOrdinal, passIndex: pass?.index ?? null,
         aspectOrdinal: item.aspectOrdinal, passOrdinal: item.passOrdinal,
@@ -1364,16 +1760,165 @@ export function createWebGpuCaptureController(projectRoot) {
         }
       }
     }
-    for (const item of selectedDetail?.gpuPasses ?? []) {
-      const pass = gamePasses[item.ordinal];
-      if (pass?.type === item.kind && pass.label === item.label) {
-        gpuTimings.push({ frameOrdinal: pass.frameOrdinal, passIndex: pass.index,
-          durationMs: item.durationMs, source: 'webgpu-timestamp-query' });
+    const textureGroups = new Map();
+    for (const item of detail.resourceTextures) {
+      const image = job.resourceTextureImages.get(diagnosticKey(frameIndex, item.resourceOrdinal));
+      const raw = job.resourceTextureRaw.get(diagnosticKey(frameIndex, item.resourceOrdinal));
+      if (!raw || item.textureId === null) {
+        throw new Error(`frame ${frameIndex} resource texture ${item.resourceOrdinal} has no complete raw readback`);
+      }
+      const texture = report.resources.textures.find(value => value.id === item.textureId);
+      const width = texture?.width ?? texture?.descriptor?.size?.width;
+      const height = texture?.height ?? texture?.descriptor?.size?.height;
+      const layers = texture?.depthOrArrayLayers ?? texture?.descriptor?.size?.depthOrArrayLayers ?? 1;
+      const samples = texture?.descriptor?.sampleCount ?? 1;
+      const mipCount = texture?.descriptor?.mipLevelCount ?? 1;
+      if (!texture || texture.format !== item.sourceFormat || texture.dimension !== '2d' ||
+          layers !== 1 || samples !== item.sampleCount || samples !== 1 ||
+          !Number.isInteger(width) || !Number.isInteger(height) ||
+          !Number.isInteger(mipCount) || mipCount < 1 ||
+          item.mipLevel >= mipCount || item.arrayLayer !== 0 ||
+          item.width !== Math.max(1, Math.floor(width / 2 ** item.mipLevel)) ||
+          item.height !== Math.max(1, Math.floor(height / 2 ** item.mipLevel)) ||
+          (item.aspect === 'color' && item.rawFormat !== item.sourceFormat) ||
+          (item.aspect === 'depth' && item.rawFormat !== 'r32float') ||
+          (item.aspect === 'stencil' && item.rawFormat !== 'stencil8')) {
+        throw new Error(`frame ${frameIndex} resource texture ${item.resourceOrdinal} differs from Inspector descriptor`);
+      }
+      let group = textureGroups.get(item.textureOrdinal);
+      if (!group) {
+        group = { texture, mipCount, subresources: new Set() };
+        textureGroups.set(item.textureOrdinal, group);
+      }
+      if (group.texture.id !== texture.id || group.mipCount !== mipCount ||
+          group.subresources.has(`${item.mipLevel}:${item.aspect}`)) {
+        throw new Error(`frame ${frameIndex} resource texture subresource is duplicated or mismatched`);
+      }
+      group.subresources.add(`${item.mipLevel}:${item.aspect}`);
+      resourceTextureSnapshots.push({ frameOrdinal: targetOrdinal,
+        resourceOrdinal: item.resourceOrdinal, textureOrdinal: item.textureOrdinal,
+        textureId: item.textureId, label: item.label, width: item.width, height: item.height,
+        sourceFormat: item.sourceFormat, rawFormat: item.rawFormat,
+        mipLevel: item.mipLevel, arrayLayer: item.arrayLayer, aspect: item.aspect,
+        sampleCount: item.sampleCount, captureMoment: 'frame-end',
+        ...(image ? { file: image.name, imageSha256: image.sha256 } :
+          { imageReason: 'Resource PNG was not saved' }),
+        rawFile: raw.name, rawBytesPerRow: raw.bytesPerRow,
+        rawByteLength: raw.bytes, rawSha256: raw.sha256 });
+    }
+    for (const group of textureGroups.values()) {
+      const format = group.texture.format ?? '';
+      const aspects = format.startsWith('depth') ?
+        (format.includes('stencil8') ? ['depth', 'stencil'] : ['depth']) :
+        format.includes('stencil8') ? ['stencil'] : ['color'];
+      for (let mip = 0; mip < group.mipCount; mip++) {
+        for (const aspect of aspects) {
+          if (!group.subresources.has(`${mip}:${aspect}`)) {
+            throw new Error(`frame ${frameIndex} resource texture is missing mip ${mip} ${aspect}`);
+          }
+        }
+      }
+      if (group.subresources.size !== group.mipCount * aspects.length) {
+        throw new Error(`frame ${frameIndex} resource texture has unexpected subresources`);
       }
     }
+    if (new Set([...textureGroups.values()].map(group => group.texture.id)).size !==
+        detail.resourceInventory.textureCount) {
+      throw new Error(`frame ${frameIndex} resource textures reuse an Inspector ID`);
+    }
+    const resourceBufferIds = new Set();
+    for (const item of detail.resourceBuffers) {
+      const raw = job.resourceBufferRaw.get(diagnosticKey(frameIndex, item.resourceOrdinal));
+      if (!raw || item.bufferId === null) {
+        throw new Error(`frame ${frameIndex} resource Buffer ${item.resourceOrdinal} has no complete raw readback`);
+      }
+      const buffer = report.resources.buffers.find(value => value.id === item.bufferId);
+      if (!buffer || buffer.size !== item.totalSize || raw.bytes !== item.totalSize ||
+          item.copiedOffset !== 0 || item.copiedSize !== item.totalSize ||
+          resourceBufferIds.has(item.bufferId)) {
+        throw new Error(`frame ${frameIndex} resource Buffer ${item.resourceOrdinal} differs from Inspector descriptor`);
+      }
+      resourceBufferIds.add(item.bufferId);
+      resourceBufferSnapshots.push({ frameOrdinal: targetOrdinal,
+        resourceOrdinal: item.resourceOrdinal, bufferId: item.bufferId,
+        label: item.label, totalSize: item.totalSize, copiedOffset: 0,
+        copiedSize: item.totalSize, captureMoment: 'frame-end',
+        rawFile: raw.name, rawByteLength: raw.bytes, rawSha256: raw.sha256 });
+    }
+    for (const item of selectedDetail?.gpuPasses ?? []) {
+      const pass = gamePasses[item.ordinal];
+      if (pass?.type !== item.kind || pass.label !== item.label) {
+        throw new Error(`frame ${frameIndex} GPU timing pass does not match Inspector capture`);
+      }
+      gpuTimings.push({ frameOrdinal: pass.frameOrdinal, passIndex: pass.index,
+        durationMs: item.durationMs, source: 'webgpu-timestamp-query' });
+    }
+    // Inspect the capture's actual attachments, including outputs omitted
+    // entirely from RHI diagnostics. PNG previews are optional; verified raw
+    // bytes are required for every stored output. A discarded attachment with
+    // no resolve has undefined pass-end contents and is not a readable RT.
+    for (const pass of renderPasses) {
+      if (pass.diagnosticAuxiliary) continue;
+      for (const target of pass.targets ?? []) {
+        if (target.kind === 'color') {
+          const hasResolve = Number.isInteger(target.resolveTextureId);
+          if (!hasResolve && target.storeOp === 'discard') continue;
+          if (hasResolve && target.storeOp === 'store' &&
+              target.textureId !== target.resolveTextureId) {
+            throw new Error(`frame ${frameIndex} pass ${pass.index} color ${target.slot} stores an MSAA source without its own raw readback`);
+          }
+          const snapshot = passSnapshots.find(item => item.frameOrdinal === targetOrdinal &&
+            item.passIndex === pass.index && item.colorIndex === target.slot &&
+            item.textureId === target.outputTextureId && item.rawFile);
+          const texture = report.resources.textures.find(item => item.id === target.outputTextureId);
+          if (!snapshot || !texture || texture.width !== snapshot.width ||
+              texture.height !== snapshot.height || texture.format !== snapshot.format) {
+            throw new Error(`frame ${frameIndex} pass ${pass.index} stored color ${target.slot} has no verified pass-end raw readback`);
+          }
+        } else if (target.kind === 'depth-stencil') {
+          const format = target.format ?? report.resources.textures.find(item =>
+            item.id === target.textureId)?.format;
+          if (typeof format !== 'string') {
+            throw new Error(`frame ${frameIndex} pass ${pass.index} depth/stencil format is unknown`);
+          }
+          for (const [aspect, stored] of [
+            ['depth', format.startsWith('depth') && target.depthStoreOp !== 'discard'],
+            ['stencil', format.includes('stencil8') && target.stencilStoreOp !== 'discard'],
+          ]) {
+            if (!stored) continue;
+            const snapshot = aspectSnapshots.find(item => item.frameOrdinal === targetOrdinal &&
+              item.passIndex === pass.index && item.aspect === aspect &&
+              item.textureId === target.textureId && item.viewId === target.viewId &&
+              item.afterCommandIndex === pass.endCommand && item.rawFile);
+            if (!snapshot) {
+              throw new Error(`frame ${frameIndex} pass ${pass.index} stored ${aspect} has no verified pass-end raw readback`);
+            }
+          }
+        }
+      }
+    }
+    // Frame-end resource pixels cannot stand in for the earlier input or
+    // bound Buffer bytes at a Draw. Keep those capture moments distinct.
+    for (const item of detail.inputs) {
+      if (!inputSnapshots.some(snapshot => snapshot.frameOrdinal === targetOrdinal &&
+          snapshot.inputOrdinal === item.inputOrdinal && snapshot.rawFile &&
+          Number.isInteger(snapshot.beforeCommandIndex))) {
+        throw new Error(`frame ${frameIndex} Draw input ${item.inputOrdinal} has no verified pre-Draw raw readback`);
+      }
+    }
+    for (const item of detail.buffers) {
+      if (!bufferSnapshots.some(snapshot => snapshot.frameOrdinal === targetOrdinal &&
+          snapshot.bufferOrdinal === item.bufferOrdinal && snapshot.rawFile &&
+          Number.isInteger(snapshot.beforeCommandIndex))) {
+        throw new Error(`frame ${frameIndex} Draw Buffer ${item.bufferOrdinal} has no verified pre-Draw raw readback`);
+      }
+    }
+    }
+    const selectedFrame = diagnosticFrames[job.detailedFrameIndex - 1] ?? null;
     const sidecars = { schemaVersion: 1,
       actualFrames, detailedFrameIndex: job.detailedFrameIndex,
-      diagnosticFrameOrdinal: selectedDetail ? targetOrdinal : null,
+      diagnosticFrameOrdinal: selectedFrame?.frameOrdinal ?? null,
+      diagnosticFrames,
       frames: [...job.frameImages].sort(([a], [b]) => a - b).filter(([index]) => index <= actualFrames)
         .map(([index, image]) => {
           const frame = frameMappingComplete ? captureFrames[index - 1] : null;
@@ -1381,16 +1926,18 @@ export function createWebGpuCaptureController(projectRoot) {
             file: image.name, sha256: image.sha256,
             width: image.width, height: image.height } : null;
         }).filter(Boolean),
-      passSnapshots, passUnavailable, inputSnapshots, aspectSnapshots, bufferSnapshots, gpuTimings,
-      gpuProfilerStatus: selectedDetail?.gpuProfilerStatus ?? null,
-      passCaptureWarning: frameIdentityIssue ?? selectedDetail?.warning ?? null };
+      passSnapshots, passUnavailable, inputSnapshots, aspectSnapshots, bufferSnapshots,
+      resourceTextureSnapshots, resourceBufferSnapshots, gpuTimings,
+      gpuProfilerStatus: selectedFrame?.gpuProfilerStatus ?? null,
+      passCaptureWarning: selectedFrame?.passCaptureWarning ?? null };
     const manifestText = JSON.stringify(sidecars, null, 2) + '\n';
     if (Buffer.byteLength(manifestText) > MAX_SIDECAR_MANIFEST_BYTES) {
-      throw new Error('sidecar manifest exceeds 4 MiB limit');
+      throw new Error('sidecar manifest exceeds 64 MiB limit');
     }
     await writeFile(join(job.outputDir, 'sidecars.json'), manifestText, { flag: 'wx' });
     return { frameIndex: job.detailedFrameIndex,
-      selectedFrameUnavailable: frameIdentityIssue ?? null,
+      resourceFrames: diagnosticFrames.map(item => item.frameIndex),
+      selectedFrameUnavailable: null,
       passSnapshots: passSnapshots.length,
       rawPassSnapshots: passSnapshots.filter(item => item.rawFile).length,
       inputSnapshots: inputSnapshots.filter(item => item.file || item.rawFile).length,
@@ -1399,6 +1946,8 @@ export function createWebGpuCaptureController(projectRoot) {
       aspectUnavailable: aspectSnapshots.filter(item => item.reason).length,
       bufferSnapshots: bufferSnapshots.filter(item => item.rawFile).length,
       bufferUnavailable: bufferSnapshots.filter(item => item.reason).length,
+      resourceTextureSnapshots: resourceTextureSnapshots.length,
+      resourceBufferSnapshots: resourceBufferSnapshots.length,
       passUnavailable: passUnavailable.length, gpuTimedPasses: gpuTimings.length };
   }
 
@@ -1408,19 +1957,29 @@ export function createWebGpuCaptureController(projectRoot) {
     if (!['pending', 'capturing'].includes(job.state) || job.uploadInProgress) throw new Error('capture job is not accepting an upload');
     const count = Number(actualFrames);
     if (!Number.isInteger(count) || count < 1 || count > job.frames) throw new Error('actualFrames must be between 1 and requested frames');
-    if (job.diagnostics && count < job.detailedFrameIndex) {
-      throw new Error('actualFrames does not include the selected detailedFrameIndex');
+    for (let frameIndex = 1; frameIndex <= count; frameIndex++) {
+      if (!job.diagnostics.has(frameIndex)) {
+        throw new Error(`frame ${frameIndex} diagnostics must be uploaded before capture completion`);
+      }
+    }
+    if (job.diagnostics.size !== count || job.reservedSidecarBytes !== 0 ||
+        job.frameImageInProgress.size || job.passRawInProgress.size ||
+        job.inputRawInProgress.size || job.aspectRawInProgress.size ||
+        job.bufferRawInProgress.size || job.resourceTextureRawInProgress.size ||
+        job.resourceBufferRawInProgress.size) {
+      throw new Error('capture diagnostic uploads are incomplete or outside actualFrames');
     }
     if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') throw new Error('binary upload stream is required');
     if (contentLength != null && (!Number.isInteger(Number(contentLength)) ||
         Number(contentLength) < 0 || Number(contentLength) > MAX_CAPTURE_BYTES)) {
-      throw new Error('capture exceeds 512 MiB upload limit');
+      throw new Error('capture exceeds 1 GiB upload limit');
     }
     job.uploadInProgress = true;
     job.state = 'uploading';
     job.updatedAt = Date.now();
     let handle;
     let bytes = 0;
+    let validatedCapture = false;
     const sha = createHash('sha256');
     try {
       handle = await open(job.file, 'wx');
@@ -1428,7 +1987,7 @@ export function createWebGpuCaptureController(projectRoot) {
         if (job.state !== 'uploading' || closed) throw new Error('capture stopped or timed out');
         const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
         bytes += chunk.length;
-        if (bytes > MAX_CAPTURE_BYTES) throw new Error('capture exceeds 512 MiB upload limit');
+        if (bytes > MAX_CAPTURE_BYTES) throw new Error('capture exceeds 1 GiB upload limit');
         sha.update(chunk);
         let offset = 0;
         while (offset < chunk.length) {
@@ -1444,9 +2003,16 @@ export function createWebGpuCaptureController(projectRoot) {
       handle = null;
       if (job.state !== 'uploading' || closed) throw new Error('capture stopped or timed out');
       const captureSummary = await validateCaptureBinary(job.file, bytes);
+      validatedCapture = true;
       if (job.state !== 'uploading' || closed) throw new Error('capture stopped or timed out');
       const digest = sha.digest('hex');
       const diagnosticsSummary = await writeSidecars(job, count);
+      job.bytes = bytes;
+      job.sha256 = digest;
+      // Completion means the copied, hashed raw files are also usable in the
+      // report. Analysis must succeed before a new full-frame job is complete.
+      const verifiedAnalysis = await analyzedWithIndex(job, true);
+      if (job.state !== 'uploading' || closed) throw new Error('capture stopped or timed out during analysis');
       const manifest = {
         schemaVersion: 1,
         captureKind: 'webgpu-inspector',
@@ -1459,6 +2025,7 @@ export function createWebGpuCaptureController(projectRoot) {
         requestedFrames: job.frames,
         detailedFrameIndex: job.detailedFrameIndex,
         actualFrames: count,
+        resourceFrames: diagnosticsSummary.resourceFrames,
         createdAt: new Date(job.createdAt).toISOString(),
         captureFile: job.file,
         bytes,
@@ -1471,18 +2038,43 @@ export function createWebGpuCaptureController(projectRoot) {
         })),
         capturedAt: new Date().toISOString(),
       };
-      await writeFile(join(job.outputDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });
+      await writeManifest(join(job.outputDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });
+      if (job.state !== 'uploading' || closed) {
+        throw new Error('capture stopped or timed out during manifest write');
+      }
       job.actualFrames = count;
-      job.bytes = bytes;
-      job.sha256 = digest;
+      job.resourceFrames = diagnosticsSummary.resourceFrames;
+      job.analysisPromise = Promise.resolve(verifiedAnalysis);
       job.state = 'completed';
       job.updatedAt = Date.now();
       if (activeJobId === job.id) activeJobId = null;
       capHistory();
       return publicJob(job);
     } catch (error) {
+      job.analysisPromise = null;
       try { await handle?.close(); } catch { /* Keep the first failure. */ }
-      try { await unlink(job.file); } catch { /* File may not have been created. */ }
+      // A stop can arrive while the final write is pending. Never leave a
+      // completed-looking manifest for a job that did not commit completion.
+      try { await unlink(join(job.outputDir, 'manifest.json')); }
+      catch (cleanupError) { if (cleanupError?.code !== 'ENOENT') {
+        error = new Error(`${text(error)}; incomplete manifest cleanup failed: ${text(cleanupError)}`);
+      } }
+      if (validatedCapture) {
+        // Keep valid native evidence and the exact diagnostics for failed jobs.
+        // There is no manifest.json, so history will never present this as complete.
+        try {
+          await writeFile(join(job.outputDir, 'diagnostics.json'), JSON.stringify({
+            schemaVersion: 1, jobId: job.id, state: job.state === 'stopped' ? 'stopped' : 'failed',
+            error: text(error), requestedFrames: job.frames, actualFrames: count,
+            captureFile: job.file, bytes,
+            diagnostics: [...job.diagnostics].sort(([a], [b]) => a - b)
+              .map(([, detail]) => detail),
+          }, null, 2) + '\n', { flag: 'wx' });
+        } catch { /* Preserve the original capture error. */ }
+      } else {
+        try { await unlink(job.file); } catch { /* File may not have been created. */ }
+      }
       if (job.state !== 'stopped') {
         job.state = 'failed';
         job.error = text(error);
@@ -1524,8 +2116,9 @@ export function createWebGpuCaptureController(projectRoot) {
     clients.clear();
   }
 
-  return { register, list, request, poll, status, viewerFile, uploadFrameImage, uploadPassImage,
+  return { register, list, getSettings, setSettings, request, poll, status, viewerFile, uploadFrameImage, uploadPassImage,
     uploadPassRaw, uploadInputImage, uploadInputRaw,
-    uploadAspectImage, uploadAspectRaw, uploadBufferRaw, history,
+    uploadAspectImage, uploadAspectRaw, uploadBufferRaw,
+    uploadResourceTextureImage, uploadResourceTextureRaw, uploadResourceBufferRaw, history,
     diagnostics, upload, fail, stop, close };
 }

@@ -205,6 +205,12 @@ export class SceneManager implements IGameSystem {
   /** 切场景请求串行队列，避免并发 switch 静默丢弃或交错 isSwitching */
   private sceneSwitchTail: Promise<void> = Promise.resolve();
   private animRafId: number = 0;
+  private capturePauseDepth = 0;
+  private capturePauseStartedAt = 0;
+  private capturePausedMs = 0;
+  private captureSteppedMs = 0;
+  private captureTransitionTick: (() => void) | null = null;
+  private captureBlackoutTick: (() => void) | null = null;
   /**
    * 持久黑幕：独立于切场遮幕 transitionOverlay，只被显式 showBlackout / hideBlackout 控制，
    * 不随过场 cleanup、也不随切场景自动销毁——供把长演出拆成多段时「跨段保留黑屏」，
@@ -956,6 +962,11 @@ export class SceneManager implements IGameSystem {
 
   get switching(): boolean {
     return this.isSwitching;
+  }
+
+  /** Initial and subsequent scene loads must settle before acquiring a capture freeze. */
+  get captureSceneReady(): boolean {
+    return !this.isSwitching && this.transitionOverlay === null;
   }
 
   /**
@@ -2381,21 +2392,23 @@ export class SceneManager implements IGameSystem {
     cancelAnimationFrame(this.animRafId);
     this.animRafId = 0;
     return new Promise(resolve => {
-      const startTime = performance.now();
+      const startTime = this.captureClockNow();
       target.alpha = from;
 
       const tick = () => {
-        const elapsed = performance.now() - startTime;
+        const elapsed = this.captureClockNow() - startTime;
         const t = Math.min(elapsed / durationMs, 1);
         target.alpha = from + (to - from) * t;
         if (t < 1) {
-          this.animRafId = requestAnimationFrame(tick);
+          if (this.capturePauseDepth === 0) this.animRafId = requestAnimationFrame(tick);
         } else {
           this.animRafId = 0;
+          this.captureTransitionTick = null;
           resolve();
         }
       };
-      this.animRafId = requestAnimationFrame(tick);
+      this.captureTransitionTick = tick;
+      if (this.capturePauseDepth === 0) this.animRafId = requestAnimationFrame(tick);
     });
   }
 
@@ -2444,6 +2457,7 @@ export class SceneManager implements IGameSystem {
 
   /** 取消在途黑幕动画并封口其 Promise（打断/销毁路径共用），保证不留悬挂 await 与残留 RAF。 */
   private cancelBlackoutAnim(): void {
+    this.captureBlackoutTick = null;
     cancelAnimationFrame(this.blackoutRafId);
     this.blackoutRafId = 0;
     const resolve = this.blackoutAnimResolve;
@@ -2461,20 +2475,22 @@ export class SceneManager implements IGameSystem {
         return;
       }
       this.blackoutAnimResolve = resolve;
-      const startTime = performance.now();
+      const startTime = this.captureClockNow();
       target.alpha = from;
       const tick = () => {
-        const t = Math.min((performance.now() - startTime) / durationMs, 1);
+        const t = Math.min((this.captureClockNow() - startTime) / durationMs, 1);
         target.alpha = from + (to - from) * t;
         if (t < 1) {
-          this.blackoutRafId = requestAnimationFrame(tick);
+          if (this.capturePauseDepth === 0) this.blackoutRafId = requestAnimationFrame(tick);
         } else {
           this.blackoutRafId = 0;
+          this.captureBlackoutTick = null;
           this.blackoutAnimResolve = null;
           resolve();
         }
       };
-      this.blackoutRafId = requestAnimationFrame(tick);
+      this.captureBlackoutTick = tick;
+      if (this.capturePauseDepth === 0) this.blackoutRafId = requestAnimationFrame(tick);
     });
   }
 
@@ -2490,6 +2506,36 @@ export class SceneManager implements IGameSystem {
       if (n.burnable) out.push({ id: n.id, burnable: n.burnable });
     }
     return out;
+  }
+
+  private captureClockNow(): number {
+    return (this.capturePauseDepth > 0 ? this.capturePauseStartedAt : performance.now())
+      - this.capturePausedMs + this.captureSteppedMs;
+  }
+
+  suspendForCapture(): () => void {
+    if (this.capturePauseDepth++ === 0) {
+      this.capturePauseStartedAt = performance.now();
+      cancelAnimationFrame(this.animRafId);
+      cancelAnimationFrame(this.blackoutRafId);
+      this.animRafId = this.blackoutRafId = 0;
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--this.capturePauseDepth > 0) return;
+      this.capturePausedMs += performance.now() - this.capturePauseStartedAt;
+      if (this.captureTransitionTick) this.animRafId = requestAnimationFrame(this.captureTransitionTick);
+      if (this.captureBlackoutTick) this.blackoutRafId = requestAnimationFrame(this.captureBlackoutTick);
+    };
+  }
+
+  stepCaptureFrame(dt: number): void {
+    if (this.capturePauseDepth === 0) return;
+    this.captureSteppedMs += dt * 1000;
+    this.captureTransitionTick?.();
+    this.captureBlackoutTick?.();
   }
 
   /**

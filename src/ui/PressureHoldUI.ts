@@ -85,6 +85,41 @@ export class PressureHoldUI {
   private currentRatio = 0;
   private abortOnReleaseFromRatio: number | undefined;
   private currentRequest: PressureHoldSegmentRequest | null = null;
+  private capturePauseDepth = 0;
+  private capturePauseStartedAt = 0;
+  private capturePausedMs = 0;
+  private captureSteppedMs = 0;
+  private segmentStep: (() => void) | null = null;
+
+  private captureClockNow(): number {
+    return (this.capturePauseDepth > 0 ? this.capturePauseStartedAt : performance.now())
+      - this.capturePausedMs + this.captureSteppedMs;
+  }
+
+  suspendForCapture(): () => void {
+    if (this.capturePauseDepth++ === 0) {
+      this.capturePauseStartedAt = performance.now();
+      if (this.rafId) cancelAnimationFrame(this.rafId);
+      this.rafId = 0;
+      // Captured input must not remain held after the transport wait.
+      this.holding = false;
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--this.capturePauseDepth > 0) return;
+      this.capturePausedMs += performance.now() - this.capturePauseStartedAt;
+      this.holding = false;
+      if (this.segmentStep) this.rafId = requestAnimationFrame(this.segmentStep);
+    };
+  }
+
+  stepCaptureFrame(dt: number): void {
+    if (this.capturePauseDepth === 0) return;
+    this.captureSteppedMs += dt * 1000;
+    this.segmentStep?.();
+  }
 
   constructor(renderer: Renderer, strings: StringsProvider) {
     this.renderer = renderer;
@@ -110,8 +145,9 @@ export class PressureHoldUI {
       this.buildView(req);
       this.attachInput();
 
-      let lastTs = performance.now();
-      const step = (ts: number) => {
+      let lastTs = this.captureClockNow();
+      const step = () => {
+        const ts = this.captureClockNow();
         const dt = Math.min(0.1, Math.max(0, (ts - lastTs) / 1000));
         lastTs = ts;
         progress.tick(dt, this.holding);
@@ -122,9 +158,10 @@ export class PressureHoldUI {
           this.finishSegment('reached');
           return;
         }
-        this.rafId = requestAnimationFrame(step);
+        if (this.capturePauseDepth === 0) this.rafId = requestAnimationFrame(step);
       };
-      this.rafId = requestAnimationFrame(step);
+      this.segmentStep = step;
+      if (this.capturePauseDepth === 0) this.rafId = requestAnimationFrame(step);
     });
   }
 
@@ -172,6 +209,7 @@ export class PressureHoldUI {
   }
 
   private finishSegment(outcome: PressureHoldSegmentOutcome): void {
+    this.segmentStep = null;
     if (this.rafId) {
       cancelAnimationFrame(this.rafId);
       this.rafId = 0;
@@ -301,18 +339,21 @@ export class PressureHoldUI {
 
   private attachInput(): void {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (this.capturePauseDepth > 0) return;
       if (e.code === 'Space') {
         e.preventDefault();
         this.holding = true;
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
+      if (this.capturePauseDepth > 0) return;
       if (e.code === 'Space') {
         e.preventDefault();
         this.markRelease();
       }
     };
     const onPointerDown = () => {
+      if (this.capturePauseDepth > 0) return;
       this.holding = true;
     };
     const onPointerUp = () => {
@@ -335,9 +376,10 @@ export class PressureHoldUI {
   }
 
   private markRelease(): void {
+    if (this.capturePauseDepth > 0) return;
     const wasHolding = this.holding;
     if (wasHolding && this.hintText) {
-      this.hintShownAt = performance.now();
+      this.hintShownAt = this.captureClockNow();
     }
     this.holding = false;
     if (

@@ -62,6 +62,8 @@ import type {
   RhiDrawInputCapture,
   RhiFrame,
   RhiFrameDebugCapture,
+  RhiFrameResourceBufferCapture,
+  RhiFrameResourceTextureCapture,
   RhiFrameStats,
   RhiRenderPassEndCapture,
   RhiRenderPassEncoder,
@@ -941,6 +943,10 @@ class LumaCommandList implements RhiCommandList {
   private captureFailed = false;
   private renderPassOrdinal = 0;
   private canvasCaptureReady = false;
+  /** 只在本批抓帧中使用；同一 native Texture 跨 Draw 保留写入序号。 */
+  private readonly textureContentVersions = new WeakMap<GPUTexture, number>();
+  private contentVersionSerial = 0;
+  private allTextureContentVersion = 0;
 
   constructor(
     private readonly device: LumaRhiDevice,
@@ -985,6 +991,12 @@ class LumaCommandList implements RhiCommandList {
       const resource = bindings[bindingName];
       const source = resource instanceof LumaRhiTexture ? resource : null;
       const native = source?.handle.handle as GPUTexture | undefined;
+      // The diagnostic copy is encoded before setBindings(); mark the texture used
+      // now so an intervening queue write cannot invalidate an earlier Draw.
+      if (source && native && !source.destroyed) this._use(source);
+      // Native interop can mutate wrapped textures outside RHI. Never reuse an
+      // earlier Draw readback for one of those externally owned objects.
+      if (source?.external && native) this._textureWritten(native);
       const view = (source?.handle as Texture & { view?: { handle?: GPUTextureView; props?: {
         baseMipLevel?: number; mipLevelCount?: number; baseArrayLayer?: number; arrayLayerCount?: number;
         dimension?: string;
@@ -1013,6 +1025,7 @@ class LumaCommandList implements RhiCommandList {
       const count = validMipRange ? mipCount! : 1;
       for (let level = baseMip; level < baseMip + count; level++) {
         emit({ bindingName, groupSlot, binding, texture: reason ? null : native ?? null, textureId, viewId,
+          contentVersion: native ? this._inputTextureContentVersion(native) : 0,
           mipLevel: level, arrayLayer: baseLayer,
           width: source ? Math.max(1, Math.floor(source.width / 2 ** level)) : 0,
           height: source ? Math.max(1, Math.floor(source.height / 2 ** level)) : 0,
@@ -1185,6 +1198,7 @@ class LumaCommandList implements RhiCommandList {
       throw new RhiError('invalid-usage', `copyTextureToTexture 格式不同:「${s.label}」${s.format} → 「${d.label}」${d.format}`);
     }
     this.encoder.copyTextureToTexture({ sourceTexture: s.handle, destinationTexture: d.handle, width: w, height: h });
+    this._textureWritten((d.handle as Texture & { handle: GPUTexture }).handle);
   }
 
   // 跟拷贝一样只能在 pass 之间调:pass 开着时编码器处于锁定状态,再调编码器方法会让整个命令缓冲作废(WebGPU 规范)
@@ -1208,6 +1222,25 @@ class LumaCommandList implements RhiCommandList {
     return this.used.has(resource);
   }
 
+  /** @internal Capture-only texture revision; a compute dispatch invalidates all prior aliases. */
+  _inputTextureContentVersion(texture: GPUTexture): number {
+    return Math.max(this.textureContentVersions.get(texture) ?? 0, this.allTextureContentVersion);
+  }
+
+  private _textureWritten(texture: GPUTexture | null | undefined): void {
+    if (this.captureHooks && texture) this.textureContentVersions.set(texture, ++this.contentVersionSerial);
+  }
+
+  /** @internal Conservative barrier for any compute pass that actually dispatches. */
+  _invalidateAllInputTextures(): void {
+    if (this.captureHooks) this.allTextureContentVersion = ++this.contentVersionSerial;
+  }
+
+  /** @internal A writable storage texture can be modified by a fragment Draw. */
+  _storageTexturesWritten(textures: readonly GPUTexture[]): void {
+    for (const texture of textures) this._textureWritten(texture);
+  }
+
   /** @internal */
   _passEnded(): void {
     this.openPass = null;
@@ -1216,6 +1249,23 @@ class LumaCommandList implements RhiCommandList {
   /** @internal pass 已结束，下一次写目标之前同步交给一次性抓帧钩子。 */
   _renderPassEnded(target: LumaRhiRenderTarget | LumaSwapchainTarget | LumaMsaaSwapchainTarget, label: string, passOrdinal: number): void {
     const hooks = this.captureHooks;
+    if (hooks) {
+      if (target instanceof LumaRhiRenderTarget) {
+        for (const texture of [...target.colors, ...target.resolves, target.depth]) {
+          this._textureWritten((texture?.handle as Texture & { handle?: GPUTexture } | undefined)?.handle);
+        }
+      } else if (target instanceof LumaSwapchainTarget) {
+        this._textureWritten(target.passViews().colorTexture);
+        this._textureWritten(target.depthTextureHandle);
+      } else {
+        const framebuffer = target.framebuffer as Framebuffer & {
+          colorAttachments: Array<{ texture?: { handle?: GPUTexture } }>;
+        };
+        for (const attachment of framebuffer.colorAttachments) this._textureWritten(attachment.texture?.handle);
+        this._textureWritten(target.resolveTexture);
+        this._textureWritten(target.depthTextureHandle);
+      }
+    }
     if (!hooks || this.captureFailed) return;
     const emit = (colorIndex: number | null, format: RhiColorFormat | null, texture: GPUTexture | null, reason?: string): void => {
       if (this.captureFailed) return;
@@ -1282,9 +1332,72 @@ class LumaCommandList implements RhiCommandList {
     }
   }
 
+  private captureLiveResources(): void {
+    const hooks = this.captureHooks;
+    if (!hooks || this.captureFailed || this.kind !== 'frame') return;
+    const resources = this.device.rootScope.liveResources();
+    let textureCount = 0;
+    let bufferCount = 0;
+    let textureSubresourceCount = 0;
+    const emitTexture = (event: RhiFrameResourceTextureCapture): void => {
+      textureSubresourceCount++;
+      try { hooks.onResourceTexture?.(event); }
+      catch (error) { this.captureFailed = true; this.device._reportCaptureError(error); }
+    };
+    const emitBuffer = (event: RhiFrameResourceBufferCapture): void => {
+      try { hooks.onResourceBuffer?.(event); }
+      catch (error) { this.captureFailed = true; this.device._reportCaptureError(error); }
+    };
+    for (const resource of resources) {
+      if (this.captureFailed) break;
+      if (resource instanceof LumaRhiBuffer) {
+        const native = (resource.handle as LumaBuffer & { handle?: GPUBuffer }).handle ?? null;
+        const bufferId = inspectorResourceId(native);
+        emitBuffer({ encoder: this.native, buffer: native, bufferId,
+          bufferOrdinal: bufferCount++, label: resource.label, totalSize: resource.size,
+          ...(!native ? { reason: '无法取得 RHI Buffer 原生句柄' }
+            : bufferId === null ? { reason: 'WebGPU Inspector 未提供 Buffer ID' }
+            : (native.usage & GPUBufferUsage.COPY_SRC) === 0 ? { reason: 'Buffer 缺少 COPY_SRC 用途' } : {}),
+        });
+      } else if (resource instanceof LumaRhiTexture) {
+        const native = (resource.handle as Texture & { handle?: GPUTexture }).handle ?? null;
+        const textureId = inspectorResourceId(native);
+        const textureOrdinal = textureCount++;
+        const depth = isDepthFormat(resource.format);
+        const aspects: readonly ('color' | 'depth' | 'stencil')[] = depth
+          ? resource.format.includes('stencil') ? ['depth', 'stencil'] : ['depth'] : ['color'];
+        const unsupported = !native ? '无法取得 RHI Texture 原生句柄'
+          : textureId === null ? 'WebGPU Inspector 未提供 Texture ID'
+          : native.dimension !== '2d' || native.depthOrArrayLayers !== 1
+            ? '仅支持单层 2D 纹理全量回读'
+          : native.sampleCount !== 1 ? '多重采样纹理无法无损全量回读'
+          : undefined;
+        for (let mipLevel = 0; mipLevel < (unsupported ? 1 : resource.mipLevels); mipLevel++) {
+          for (const aspect of aspects) {
+            if (this.captureFailed) break;
+            const reason = unsupported ?? (aspect === 'depth'
+              ? (native!.usage & GPUTextureUsage.TEXTURE_BINDING) === 0 ? '深度纹理缺少 TEXTURE_BINDING 用途' : undefined
+              : (native!.usage & GPUTextureUsage.COPY_SRC) === 0 ? '纹理缺少 COPY_SRC 用途' : undefined);
+            emitTexture({ encoder: this.native, texture: native, textureId, textureOrdinal,
+              label: resource.label, width: Math.max(1, Math.floor(resource.width / 2 ** mipLevel)),
+              height: Math.max(1, Math.floor(resource.height / 2 ** mipLevel)),
+              sourceFormat: resource.format, mipLevel, arrayLayer: 0, aspect,
+              sampleCount: resource.sampleCount, ...(reason ? { reason } : {}),
+            });
+          }
+        }
+      }
+    }
+    if (!this.captureFailed) {
+      try { hooks.onResourceInventory?.({ textureCount, bufferCount, textureSubresourceCount }); }
+      catch (error) { this.captureFailed = true; this.device._reportCaptureError(error); }
+    }
+  }
+
   /** @internal */
   _submit(): void {
     this.assertNoOpenPass(`提交「${this.label}」`);
+    this.captureLiveResources();
     this.timing?.finishEncoding(this.native);
     const commandBuffer = this.native.finish();
     // luma 的包装只用来编码,拆掉它的资源统计(不再经它 finish / 提交)
@@ -1341,6 +1454,7 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
   private readonly boundVertexOffset: number[] = [];
   private boundIndex: GPUBuffer | null = null;
   private boundIndexFormat: GPUIndexFormat | null = null;
+  private writableStorageTextures: GPUTexture[] = [];
   /** draw 时按流序号取缓冲(逐 draw 复用) */
   private readonly drawStreams: LumaRhiBuffer[] = [];
 
@@ -1381,12 +1495,14 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     }
     this.pipeline = p;
     this.bindingsSet = false;
+    this.writableStorageTextures = [];
   }
 
   setBindings(bindings: RhiBindings): void {
     const p = this.requirePipeline('setBindings');
     if (this.skipping) {
       this.bindingsSet = true;
+      this.writableStorageTextures = [];
       return;
     }
     const groups = p.bindings.resolve(this.device, p.handle, bindings, p.label, this.list);
@@ -1396,6 +1512,14 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
         this.native.setBindGroup(g, bg);
         this.boundGroups[g] = bg;
       }
+    }
+    if (this.list.frameDebugCaptureActive) {
+      this.writableStorageTextures = p.handle.shaderLayout.bindings.flatMap((binding) => {
+        if (binding.type !== 'storage' || !('format' in binding) || binding.access === 'read-only') return [];
+        const resource = bindings[binding.name];
+        return resource instanceof LumaRhiTexture ?
+          [(resource.handle as Texture & { handle: GPUTexture }).handle] : [];
+      });
     }
     this.bindingsSet = true;
   }
@@ -1441,6 +1565,7 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     const p = this.prepareDraw(false);
     if (!p) return;
     this.native.draw(vertexCount, instanceCount, firstVertex, firstInstance);
+    this.list._storageTexturesWritten(this.writableStorageTextures);
     this.count(p, true);
   }
 
@@ -1448,6 +1573,7 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     const p = this.prepareDraw(true);
     if (!p) return;
     this.native.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+    this.list._storageTexturesWritten(this.writableStorageTextures);
     this.count(p, true);
   }
 
@@ -1571,6 +1697,7 @@ class LumaComputePassEncoder implements RhiComputePassEncoder {
       throw new RhiError('invalid-usage', `管线「${this.pipeline.label}」需要资源绑定:setPipeline 之后先 setBindings 再 dispatch`);
     }
     this.pass.dispatch(x, y, z);
+    this.list._invalidateAllInputTextures();
     this.stats.dispatches++;
   }
 

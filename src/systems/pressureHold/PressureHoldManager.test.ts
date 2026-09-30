@@ -1,9 +1,53 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { PressureHoldUI } from '../../ui/PressureHoldUI';
 import { ActionExecutor } from '../../core/ActionExecutor';
 import { EventBus } from '../../core/EventBus';
 import { FlagStore } from '../../core/FlagStore';
 import { PressureHoldManager, parseHexColor } from './PressureHoldManager';
 import type { PressureHoldDef } from './types';
+
+describe('PressureHoldUI capture freeze', () => {
+  it('长按进度停止计时及输入，受控一帧仅固定推进，恢复不吞掉落盘时间', async () => {
+    let now = 0, nextRaf = 0;
+    const raf = new Map<number, FrameRequestCallback>();
+    const input = new Map<string, (event: { code: string; preventDefault: () => void }) => void>();
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => { raf.set(++nextRaf, fn); return nextRaf; });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => raf.delete(id));
+    vi.stubGlobal('window', {
+      addEventListener: (type: string, fn: never) => input.set(type, fn),
+      removeEventListener: (type: string) => input.delete(type),
+    });
+    const pump = () => { const pending = [...raf.values()]; raf.clear(); for (const fn of pending) fn(now); };
+    const ui = new PressureHoldUI({} as never, {} as never);
+    const internal = ui as unknown as { buildView: () => void; container: unknown; currentRatio: number };
+    internal.buildView = () => { internal.container = { parent: null, destroy: () => {} }; };
+    try {
+      const done = ui.runSegment({ prompt: 'hold', startRatio: 0.8, stopRatio: 1,
+        fillSeconds: 1, decayPerSecond: 0.1, abortOnReleaseFromRatio: 0.72 });
+      input.get('keydown')?.({ code: 'Space', preventDefault: () => {} });
+      now = 50; pump();
+      expect(internal.currentRatio).toBeCloseTo(0.85);
+      const release = ui.suspendForCapture();
+      const releaseNested = ui.suspendForCapture();
+      input.get('keyup')?.({ code: 'Space', preventDefault: () => {} });
+      now += 120_000; pump();
+      expect(internal.currentRatio).toBeCloseTo(0.85);
+      expect(raf.size).toBe(0);
+      ui.stepCaptureFrame(1 / 60);
+      expect(internal.currentRatio).toBeCloseTo(0.85 - 0.1 / 60);
+      now += 120_000; release(); release(); pump();
+      expect(raf.size).toBe(0);
+      releaseNested();
+      now += 100; pump();
+      expect(internal.currentRatio).toBeCloseTo(0.85 - 0.1 / 60 - 0.01);
+      const releaseDestroyed = ui.suspendForCapture();
+      ui.destroy(); releaseDestroyed();
+      expect(raf.size).toBe(0);
+      await expect(done).resolves.toBe('reached');
+    } finally { ui.destroy(); vi.restoreAllMocks(); vi.unstubAllGlobals(); }
+  });
+});
 
 function makeManager(defs: PressureHoldDef[]): {
   manager: PressureHoldManager;

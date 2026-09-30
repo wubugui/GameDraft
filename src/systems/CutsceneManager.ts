@@ -282,6 +282,10 @@ export class CutsceneManager implements IGameSystem {
   private unsubPointer: (() => void) | null = null;
   private unsubKey: (() => void) | null = null;
   private destroyed = false;
+  private capturePauseDepth = 0;
+  private capturePauseStartedAt = 0;
+  private capturePausedMs = 0;
+  private captureResumeCallbacks = new Set<() => void>();
   private skipping = false;
   /** Esc 跳过的二次确认：首按时刻（0=未武装）；限时窗口内再按才真 skip */
   private skipArmedAt = 0;
@@ -799,6 +803,7 @@ export class CutsceneManager implements IGameSystem {
       console.warn(`CutsceneManager: startCutscene "${id}" failed`, e);
       throw e;
     } finally {
+      if (this.capturePauseDepth > 0 && !this.destroyed) await this.waitForCaptureResume();
       if (this.worldEpoch !== worldEpochAtStart) {
         /** R10：过场中读档 / 整机拆除已接管收尾（deserialize/destroy 已 cleanup + 解绑输入 +
          *  复位 playing 等），世界随后会整场景重载。这里**不得**用过场前快照覆盖新状态、
@@ -1079,6 +1084,30 @@ export class CutsceneManager implements IGameSystem {
     return !this.skipping && !this.destroyed && this.playing;
   }
 
+  suspendForCapture(): () => void {
+    if (this.capturePauseDepth++ === 0) this.capturePauseStartedAt = performance.now();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--this.capturePauseDepth === 0) {
+        this.capturePausedMs += performance.now() - this.capturePauseStartedAt;
+        const pending = [...this.captureResumeCallbacks];
+        this.captureResumeCallbacks.clear();
+        for (const resume of pending) resume();
+      }
+    };
+  }
+
+  private captureClockNow(): number {
+    return (this.capturePauseDepth > 0 ? this.capturePauseStartedAt : performance.now()) - this.capturePausedMs;
+  }
+
+  private waitForCaptureResume(): Promise<void> {
+    if (this.capturePauseDepth === 0 || this.destroyed) return Promise.resolve();
+    return new Promise(resolve => this.captureResumeCallbacks.add(resolve));
+  }
+
   /**
    * 快进态的**唯一写入口**：本类的标志与轨迹系统的快进态必须同进同出。
    *
@@ -1099,6 +1128,7 @@ export class CutsceneManager implements IGameSystem {
     fastForwardTo = 0,
   ): Promise<void> {
     for (let i = 0; i < steps.length; i++) {
+      if (this.capturePauseDepth > 0) await this.waitForCaptureResume();
       if (this.isStepStale(epoch)) return;
       /** 顶层下标决定快进边界；parallel 子轨随所属顶层步一起快进（读同一实例标志）。 */
       this.setFastForwarding(i < fastForwardTo);
@@ -1197,6 +1227,7 @@ export class CutsceneManager implements IGameSystem {
   }
 
   private async executeOneStep(step: CutsceneStep, path: string, epoch: number): Promise<void> {
+    if (this.capturePauseDepth > 0) await this.waitForCaptureResume();
     if (this.isStepStale(epoch)) return;
     /**
      * 禁用步：整步跳过（顶层与 parallel 子轨同一入口，故子轨也认这面标记）。
@@ -1232,6 +1263,8 @@ export class CutsceneManager implements IGameSystem {
   }
 
   private async executeOneStepBody(step: CutsceneStep, path: string, epoch: number): Promise<void> {
+    if (this.capturePauseDepth > 0) await this.waitForCaptureResume();
+    if (this.isStepStale(epoch)) return;
     switch (step.kind) {
       case 'action':
         if (CUTSCENE_GLOBAL_SAVE_ACTION_BLOCKLIST.has(step.type)) {
@@ -1722,6 +1755,10 @@ export class CutsceneManager implements IGameSystem {
         /** 点击 / skip / 定时 / 配音结束共用的收束：幂等，负责清理定时器、订阅与共享 resolver */
         const finish = () => {
           if (settled) return;
+          if (this.capturePauseDepth > 0 && this.canArmWait()) {
+            this.captureResumeCallbacks.add(finish);
+            return;
+          }
           settled = true;
           if (autoTimerId !== null) {
             clearTimeout(autoTimerId);
@@ -1736,6 +1773,10 @@ export class CutsceneManager implements IGameSystem {
         /** onClickBound / skip 会先把 dialogueResolve 置 null 再调用；直调 finish 亦安全 */
         const wrappedFinish = () => finish();
         const arm = () => {
+          if (this.capturePauseDepth > 0 && this.canArmWait()) {
+            this.captureResumeCallbacks.add(arm);
+            return;
+          }
           /** 同 waitForClick：arming 窗口内已 skip / 读档 / 拆除则立即落地 */
           if (!this.canArmWait()) {
             finish();
@@ -1744,7 +1785,22 @@ export class CutsceneManager implements IGameSystem {
           this.dialogueAdvanceNotBefore = performance.now() + 120;
           this.dialogueResolve = wrappedFinish;
           if (autoAdvance?.mode === 'timer') {
-            autoTimerId = setTimeout(finish, autoAdvance.ms);
+            const deadline = this.captureClockNow() + autoAdvance.ms;
+            const pausedMsAtStart = this.capturePausedMs;
+            const onTimer = () => {
+              autoTimerId = null;
+              if (settled) return;
+              if (this.capturePauseDepth > 0 && this.canArmWait()) {
+                this.captureResumeCallbacks.add(onTimer);
+                return;
+              }
+              // The original native timeout is authoritative until capture actually paused
+              // it. Recompute a remainder only after a hold, never for ordinary late timers.
+              const remaining = this.capturePausedMs === pausedMsAtStart ? 0 : deadline - this.captureClockNow();
+              if (remaining > 0) autoTimerId = setTimeout(onTimer, remaining);
+              else finish();
+            };
+            autoTimerId = setTimeout(onTimer, autoAdvance.ms);
           }
           /** 订阅放在 resolver 就位之后：配音在 arming 窗口里已播完时 onEnd 同步回调，
            *  此时 finish 必须能把刚挂上的 dialogueResolve 一并摘掉（否则留下无人认领的 resolver）。 */
@@ -1829,6 +1885,9 @@ export class CutsceneManager implements IGameSystem {
 
   destroy(): void {
     this.destroyed = true;
+    const capturePending = [...this.captureResumeCallbacks];
+    this.captureResumeCallbacks.clear();
+    for (const resume of capturePending) resume();
     /** 与 deserialize 同因：在途 steps / 在飞 finally 归来即弃（finally 走过期分支收尾） */
     this.stepEpoch++;
     this.worldEpoch++;

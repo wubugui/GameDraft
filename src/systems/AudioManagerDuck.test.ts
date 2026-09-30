@@ -83,6 +83,22 @@ function makeAudioManager() {
 }
 
 describe('演出闪避', () => {
+  it('抓帧暂停由本游戏拥有的 soundId，最后一次嵌套释放才恢复同一实例', () => {
+    const { audio, howls } = makeAudioManager();
+    audio.playBgm('a', 0);
+    const howl = howls.get('a.wav')!;
+    const pause = vi.fn();
+    const play = vi.fn((sid: number) => sid);
+    howl.pause = pause;
+    howl.play = play;
+    const release = audio.suspendForCapture();
+    const nested = audio.suspendForCapture();
+    expect(pause).toHaveBeenCalledExactlyOnceWith(1);
+    release(); release();
+    expect(play).not.toHaveBeenCalled();
+    nested();
+    expect(play).toHaveBeenCalledExactlyOnceWith(1);
+  });
   it('演出预备让出任务后静默填两套缓存，同一引用合并且音频偏好不变', async () => {
     vi.useFakeTimers();
     const { audio } = makeAudioManager();

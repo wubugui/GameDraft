@@ -12,6 +12,21 @@ import { RhiBufferUsage, RhiError, RhiTextureUsage } from './types';
 describe('RhiResourceScope', () => {
   const tex = (label: string) => ({ label, width: 4, height: 4, format: 'rgba8unorm' as const, usage: RhiTextureUsage.SAMPLED });
 
+  it('只读活资源快照递归包含子作用域，排除已销毁资源', () => {
+    const dev = new NullRhiDevice();
+    const scene = dev.createScope('场景');
+    const child = scene.createChild('特效');
+    const texture = child.createTexture(tex('活贴图'));
+    const dead = scene.createBuffer({ label: '旧 Buffer', size: 4, usage: RhiBufferUsage.STORAGE });
+    dead.destroy();
+    const snapshot = dev.rootScope.liveResources();
+    expect(snapshot).toContain(texture);
+    expect(snapshot).not.toContain(dead);
+    child.destroy();
+    expect(snapshot).toContain(texture);
+    expect(dev.rootScope.liveResources()).not.toContain(texture);
+  });
+
   it('销毁作用域:先子作用域,再本作用域资源按创建逆序', () => {
     const dev = new NullRhiDevice();
     const scene = dev.createScope('场景');

@@ -92,6 +92,8 @@ export class ResizePlugin {
 
   static destroy(this: Application): void {
     const self = host(this);
+    // 建渲染器失败时还没有初始化本插件，保留原始启动错误。
+    if (!self._cancelResize) return;
     globalThis.removeEventListener('resize', self.queueResize as () => void);
     (self._cancelResize as () => void)();
     self._cancelResize = null;

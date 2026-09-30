@@ -169,7 +169,15 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    */
   private liveSpatialSfx = new Map<string, Set<AudioPlaybackHandle>>();
   /** Every live instance reads the current mix, including one-shots and pending loads. */
-  private liveMixSounds = new Map<AudioPlaybackHandle, { id: string; channel: AudioChannel; owner?: object; update: () => void }>();
+  private liveMixSounds = new Map<AudioPlaybackHandle, { id: string; channel: AudioChannel; owner?: object; update: () => void;
+    howlPlayback?: () => { howl: Howl; sid: number } | null }>();
+  private capturePauseDepth = 0;
+  private capturePauseStartedAt = 0;
+  private capturePausedMs = 0;
+  private captureResumeCallbacks = new Set<() => void>();
+  private captureTimers = new Map<ReturnType<typeof setTimeout>, { cancel(): void }>();
+  private captureDestroyed = false;
+  private captureRestorePlayback: (() => void) | null = null;
 
   private bgmVolume = 0.6;
   private sfxVolume = 0.8;
@@ -650,6 +658,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       // 绝不在“尚未提交新 BGM”时就清空 currentBgm（否则会出现 currentBgm=null 但 currentBgmId 仍旧的错位）。
       const howl = this.assetManager.getAudio(entry.src, { loop: true })
         ?? await this.assetManager.loadAudio(entry.src, { loop: true });
+      if (this.capturePauseDepth > 0) await this.waitForCaptureResume();
+      if (this.captureDestroyed) return;
       if (myReq !== this.bgmRequestSeq) return;
       if (this.currentBgmId === id && this.currentBgm === howl && this.currentBgmSiteVolume === requestedVolume) return;
 
@@ -729,6 +739,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
 
       const howl = this.assetManager.getAudio(entry.src, { loop: true })
         ?? await this.assetManager.loadAudio(entry.src, { loop: true });
+      if (this.capturePauseDepth > 0) await this.waitForCaptureResume();
+      if (this.captureDestroyed) return;
       // 加载期间被 removeAmbient/clearAmbient/更新的 addAmbient 取代：放弃，不 play 不入 Map
       if (myReq !== this.ambientRequestSeq.get(id)) return;
       if (this.ambientLayers.has(id)) return;
@@ -960,13 +972,15 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         howl.volume(this.mixedVolume(channel, baseVolume, options.mixOwner), soundId);
       }
     };
-    this.liveMixSounds.set(handle, { id, channel, owner: options.mixOwner, update });
+    this.liveMixSounds.set(handle, { id, channel, owner: options.mixOwner, update,
+      howlPlayback: () => !stopped && howl && soundId !== null ? { howl, sid: soundId } : null });
     // Looping action SFX use the same instance-owned stop registry as positional SFX.
     if (options.loop) this.rememberSpatialSfx(id, handle);
     if (options.loop && this.cutsceneSfxActive) this.cutsceneLoopSfx.add(handle);
 
     this.runWhenAudioAllowed(async () => {
-      if (stopped) return;
+      if (this.capturePauseDepth > 0) await this.waitForCaptureResume();
+      if (stopped || this.captureDestroyed) return;
       let shared: Howl;
       try {
         shared = this.assetManager.getAudio(entry.src, { loop: false })
@@ -978,7 +992,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         return;
       }
       // await 期间被 handle.stop() 取消：不 play（否则起一个无人停止的实例）。
-      if (stopped) return;
+      if (this.capturePauseDepth > 0) await this.waitForCaptureResume();
+      if (stopped || this.captureDestroyed) return;
 
       const sid = shared.play();
       if (options.loop === true) shared.loop(true, sid);
@@ -1058,13 +1073,14 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     if (!bed) return;
     const token = ++bed.rampToken;
     const from = bed.envelope;
-    const began = performance.now();
+    const began = this.captureClockNow();
     const tick = (): void => {
       if (this.audioBeds.get(howl) !== bed || bed.rampToken !== token) return;
-      const k = durationMs > 0 ? Math.min(1, (performance.now() - began) / durationMs) : 1;
+      if (this.capturePauseDepth > 0) { this.captureResumeCallbacks.add(tick); return; }
+      const k = durationMs > 0 ? Math.min(1, (this.captureClockNow() - began) / durationMs) : 1;
       bed.envelope = from + (target - from) * k;
       this.updateAudioBed(bed);
-      if (k < 1) this.scheduleCleanup(tick, Math.min(16, Math.max(1, durationMs - (performance.now() - began))));
+      if (k < 1) this.scheduleCleanup(tick, Math.min(16, Math.max(1, durationMs - (this.captureClockNow() - began))));
       else if (target === 0) { this.audioBeds.delete(howl); howl.stop(bed.sid); }
     };
     tick();
@@ -1106,7 +1122,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       if (!this.duckLayers.includes(layer) || (releaseMs === undefined && layer.releasing)) return;
       this.dropDuckLayer(layer, releaseMs ?? 0);
     };
-    if (!managed) layer.timer = setTimeout(() => {
+    if (!managed) layer.timer = this.scheduleCaptureTimer(() => {
       console.warn(`AudioManager: 闪避层「${name}」到期自动还原（${hold}ms 内没人来抬）`);
       this.dropDuckLayer(layer, fadeMs);
     }, hold);
@@ -1126,8 +1142,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   /** 全部抬掉（切场景 / 拆除）。 */
   clearAudioDucks(): void {
     for (const l of this.duckLayers) {
-      if (l.timer) { clearTimeout(l.timer); this.pendingTimers.delete(l.timer); }
-      if (l.ramp) { clearTimeout(l.ramp); this.pendingTimers.delete(l.ramp); }
+      if (l.timer) { this.cancelCaptureTimer(l.timer); this.pendingTimers.delete(l.timer); }
+      if (l.ramp) { this.cancelCaptureTimer(l.ramp); this.pendingTimers.delete(l.ramp); }
     }
     this.duckLayers = [];
     this.pushDuckToLivePlayers();
@@ -1147,7 +1163,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private dropDuckLayer(layer: AudioDuckLayer, fadeMs: number): void {
     const i = this.duckLayers.indexOf(layer);
     if (i < 0) return;
-    if (layer.timer) { clearTimeout(layer.timer); this.pendingTimers.delete(layer.timer); }
+    if (layer.timer) { this.cancelCaptureTimer(layer.timer); this.pendingTimers.delete(layer.timer); }
     layer.timer = null;
     layer.releasing = true;
     this.rampDuckLayer(layer, 0, fadeMs);
@@ -1155,7 +1171,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
 
   /** Each layer owns its envelope; overlapping states cannot overwrite one another's fade. */
   private rampDuckLayer(layer: AudioDuckLayer, target: number, fadeMs: number): void {
-    if (layer.ramp) { clearTimeout(layer.ramp); this.pendingTimers.delete(layer.ramp); layer.ramp = null; }
+    if (layer.ramp) { this.cancelCaptureTimer(layer.ramp); this.pendingTimers.delete(layer.ramp); layer.ramp = null; }
     const from = layer.weight;
     const steps = fadeMs > 0 ? 16 : 1;
     const tick = (i: number): void => {
@@ -1165,7 +1181,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       if (i === steps && target === 0) this.duckLayers.splice(this.duckLayers.indexOf(layer), 1);
       this.pushDuckToLivePlayers();
       if (i < steps) {
-        const timer = setTimeout(() => { this.pendingTimers.delete(timer); tick(i + 1); }, Math.max(1, fadeMs / steps));
+        const timer = this.scheduleCaptureTimer(() => { this.pendingTimers.delete(timer); tick(i + 1); }, Math.max(1, fadeMs / steps));
         layer.ramp = timer;
         this.pendingTimers.add(timer);
       }
@@ -1450,8 +1466,99 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     return Math.max(0, Math.min(1, v));
   }
 
+  private captureClockNow(): number {
+    return (this.capturePauseDepth > 0 ? this.capturePauseStartedAt : performance.now()) - this.capturePausedMs;
+  }
+
+  private waitForCaptureResume(): Promise<void> {
+    if (this.capturePauseDepth === 0 || this.captureDestroyed) return Promise.resolve();
+    return new Promise(resolve => this.captureResumeCallbacks.add(resolve));
+  }
+
+  /** Stable cancellable timer identity, including when capture has deferred its deadline. */
+  private scheduleCaptureTimer(fn: () => void, ms: number): ReturnType<typeof setTimeout> {
+    const deadline = this.captureClockNow() + ms;
+    let canceled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const run = () => {
+      if (canceled || this.captureDestroyed) return;
+      if (this.capturePauseDepth > 0) { this.captureResumeCallbacks.add(run); return; }
+      const remaining = deadline - this.captureClockNow();
+      if (remaining > 0) { timer = setTimeout(run, remaining); return; }
+      this.captureTimers.delete(id);
+      fn();
+    };
+    const id = timer = setTimeout(run, ms);
+    this.captureTimers.set(id, { cancel: () => {
+      canceled = true;
+      clearTimeout(timer);
+      this.captureResumeCallbacks.delete(run);
+    } });
+    return id;
+  }
+
+  private cancelCaptureTimer(id: ReturnType<typeof setTimeout>): void {
+    this.captureTimers.get(id)?.cancel();
+    this.captureTimers.delete(id);
+    clearTimeout(id);
+  }
+
+  /** Pauses owned sound instances and the native audio clock; the keepalive respects this hold. */
+  suspendForCapture(): () => void {
+    const first = this.capturePauseDepth++ === 0;
+    const paused: Array<{ howl: Howl; sid: number; live(): boolean }> = [];
+    const ctx = first ? Howler.ctx : null;
+    const wasRunning = ctx?.state === 'running';
+    const holdContext = () => {
+      if (this.capturePauseDepth > 0 && ctx?.state === 'running') void ctx.suspend().catch(() => {});
+    };
+    if (first) {
+      this.capturePauseStartedAt = performance.now();
+      const seen = new Map<Howl, Set<number>>();
+      const hold = (howl: Howl, sid: number, live: () => boolean) => {
+        if (seen.get(howl)?.has(sid) || !howl.playing(sid)) return;
+        const ids = seen.get(howl) ?? new Set<number>();
+        ids.add(sid); seen.set(howl, ids);
+        howl.pause(sid);
+        paused.push({ howl, sid, live });
+      };
+      for (const bed of this.audioBeds.values()) {
+        hold(bed.howl, bed.sid, () => this.audioBeds.get(bed.howl) === bed);
+      }
+      for (const sound of this.liveMixSounds.values()) {
+        const playback = sound.howlPlayback?.();
+        if (playback) hold(playback.howl, playback.sid, () => {
+          const now = sound.howlPlayback?.();
+          return now?.howl === playback.howl && now.sid === playback.sid;
+        });
+      }
+      ctx?.addEventListener('statechange', holdContext);
+      holdContext();
+      this.captureRestorePlayback = () => {
+        ctx?.removeEventListener('statechange', holdContext);
+        if (this.captureDestroyed) return;
+        if (wasRunning && ctx && String(ctx.state) !== 'closed') void ctx.resume().catch(() => {});
+        for (const sound of paused) if (sound.live()) sound.howl.play(sound.sid);
+      };
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--this.capturePauseDepth > 0) return;
+      this.capturePausedMs += performance.now() - this.capturePauseStartedAt;
+      this.captureRestorePlayback?.();
+      this.captureRestorePlayback = null;
+      if (this.captureDestroyed) return;
+      const pending = [...this.captureResumeCallbacks];
+      this.captureResumeCallbacks.clear();
+      for (const resume of pending) resume();
+      if (this.audioUnblocked) this.flushPendingPlayback(false);
+    };
+  }
+
   private scheduleCleanup(fn: () => void, ms: number): void {
-    const id = setTimeout(() => {
+    const id = this.scheduleCaptureTimer(() => {
       this.pendingTimers.delete(id);
       fn();
     }, ms);
@@ -1472,7 +1579,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   private runWhenAudioAllowed(fn: () => void | Promise<void>): void {
-    if (this.audioUnblocked) {
+    if (this.audioUnblocked && this.capturePauseDepth === 0) {
       void fn();
       return;
     }
@@ -1516,6 +1623,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private flushPendingPlayback(playCue = true): void {
     this.audioUnblocked = true;
     this.audioUnlocking = false;
+    if (this.capturePauseDepth > 0) return;
     if (playCue) this.playAudioUnlockCue();
     const queued = this.pendingPlayback.splice(0);
     for (const fn of queued) {
@@ -1667,6 +1775,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   private keepAudioAlive(): void {
+    if (this.capturePauseDepth > 0 || this.captureDestroyed) return;
     const H = Howler as unknown as {
       ctx?: AudioContext | null; volume: () => number; noAudio?: boolean;
       _mobileUnloaded?: boolean; _unlockAudio?: () => void;
@@ -1868,6 +1977,12 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   destroy(): void {
+    this.captureDestroyed = true;
+    const capturePending = [...this.captureResumeCallbacks];
+    this.captureResumeCallbacks.clear();
+    for (const resume of capturePending) resume();
+    for (const timer of this.captureTimers.values()) timer.cancel();
+    this.captureTimers.clear();
     // 节流中的那次偏好写立刻兑现：玩家最后一下调的音量不能因为关页面 / 重启而丢
     if (this.mixPersistTimer) {
       clearTimeout(this.mixPersistTimer);

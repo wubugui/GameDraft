@@ -12,7 +12,7 @@ const TERMINAL = new Set(['completed', 'failed', 'stopped']);
 function parseArgs(argv) {
   const args = { command: argv[0] || 'help' };
   const valued = new Set(['base', 'boot-id', 'job', 'frames', 'detail-frame',
-    'timeout', 'capture', 'output', 'payloads', 'limit']);
+    'timeout', 'capture', 'output', 'output-dir', 'path', 'payloads', 'limit']);
   const flags = new Set(['wait', 'metadata']);
   for (let index = 1; index < argv.length; index++) {
     const token = argv[index];
@@ -104,11 +104,13 @@ function usage() {
   return `Usage: node tools/webgpu_capture/cli.mjs <command> [options]
   targets [--base http://127.0.0.1:5216]
   history [--limit 1..100] [--base URL]
-  capture [--frames 1..120] [--detail-frame 1..frames] [--boot-id ID] [--wait] [--timeout 1..300] [--base URL]
+  directory [--path ABSOLUTE_OUTSIDE_PROJECT_DIR] [--base URL]
+  capture [--frames 1..120] [--output-dir ABSOLUTE_OUTSIDE_PROJECT_DIR] [--boot-id ID] [--wait] [--timeout 1..86400] [--base URL]
   status --boot-id ID [--job ID] [--base URL]
   stop --job ID --boot-id ID [--base URL]
   analyze --capture FILE.wgpuc [--output OUTSIDE_PROJECT_DIR] [--metadata] [--payloads ID,ID|all]
   export --capture FILE.wgpuc [--output OUTSIDE_PROJECT_DIR] [--payloads ID,ID|all]
+Each frame reads back all live resources and Pass outputs, then writes to disk before the next frame.
 Capture files use WebGPU Inspector's .wgpuc format; RenderDoc .rdc files use tools/renderdoc_capture/cli.mjs.`;
 }
 
@@ -130,12 +132,17 @@ async function main() {
       const job = await api(base, 'POST', {}, {
         action: 'request', frames, detailedFrameIndex,
         targetBootId: args['boot-id'] || undefined,
+        outputDirectory: args['output-dir'] || undefined,
       });
-      const result = args.wait ? await waitFor(base, job, intOption(args.timeout ?? '180', 'timeout', 1, 300)) : job;
+      const result = args.wait ? await waitFor(base, job, intOption(args.timeout ?? '3600', 'timeout', 1, 86400)) : job;
       print(result);
       if (result?.state === 'failed' || result?.state === 'stopped') process.exitCode = 1;
       break;
     }
+    case 'directory':
+      print(args.path === undefined ? await api(base, 'GET', { action: 'settings' }) :
+        await api(base, 'POST', {}, { action: 'settings', outputDirectory: args.path }));
+      break;
     case 'status': {
       if (!args['boot-id']) throw new Error('status requires --boot-id from targets or capture result');
       print(await api(base, 'GET', {

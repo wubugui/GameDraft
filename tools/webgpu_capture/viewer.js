@@ -22,6 +22,8 @@
     eventLimit: PAGE_SIZE,
     resourceKind: 'textures',
     selectedResource: null,
+    selectedResourceSubresourceKey: null,
+    resourceBufferOffset: 0,
     selectedTextureKey: null,
     textureChoices: [],
     selectedOutputKey: null,
@@ -74,6 +76,76 @@
     return json.length > maxLength ? json.slice(0, maxLength) + '\n…（内容过长，已截断）' : json;
   }
   function pre(value, maxLength) { return make('pre', safeJson(value, maxLength)); }
+  const WGSL_KEYWORDS = new Set(['alias', 'break', 'case', 'const', 'const_assert', 'continue',
+    'continuing', 'default', 'diagnostic', 'discard', 'else', 'enable', 'false', 'fn', 'for',
+    'if', 'let', 'loop', 'override', 'requires', 'return', 'struct', 'switch', 'true',
+    'var', 'while', 'workgroupBarrier', 'storageBarrier', 'textureBarrier']);
+  function wgslCodeView(code) {
+    const view = make('div', undefined, 'wgsl-view');
+    view.setAttribute('role', 'region');
+    view.setAttribute('aria-label', 'WGSL 源码');
+    let blockComment = false;
+    const lines = String(code).replace(/\r\n?/g, '\n').split('\n');
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      const line = lines[lineIndex];
+      const row = make('div', undefined, 'wgsl-line');
+      row.appendChild(make('span', lineIndex + 1, 'wgsl-line-number'));
+      const source = make('code', undefined, 'wgsl-line-source');
+      let position = 0;
+      let plain = '';
+      const flush = () => { if (plain) { source.appendChild(document.createTextNode(plain)); plain = ''; } };
+      const token = (end, kind) => {
+        flush();
+        source.appendChild(make('span', line.slice(position, end), `wgsl-token-${kind}`));
+        position = end;
+      };
+      while (position < line.length) {
+        if (blockComment) {
+          const end = line.indexOf('*/', position);
+          token(end < 0 ? line.length : end + 2, 'comment');
+          if (end < 0) break;
+          blockComment = false;
+          continue;
+        }
+        if (line.startsWith('//', position)) { token(line.length, 'comment'); break; }
+        if (line.startsWith('/*', position)) {
+          const end = line.indexOf('*/', position + 2);
+          token(end < 0 ? line.length : end + 2, 'comment');
+          blockComment = end < 0;
+          continue;
+        }
+        if (line[position] === '"') {
+          let end = position + 1;
+          while (end < line.length) {
+            if (line[end] === '\\') { end += 2; continue; }
+            if (line[end++] === '"') break;
+          }
+          token(Math.min(end, line.length), 'string');
+          continue;
+        }
+        const rest = line.slice(position);
+        const attribute = rest.match(/^@[A-Za-z_]\w*/);
+        if (attribute) { token(position + attribute[0].length, 'attribute'); continue; }
+        const number = rest.match(/^(?:0x[0-9a-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)[fiuh]?\b/);
+        if (number) { token(position + number[0].length, 'number'); continue; }
+        const word = rest.match(/^[A-Za-z_]\w*/);
+        if (word) {
+          const value = word[0];
+          if (WGSL_KEYWORDS.has(value)) token(position + value.length, 'keyword');
+          else if (/^(?:vec[2-4]|mat[2-4]x[2-4]|texture_|sampler|array$|atomic$|ptr$|f16$|f32$|i32$|u32$|bool$)/.test(value))
+            token(position + value.length, 'type');
+          else { plain += value; position += value.length; }
+          continue;
+        }
+        plain += line[position++];
+      }
+      flush();
+      if (!source.childNodes.length) source.textContent = ' ';
+      row.appendChild(source);
+      view.appendChild(row);
+    }
+    return view;
+  }
   function shortPath(path) {
     if (typeof path !== 'string') return '—';
     return path.replace(/\\/g, '/').split('/').pop() || path;
@@ -168,6 +240,44 @@
   function selectedFrame() {
     return list(state.report?.frames).find(frame => Number(frame?.frameOrdinal) === Number(state.selectedFrame));
   }
+  function initialFrameOrdinal(report) {
+    const frames = list(report.frames);
+    const topLevel = [...list(report.resourceTextureSnapshots),
+      ...list(report.resourceBufferSnapshots)];
+    const snapshots = topLevel.length ? topLevel :
+      [...list(report.resources?.textures), ...list(report.resources?.buffers)]
+        .flatMap(resource => list(resource?.frameEndSnapshots));
+    const ordinals = new Set(snapshots.filter(snapshot =>
+      snapshot?.captureMoment === 'frame-end' && Number.isSafeInteger(snapshot.frameOrdinal))
+      .map(snapshot => snapshot.frameOrdinal));
+    const captured = frames.findLast(frame => ordinals.has(frame.frameOrdinal));
+
+    // resourceFrames records capture indices, not Inspector frameOrdinal values.
+    // Mirror the analyzer's frame selection when a valid frame has zero live resources.
+    const indices = list(report.resourceFrames);
+    const count = indices.length;
+    if (count && indices.every((index, position) => index === position + 1)) {
+      const passes = list(report.passes);
+      const display = frames.filter(frame => frame.frameTextureId != null &&
+        passes.some(pass => pass.frameOrdinal === frame.frameOrdinal &&
+          list(pass.targets).some(target => target.outputTextureId === frame.frameTextureId)));
+      const rendered = frames.filter(frame => passes.some(pass =>
+        pass.frameOrdinal === frame.frameOrdinal && pass.type === 'render'));
+      const submitted = frames.filter(frame => Number.isSafeInteger(frame.submitCommandIndex));
+      const mapped = display.length ? display.length === count ? display : null :
+        rendered.length ? rendered.length === count ? rendered : null :
+          submitted.length === count ? submitted : null;
+      if (mapped) {
+        const mappedOrdinals = new Set(mapped.map(frame => frame.frameOrdinal));
+        const last = mapped.at(-1);
+        if ([...ordinals].every(ordinal => mappedOrdinals.has(ordinal)) &&
+            Number.isSafeInteger(last?.frameOrdinal)) return last.frameOrdinal;
+      }
+    }
+    if (captured) return captured.frameOrdinal;
+    const final = frames.at(-1)?.frameOrdinal;
+    return Number.isSafeInteger(final) ? final : null;
+  }
   function resourceArray(kind) { return list(state.resources[kind]); }
   function resourceIndexById(kind, id) {
     return resourceArray(kind).findIndex(item => item && String(item.id) === String(id));
@@ -194,11 +304,111 @@
   const bufferPending = new Map();
   const bufferErrors = new Map();
   const surface = window.createGameDraftSurfaceInspector(el('surface-mount'), onPixelPicked);
-  function setInspectorPage(page) {
+  const history = { back: [], forward: [], locked: 0 };
+  let scrollRestore = null;
+  function settleInspectorScroll() {
+    if (scrollRestore && inspectorPage() === scrollRestore.page)
+      el('inspector-scroll').scrollTop = scrollRestore.top;
+  }
+  function inspectorPage() {
+    return document.querySelector('#inspector-scroll .inspector-accordion[open]')?.dataset.page || 'detail';
+  }
+  function navigationSnapshot() {
+    return {
+      selectedFrame: state.selectedFrame, frameFilter: state.frameFilter,
+      selectedPass: state.selectedPass, selectedEvent: state.selectedEvent,
+      focusScope: state.focusScope, eventLimit: state.eventLimit,
+      selectedTextureKey: state.selectedTextureKey, selectedOutputKey: state.selectedOutputKey,
+      selectedBufferPayloadId: state.selectedBufferPayloadId,
+      resourceKind: state.resourceKind, selectedResource: state.selectedResource,
+      selectedResourceSubresourceKey: state.selectedResourceSubresourceKey,
+      resourceBufferOffset: state.resourceBufferOffset,
+      previewMode: state.previewMode, mode: state.mode, pipelineStage: state.pipelineStage,
+      page: inspectorPage(), inspectorScroll: el('inspector-scroll').scrollTop,
+      treeScroll: el('event-tree').scrollTop, resourceScroll: el('resource-list').scrollTop,
+      resourceSearch: el('resource-search').value,
+      eventSearch: el('event-search').value, eventKind: el('event-kind').value,
+      bufferOffset: el('buffer-offset').value,
+    };
+  }
+  function updateHistoryButtons() {
+    el('history-back').disabled = history.back.length === 0;
+    el('history-forward').disabled = history.forward.length === 0;
+  }
+  function rememberNavigation() {
+    if (!state.report || history.locked) return;
+    const snapshot = navigationSnapshot();
+    if (JSON.stringify(history.back.at(-1)) !== JSON.stringify(snapshot)) history.back.push(snapshot);
+    if (history.back.length > 80) history.back.shift();
+    history.forward.length = 0;
+    updateHistoryButtons();
+  }
+  function withNavigation(action) {
+    rememberNavigation();
+    history.locked++;
+    try { action(); } finally { history.locked--; }
+  }
+  function restoreNavigation(snapshot) {
+    history.locked++;
+    try {
+      for (const key of ['selectedFrame', 'frameFilter', 'selectedPass', 'selectedEvent', 'focusScope',
+        'eventLimit', 'selectedTextureKey', 'selectedOutputKey', 'selectedBufferPayloadId',
+        'resourceKind', 'selectedResource', 'selectedResourceSubresourceKey', 'resourceBufferOffset',
+        'previewMode', 'mode', 'pipelineStage']) state[key] = snapshot[key];
+      el('resource-search').value = snapshot.resourceSearch;
+      el('event-search').value = snapshot.eventSearch;
+      el('event-kind').value = snapshot.eventKind;
+      renderFrameSelector();
+      renderPasses();
+      renderEvents();
+      renderEventDetail();
+      renderTextureInspector();
+      renderBufferInspector();
+      renderFrame();
+      renderPreviewMode();
+      renderMode();
+      renderResourceTabs();
+      renderResources();
+      renderResourceDetail();
+      if (snapshot.page === 'buffers' && snapshot.bufferOffset !== el('buffer-offset').value) {
+        el('buffer-offset').value = snapshot.bufferOffset;
+        renderBufferInspector();
+      }
+      setInspectorPage(snapshot.page, snapshot.inspectorScroll);
+      const restore = { page: snapshot.page, top: snapshot.inspectorScroll };
+      scrollRestore = restore;
+      requestAnimationFrame(() => {
+        if (scrollRestore !== restore) return;
+        settleInspectorScroll();
+        requestAnimationFrame(() => { if (scrollRestore === restore) settleInspectorScroll(); });
+      });
+      setTimeout(() => { if (scrollRestore === restore) scrollRestore = null; }, 1000);
+      el('event-tree').scrollTop = snapshot.treeScroll;
+      el('resource-list').scrollTop = snapshot.resourceScroll;
+    } finally { history.locked--; }
+  }
+  function moveHistory(direction) {
+    const from = direction === 'back' ? history.back : history.forward;
+    const to = direction === 'back' ? history.forward : history.back;
+    if (!from.length) return;
+    to.push(navigationSnapshot());
+    restoreNavigation(from.pop());
+    updateHistoryButtons();
+  }
+  function setInspectorPage(page, scroll = 0) {
     const target = el(`page-${page}`);
     if (!target) return;
     target.open = true;
-    target.scrollIntoView({ block: 'start' });
+    el('detail-title').textContent = ({ detail: 'Event Information / 事件详情',
+      inputs: 'Bindings / 输入与输出', pipeline: 'Pipeline State / 管线状态',
+      buffers: 'Buffer Viewer / 缓冲区', resources: 'Resources / Shader Viewer',
+      'pixel-timeline': 'Pixel Timeline / 像素轨迹', errors: 'Validation / 验证' })[page] || 'Inspector';
+    for (const button of el('inspector-tabs').querySelectorAll('[data-page]')) {
+      const active = button.dataset.page === page;
+      button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
+    }
+    el('inspector-scroll').scrollTop = scroll;
   }
   function setupSplitter(handle, host, cssVariable, orientation) {
     const vertical = orientation === 'vertical';
@@ -565,7 +775,7 @@
     const timing = report.gpuTiming;
     const profiler = report.gpuProfilerStatus;
     el('timing-note').textContent = (timing?.source === 'webgpu-timestamp-query' && finite(timing.sumPassDurationMs)
-      ? `WebGPU timestamp query sidecar：${printable(timing.timedPasses)} 个 Pass，记录时长合计 ${timing.sumPassDurationMs} ms。未测量的 Pass 和 Draw 不显示估算值。`
+      ? `GPU 时间戳：本次捕获全部帧的 ${printable(timing.timedPasses)} 个已测 Pass 合计 ${timing.sumPassDurationMs} ms。未测量的 Pass 和 Draw 不显示估算值。`
       : `这份捕获没有有效的 WebGPU GPU 时间戳。${profiler?.state ? `Profiler 状态：${profiler.state}。` : ''}${profiler?.reason || 'Draw 数和 Pass 数不能推算 GPU 耗时。'}`) +
       (report.passCaptureWarning ? ` 中间画面限制：${report.passCaptureWarning}` : '');
   }
@@ -962,6 +1172,7 @@
     const event = state.events[index];
     if (!event) return;
     const changed = state.focusScope !== 'draw' || state.selectedEvent !== index;
+    if (changed) rememberNavigation();
     const navigationPosition = state.navigationIndices.indexOf(index);
     if (navigationPosition >= state.eventLimit) state.eventLimit = Math.ceil((navigationPosition + 1) / PAGE_SIZE) * PAGE_SIZE;
     state.selectedEvent = index;
@@ -983,6 +1194,7 @@
     renderBufferInspector();
     renderFrame();
     renderPreviewMode();
+    renderResourceDetail();
     if (changed) el('inspector-scroll').scrollTop = 0;
     if (scrollToSelected) el('event-tree').querySelector(`[data-event-index="${index}"]`)?.scrollIntoView({ block: 'center' });
   }
@@ -991,6 +1203,7 @@
     const pass = passFor(index);
     if (!pass) return;
     const changed = state.focusScope !== 'pass' || state.selectedPass !== Number(index);
+    if (changed) rememberNavigation();
     state.selectedPass = Number(index);
     state.focusScope = 'pass';
     if (pass.frameOrdinal !== null && pass.frameOrdinal !== undefined) {
@@ -1010,6 +1223,7 @@
     renderBufferInspector();
     renderFrame();
     renderPreviewMode();
+    renderResourceDetail();
     if (changed) el('inspector-scroll').scrollTop = 0;
     if (!options.keepTreeScroll) el('event-tree').querySelector(`[data-event-index="${firstDraw}"]`)?.scrollIntoView({ block: 'center' });
   }
@@ -1053,8 +1267,10 @@
       const button = make('button', `${kindLabel[target.kind]} #${target.id} ${target.label || ''}`, 'plain-button');
       button.type = 'button';
       button.addEventListener('click', () => {
-        el('resource-search').value = '';
-        selectResource(target.kind, resourceIndexById(target.kind, target.id));
+        withNavigation(() => {
+          el('resource-search').value = '';
+          selectResource(target.kind, resourceIndexById(target.kind, target.id));
+        });
       });
       links.appendChild(button);
     }
@@ -1138,8 +1354,10 @@
       const button = make('button', label, 'plain-button');
       button.type = 'button';
       button.addEventListener('click', () => {
-        if (page === 'mesh') { state.previewMode = 'mesh'; renderPreviewMode(); }
-        else setInspectorPage(page);
+        withNavigation(() => {
+          if (page === 'mesh') { state.previewMode = 'mesh'; renderPreviewMode(); }
+          else setInspectorPage(page);
+        });
       });
       jumps.appendChild(button);
     }
@@ -1197,10 +1415,12 @@
     const index = state.events.indexOf(draw);
     if (index < 0) return;
     const choice = bufferChoices(draw).find(predicate);
-    selectEvent(index);
-    if (choice) state.selectedBufferPayloadId = choice.key;
-    renderBufferInspector();
-    setInspectorPage('buffers');
+    withNavigation(() => {
+      selectEvent(index);
+      if (choice) state.selectedBufferPayloadId = choice.key;
+      renderBufferInspector();
+      setInspectorPage('buffers');
+    });
   }
   function stageShaderBindings(shader) {
     const pattern = /@group\s*\(\s*(\d+)\s*\)\s*@binding\s*\(\s*(\d+)\s*\)\s*var(?:\s*<[^>]*>)?\s+([A-Za-z_]\w*)\s*:\s*([^;]+);/g;
@@ -1299,10 +1519,23 @@
     }).sort((a, b) => Number(a.mipLevel ?? 0) - Number(b.mipLevel ?? 0) ||
       Number(a.arrayLayer ?? 0) - Number(b.arrayLayer ?? 0) || Number(a.inputOrdinal ?? 0) - Number(b.inputOrdinal ?? 0));
   }
+  function inputReadbackOrigin(snapshot, compact = false) {
+    if (Number.isSafeInteger(snapshot?.rawAliasInputOrdinal) && snapshot.rawAliasInputOrdinal >= 0) {
+      const sourceDraw = Number.isSafeInteger(snapshot.rawSourceBeforeCommandIndex)
+        ? `源 Draw #${snapshot.rawSourceBeforeCommandIndex} 前` : '源 Draw 前';
+      return compact ? `复用 Input #${snapshot.rawAliasInputOrdinal} ${sourceDraw}读回 · 期间无写` :
+        `复用 Input #${snapshot.rawAliasInputOrdinal} 在${sourceDraw}的 GPU 读回；到当前 Draw 已核对纹理未写入`;
+    }
+    return compact ? `Draw #${snapshot.drawCommandIndex} 前 GPU 读回` :
+      `Draw #${snapshot.drawCommandIndex} 前的 GPU 输入读回`;
+  }
   function inputBindingKey(binding, textureId, viewId, snapshot) {
     return JSON.stringify(['绑定输入', binding.frame, binding.pass, binding.draw, binding.group,
       binding.slot, textureId, viewId, snapshot?.mipLevel ?? null, snapshot?.arrayLayer ?? null,
       snapshot?.inputOrdinal ?? null, snapshot?.imageFile ?? null, snapshot?.rawFile ?? null]);
+  }
+  function resourceTextureKey(snapshot) {
+    return `frame-resource:${snapshot.frameOrdinal}:${snapshot.textureId}:${snapshot.resourceOrdinal}`;
   }
   function previewTexture(id, viewId = null, input = false, identityKey = null) {
     const option = state.textureChoices.find(item => String(item.id) === String(id) &&
@@ -1310,6 +1543,7 @@
       (viewId == null || String(item.viewId) === String(viewId)) &&
       (identityKey == null || item.key === identityKey));
     if (option) {
+      if (state.selectedTextureKey !== option.key || state.previewMode !== 'texture') rememberNavigation();
       state.selectedTextureKey = option.key;
       state.previewMode = 'texture';
       renderTextureInspector();
@@ -1381,7 +1615,7 @@
       thumbnail.title = `在大画布查看 Draw #${draw.commandIndex} G${group.slot}/B${entry.binding} 的此纹理子资源`;
       const metadata = make('div', undefined, 'binding-texture-meta');
       const status = make('span', captured ?
-        `Draw 前 GPU 已读回${snapshot.imageFile ? ' · 缩略图' : ' · 仅 RAW'}${snapshot.bindingAmbiguous ? ' · 同 View 多槽位，采集槽位未区分' : ''}` :
+        `${inputReadbackOrigin(snapshot, true)}${snapshot.imageFile ? ' · 缩略图' : ' · 仅 RAW'}${snapshot.bindingAmbiguous ? ' · 同 View 多槽位，采集槽位未区分' : ''}` :
         snapshot?.captureMoment === 'unavailable' ?
           `Draw 前未读回：${snapshot.reason || snapshot.rawReason || snapshot.imageReason || '原因未记录'}` :
           '此绑定没有 Draw 前读回；不显示帧末图冒充输入', 'binding-texture-status');
@@ -1403,8 +1637,10 @@
       const open = () => {
         const index = state.events.indexOf(draw);
         if (index < 0) return;
-        selectEvent(index);
-        previewTexture(resource.textureId, viewId, true, key);
+        withNavigation(() => {
+          selectEvent(index);
+          previewTexture(resource.textureId, viewId, true, key);
+        });
       };
       thumbnail.addEventListener('click', open);
       metadata.appendChild(status);
@@ -1485,7 +1721,7 @@
       button.type = 'button';
       button.classList.toggle('active', state.pipelineStage === key);
       button.append(make('b', label), make('span', sub));
-      button.addEventListener('click', () => { state.pipelineStage = key; renderPipelineDetail(); });
+       button.addEventListener('click', () => { withNavigation(() => { state.pipelineStage = key; renderPipelineDetail(); }); });
       flow.appendChild(button);
     }
     holder.appendChild(flow);
@@ -1561,7 +1797,7 @@
     link.addEventListener('click', () => selectResource('shaders', resourceIndexById('shaders', shader.id)));
     holder.appendChild(link);
     const source = make('details', undefined, 'data-section');
-    source.append(make('summary', '查看 WGSL 源码'), make('pre', shader.code));
+    source.append(make('summary', '查看 WGSL 源码'), wgslCodeView(shader.code));
     holder.appendChild(source);
   }
 
@@ -1794,7 +2030,8 @@
           const storageAccess = type.match(/,\s*(read_write|read|write)\s*>/);
           access = storageAccess?.[1] === 'read_write' ? 'read-write' : storageAccess?.[1] || 'unknown';
         }
-        names.set(`${match[1]}:${match[2]}`, { name: match[4], type, access });
+        names.set(`${match[1]}:${match[2]}`, { name: match[4], type, access,
+          qualifier: qualifier[0] || '' });
       }
     }
     return names;
@@ -1833,10 +2070,12 @@
           const button = make('button', '预览该输出', 'inline-link');
           button.type = 'button';
           button.addEventListener('click', () => {
-            state.selectedOutputKey = output.key;
-            state.previewMode = 'frame';
-            renderFrame();
-            renderPreviewMode();
+            withNavigation(() => {
+              state.selectedOutputKey = output.key;
+              state.previewMode = 'frame';
+              renderFrame();
+              renderPreviewMode();
+            });
           });
           cell.appendChild(button);
         } else {
@@ -1900,6 +2139,10 @@
               Number(choice.groupSlot) === Number(group.slot) && Number(choice.binding) === Number(entry.binding) &&
               String(choice.bufferId) === String(resource.id)));
             item.appendChild(button);
+            const captured = drawBuffers.find(choice => Number(choice.groupSlot) === Number(group.slot) &&
+              Number(choice.binding) === Number(entry.binding) && String(choice.bufferId) === String(resource.id));
+            if (name?.qualifier === 'uniform' || captured?.role === 'uniform')
+              appendInlineUniform(item, draw, group, entry, captured, drawNode, groupNode);
           } else if (resource.textureId != null) {
             appendInputTexturePreview(item, pass, draw, group, entry, names);
           } else if (resource.type === 'Sampler' && resourceIndexById('samplers', resource.id) >= 0) {
@@ -2134,6 +2377,16 @@
       add(outputId, postDraw ? 'Draw 后输出' : snapshot ? 'Pass 结束读回' : '渲染目标',
         target.outputTextureLabel || target.textureLabel, snapshot, postDraw ? 'post-draw' : undefined);
     }
+    if (state.resourceKind === 'textures') {
+      const resource = resourceArray('textures')[state.selectedResource];
+      for (const snapshot of resource ? frameResourceSnapshots(resource, 'textures') : []) {
+        options.push({ key: resourceTextureKey(snapshot), id: resource.id,
+          role: '帧末资源', viewId: null, label: `${resource.label || `Texture #${resource.id}`} · mip ${snapshot.mipLevel} / 层 ${snapshot.arrayLayer} / ${snapshot.aspect}`,
+          bindingNames: [], texture: resource, snapshot, bindings: [],
+          arrayLayer: snapshot.arrayLayer, mipLevel: snapshot.mipLevel,
+          file: snapshot.imageFile, evidence: 'resource-frame-end' });
+      }
+    }
     return { options, pass, drawSelected };
   }
 
@@ -2161,7 +2414,7 @@
       select.style.maxWidth = 'none';
       select.style.width = '100%';
       for (const item of options) {
-        const evidence = item.evidence === 'pre-draw' ? `Draw #${item.snapshot.drawCommandIndex} 前实拍` :
+        const evidence = item.evidence === 'pre-draw' ? inputReadbackOrigin(item.snapshot, true) :
           item.evidence === 'input-unavailable' ? 'Draw 输入不可回读' :
           item.evidence === 'pass-end-aspect' ? `Pass 结束 · ${item.snapshot.sampleCount > 1 ? `sample ${item.snapshot.sampleIndex ?? 0}/${item.snapshot.sampleCount}` : '单样本'}` :
           item.evidence === 'aspect-unavailable' ? '此 Pass 不可回读' :
@@ -2169,14 +2422,16 @@
           item.evidence === 'upstream-pass-candidate' ? `上游 Pass #${item.snapshot.passIndex} 候选` :
           item.evidence === 'post-draw' ? `Draw #${item.snapshot.drawCommandIndex} 后` :
           item.evidence === 'this-pass' ? '本 Pass 结束' :
-          item.evidence === 'capture-final-unverified' ? '帧末快照，非 Draw 输入实拍' :
+           item.evidence === 'capture-final-unverified' ? '帧末快照，非 Draw 输入实拍' :
+           item.evidence === 'resource-frame-end' ? `第 ${item.snapshot.frameOrdinal} 帧末资源 · mip ${item.mipLevel} / ${item.snapshot.aspect}` :
           item.evidence === 'view-unavailable' ? '视图范围未捕获' :
           item.evidence === 'pass-aggregate' ? '请选具体 Draw' :
           item.evidence === 'later-write' ? '最终状态已变化' :
           item.file ? '捕获最终' : '无图像';
         const binding = item.role === '绑定输入' ? item.bindings[0] : null;
         const bindingLabel = binding ? `输入 G${binding.group}/B${binding.slot} · ${item.label} #${item.id} · Draw #${binding.draw}` : '';
-        const inputEvidence = item.evidence === 'pre-draw' ? '实拍' : evidence;
+        const inputEvidence = item.evidence === 'pre-draw' ?
+          (Number.isSafeInteger(item.snapshot?.rawAliasInputOrdinal) ? '复用实拍' : '实拍') : evidence;
         const option = make('option', binding ?
           `${bindingLabel} [${inputEvidence} mip${item.mipLevel ?? '—'}/层${item.arrayLayer ?? '—'}]` :
           `${item.role} · #${item.id} ${item.label} [${evidence}]`);
@@ -2187,7 +2442,8 @@
       }
       select.value = state.selectedTextureKey;
       select.title = select.selectedOptions[0]?.title || '';
-      select.addEventListener('change', () => {
+       select.addEventListener('change', () => {
+        rememberNavigation();
         state.selectedTextureKey = select.value;
         select.title = select.selectedOptions[0]?.title || '';
         state.previewMode = 'texture';
@@ -2208,12 +2464,14 @@
           selected.evidence === 'pass-aggregate' ? '此 Pass 有多个 Draw，请选具体 Draw 查看当时输入。' :
           `没有图像：${selected.texture.imageReason || '捕获未提供纹理字节'}。`}` :
         (selected.evidence === 'pre-draw' ?
-          `真实 Draw #${selected.snapshot.drawCommandIndex} 前的 GPU 输入读回：绑定 ${selected.bindingNames.join('、') || selected.snapshot.bindingName || '未知'}，纹理 #${selected.id}，mip ${selected.snapshot.mipLevel ?? 0}，层 ${selected.snapshot.arrayLayer ?? 0}；来源 ${selected.snapshot.source || 'RHI pre-draw GPU readback'}；格式 ${selected.snapshot.format || selected.texture.format || '未知'}。` :
+          `${inputReadbackOrigin(selected.snapshot)}：当前绑定 ${selected.bindingNames.join('、') || selected.snapshot.bindingName || '未知'}，纹理 #${selected.id}，mip ${selected.snapshot.mipLevel ?? 0}，层 ${selected.snapshot.arrayLayer ?? 0}；格式 ${selected.snapshot.format || selected.texture.format || '未知'}。` :
           selected.evidence === 'pass-end-aspect' ?
           `真实 Pass #${selected.snapshot.passIndex} 结束后的${selected.role}读回：纹理 #${selected.id}，${selected.snapshot.sourceFormat}；${selected.snapshot.sampleCount > 1 ? `MSAA sample ${selected.snapshot.sampleIndex ?? 0}/${selected.snapshot.sampleCount}` : '单样本'}；原始数据 ${selected.snapshot.rawFormat}。` :
-          selected.evidence === 'upstream-pass-candidate' ?
-          `显示上游 Pass #${selected.snapshot.passIndex} 的结束 GPU 读回；这是输入候选，未在所选 Draw 绑定时直接捕获，不能证明纹理当时内容。` : selected.snapshot ?
-            `${selected.evidence === 'post-draw' ? `真实 Draw #${selected.snapshot.drawCommandIndex} 后` : '真实 Pass 结束'}读回：第 ${selected.snapshot.frameOrdinal} 帧 Pass #${selected.snapshot.passIndex}（${selected.snapshot.label || ''}），结束命令 #${selected.snapshot.afterCommandIndex}；来源 ${selected.snapshot.source}；格式 ${selected.snapshot.format || selected.texture.format || '未知'}。` :
+           selected.evidence === 'upstream-pass-candidate' ?
+           `显示上游 Pass #${selected.snapshot.passIndex} 的结束 GPU 读回；这是输入候选，未在所选 Draw 绑定时直接捕获，不能证明纹理当时内容。` : selected.snapshot ?
+             selected.evidence === 'resource-frame-end' ?
+               `第 ${selected.snapshot.frameOrdinal} 帧末的完整资源读回：纹理 #${selected.id}，mip ${selected.mipLevel}，层 ${selected.arrayLayer}，${selected.snapshot.aspect}；不代表所选 Draw 的输入时刻。` :
+             `${selected.evidence === 'post-draw' ? `真实 Draw #${selected.snapshot.drawCommandIndex} 后` : '真实 Pass 结束'}读回：第 ${selected.snapshot.frameOrdinal} 帧 Pass #${selected.snapshot.passIndex}（${selected.snapshot.label || ''}），结束命令 #${selected.snapshot.afterCommandIndex}；来源 ${selected.snapshot.source}；格式 ${selected.snapshot.format || selected.texture.format || '未知'}。` :
             selected.evidence === 'capture-final-unverified' ?
               `这里只是捕获帧末的 mip0 纹理快照，未在所选 Draw 读取时抓取，不能证明是当时输入。${selected.texture.imagePreviewTransform || ''}` :
               `Inspector 纹理 mip0 最终状态快照，非所选 Draw / Pass 当时的输入。${selected.texture.imagePreviewTransform || ''}`) +
@@ -2230,6 +2488,69 @@
     if (Array.isArray(value)) return `[${value.map(uniformValue).join(', ')}]`;
     return typeof value === 'number' && Number.isFinite(value) ?
       String(Number(value.toPrecision(7))) : String(value);
+  }
+  function uniformTable(result) {
+    const grid = make('table', undefined, 'binding-table uniform-table');
+    const head = make('thead');
+    const title = make('tr');
+    for (const label of ['字段', 'WGSL 类型', '偏移', '捕获字节解码值']) title.appendChild(make('th', label));
+    head.appendChild(title);
+    grid.appendChild(head);
+    const body = make('tbody');
+    for (const field of result.fields) {
+      const row = make('tr');
+      for (const [index, value] of [field.name, field.type, `+${field.offset} B`, uniformValue(field.value)].entries()) {
+        const cell = make('td', value);
+        if (index === 3) cell.title = JSON.stringify(field.value);
+        row.appendChild(cell);
+      }
+      body.appendChild(row);
+    }
+    grid.appendChild(body);
+    return grid;
+  }
+  function appendInlineUniform(holder, draw, group, entry, snapshot, drawNode, groupNode) {
+    const box = make('div', undefined, 'inline-uniform');
+    box.dataset.captureMoment = snapshot?.captureMoment || 'unavailable';
+    const heading = make('div', 'Uniform 字段 · Draw 前绑定字节', 'inline-uniform-head');
+    const content = make('div', '读取 Draw 前字节…', 'muted small');
+    box.append(heading, content);
+    holder.appendChild(box);
+    if (snapshot?.type !== 'snapshot' || snapshot.captureMoment !== 'pre-draw' || !snapshot.rawFile) {
+      content.textContent = `参数不可解码：${snapshot?.reason || snapshot?.rawReason || '没有 Draw 前 GPU 字节'}`;
+      return;
+    }
+    let started = false;
+    const load = async () => {
+      if (started || !drawNode.open || !groupNode.open || !box.isConnected) return;
+      started = true;
+      try {
+        const bytes = await meshSnapshotBytes(snapshot);
+        const start = Number(snapshot.offset) - Number(snapshot.copiedOffset);
+        const size = Number(snapshot.size);
+        if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(size) ||
+            size < 0 || start + size > bytes.length) throw new Error('Draw 前绑定范围与读回文件不符');
+        const result = window.GameDraftUniformInspector?.inspectBinding({
+          shaders: resourceArray('shaders'), pipeline: pipelineForEvent(draw),
+          group: Number(group.slot), binding: Number(entry.binding),
+          bytes: bytes.subarray(start, start + size),
+          declaredSize: entry.resource.size == null ? null : Number(entry.resource.size),
+        }) || { status: 'unavailable', reason: 'Uniform 解码器未加载' };
+        if (!box.isConnected) return;
+        if (result.status !== 'ok') { content.textContent = `参数不可解码：${result.reason}`; return; }
+        heading.textContent = `${result.variable} · ${result.structName} · ${result.size} B · Draw 前 GPU 字节`;
+        content.replaceWith(uniformTable(result));
+        box.dataset.status = 'decoded';
+        settleInspectorScroll();
+      } catch (error) {
+        if (box.isConnected) content.textContent = `参数不可解码：${error.message || String(error)}`;
+      }
+    };
+    if (drawNode.open && groupNode.open) queueMicrotask(load);
+    else {
+      drawNode.addEventListener('toggle', load);
+      groupNode.addEventListener('toggle', load);
+    }
   }
   function renderUniformFields(event, item, bytes) {
     const holder = el('buffer-uniform-fields');
@@ -2256,24 +2577,7 @@
       return;
     }
     holder.appendChild(make('h3', `${result.variable} · ${result.structName} · ${result.size} B`, 'section-caption'));
-    const grid = make('table', undefined, 'binding-table uniform-table');
-    const head = make('thead');
-    const title = make('tr');
-    for (const label of ['字段', 'WGSL 类型', '偏移', '捕获字节解码值']) title.appendChild(make('th', label));
-    head.appendChild(title);
-    grid.appendChild(head);
-    const body = make('tbody');
-    for (const field of result.fields) {
-      const row = make('tr');
-      for (const [index, value] of [field.name, field.type, `+${field.offset} B`, uniformValue(field.value)].entries()) {
-        const cell = make('td', value);
-        if (index === 3) cell.title = JSON.stringify(field.value);
-        row.appendChild(cell);
-      }
-      body.appendChild(row);
-    }
-    grid.appendChild(body);
-    holder.appendChild(grid);
+    holder.appendChild(uniformTable(result));
   }
   const MAX_BUFFER_VIEW_BYTES = 16 * 1024 * 1024;
   function bufferIdentity(item) {
@@ -2581,11 +2885,32 @@
   }
   function selectResource(kind, index) {
     if (index < 0) return;
+    const kindChanged = state.resourceKind !== kind;
+    if (state.resourceKind !== kind || state.selectedResource !== index || inspectorPage() !== 'resources')
+      rememberNavigation();
+    const resource = resourceArray(kind)[index];
+    const query = el('resource-search').value.trim().toLocaleLowerCase();
+    if (query && ![resource?.id, resource?.label, resource?.code, resource?.format, resource?.imageFile]
+      .map(printable).join(' ').toLocaleLowerCase().includes(query)) el('resource-search').value = '';
+    if (state.resourceKind !== kind || state.selectedResource !== index) {
+      state.selectedResourceSubresourceKey = null;
+      state.resourceBufferOffset = 0;
+    }
     state.resourceKind = kind;
     state.selectedResource = index;
     renderResourceTabs();
-    renderResources();
+    renderResources(!kindChanged);
+    const resourceList = el('resource-list');
+    const selectedRow = resourceList.querySelector(`[data-resource-index="${index}"]`);
+    if (selectedRow) {
+      const outer = resourceList.getBoundingClientRect();
+      const inner = selectedRow.getBoundingClientRect();
+      if (inner.top < outer.top) resourceList.scrollTop += inner.top - outer.top;
+      else if (inner.bottom > outer.bottom) resourceList.scrollTop += inner.bottom - outer.bottom;
+    }
     renderResourceDetail();
+    renderTextureInspector();
+    renderPreviewMode();
     setInspectorPage('resources');
   }
   function renderResourceTabs() {
@@ -2597,21 +2922,28 @@
       button.classList.toggle('active', kind === state.resourceKind);
       button.setAttribute('aria-pressed', kind === state.resourceKind ? 'true' : 'false');
       button.addEventListener('click', () => {
+        rememberNavigation();
         state.resourceKind = kind;
         state.selectedResource = null;
+        state.selectedResourceSubresourceKey = null;
+        state.resourceBufferOffset = 0;
+        el('resource-search').value = '';
         renderResourceTabs();
-        renderResources();
+        renderResources(false);
         renderResourceDetail();
+        renderTextureInspector();
+        renderPreviewMode();
       });
       holder.appendChild(button);
     }
   }
-  function renderResources() {
+  function renderResources(preserveScroll = true) {
     const kind = state.resourceKind;
     const items = resourceArray(kind);
     const query = el('resource-search').value.trim().toLocaleLowerCase();
     el('resource-count').textContent = String(RESOURCE_KINDS.reduce((sum, [name]) => sum + resourceArray(name).length, 0));
     const holder = el('resource-list');
+    const previousScroll = preserveScroll ? holder.scrollTop : 0;
     clear(holder);
     let visible = 0;
     for (let i = 0; i < items.length; i++) {
@@ -2622,6 +2954,7 @@
       visible++;
       const button = make('button', undefined, 'list-button');
       button.type = 'button';
+      button.dataset.resourceIndex = String(i);
       button.classList.toggle('active', state.selectedResource === i);
       button.appendChild(make('span', `${printable(item?.label || kind.slice(0, -1))} · #${printable(item?.id ?? i)}`));
       const sub = kind === 'textures' ? [item?.width, item?.height, item?.format].filter(value => value !== undefined && value !== null).join(' × ') :
@@ -2633,6 +2966,185 @@
       holder.appendChild(button);
     }
     if (!visible) holder.appendChild(make('p', items.length ? '没有符合条件的资源。' : '这类资源未记录。', 'empty'));
+    holder.scrollTop = previousScroll;
+  }
+  function frameResourceSnapshots(item, kind) {
+    const embedded = list(item?.frameEndSnapshots);
+    const source = embedded.length ? embedded : list(state.report?.[kind === 'textures' ?
+      'resourceTextureSnapshots' : 'resourceBufferSnapshots']).filter(snapshot =>
+      String(snapshot[kind === 'textures' ? 'textureId' : 'bufferId']) === String(item?.id));
+    return source.filter(snapshot => snapshot.captureMoment === 'frame-end' &&
+      state.selectedFrame != null && Number(snapshot.frameOrdinal) === Number(state.selectedFrame));
+  }
+  function renderResourceTexture(holder, item) {
+    const snapshots = frameResourceSnapshots(item, 'textures').sort((a, b) =>
+      a.mipLevel - b.mipLevel || a.arrayLayer - b.arrayLayer ||
+      String(a.aspect).localeCompare(String(b.aspect)));
+    if (!snapshots.length) {
+      holder.appendChild(make('p', `所选第 ${printable(state.selectedFrame)} 帧没有这张纹理的帧末完整读回。`, 'inspect-note'));
+      const finalUrl = assetUrl(item.imageFile);
+      if (!finalUrl) return;
+      const image = make('img');
+      image.src = finalUrl;
+      image.alt = `Texture #${item.id} 捕获最终状态预览`;
+      const box = make('div', undefined, 'resource-preview');
+      box.appendChild(image);
+      holder.append(box, make('p', '旧 Inspector 最终状态预览；不代表所选帧或 Draw 时刻。', 'muted small'));
+      return;
+    }
+    const previousOrdinal = state.selectedResourceSubresourceKey?.startsWith('frame-resource:') ?
+      Number(state.selectedResourceSubresourceKey.split(':').at(-1)) : null;
+    const selected = snapshots.find(snapshot => resourceTextureKey(snapshot) === state.selectedResourceSubresourceKey) ||
+      snapshots.find(snapshot => previousOrdinal !== null && snapshot.resourceOrdinal === previousOrdinal) ||
+      snapshots[0];
+    state.selectedResourceSubresourceKey = resourceTextureKey(selected);
+    const control = make('div', undefined, 'resource-subresource');
+    control.appendChild(make('label', `第 ${state.selectedFrame} 帧末 · ${snapshots.length} 个子资源`));
+    const select = make('select');
+    select.setAttribute('aria-label', '选择资源纹理 mip、层和 aspect');
+    for (const snapshot of snapshots) {
+      const option = make('option', `mip ${snapshot.mipLevel} · 层 ${snapshot.arrayLayer} · ${snapshot.aspect} · ${snapshot.width} × ${snapshot.height}`);
+      option.value = resourceTextureKey(snapshot);
+      select.appendChild(option);
+    }
+    select.value = state.selectedResourceSubresourceKey;
+    select.addEventListener('change', () => withNavigation(() => {
+      state.selectedResourceSubresourceKey = select.value;
+      state.selectedTextureKey = select.value;
+      state.previewMode = 'texture';
+      renderResourceDetail();
+      renderTextureInspector();
+      renderPreviewMode();
+    }));
+    control.appendChild(select);
+    holder.appendChild(control);
+    holder.appendChild(make('p', `帧末 GPU 完整资源读回 · ${selected.sourceFormat} → ${selected.rawFormat}。这不是所选 Draw 前的输入。`, 'inspect-note'));
+    const links = make('div', undefined, 'resource-snapshot-links');
+    const view = make('button', '在 Texture Viewer 查看像素', 'plain-button');
+    view.type = 'button';
+    view.addEventListener('click', () => withNavigation(() => {
+      state.selectedTextureKey = resourceTextureKey(selected);
+      state.previewMode = 'texture';
+      renderTextureInspector();
+      renderPreviewMode();
+    }));
+    links.appendChild(view);
+    const rawUrl = assetUrl(selected.rawFile);
+    if (rawUrl) {
+      const raw = make('a', '下载完整原始像素 .bin', 'plain-button');
+      raw.href = rawUrl;
+      raw.download = `frame-${selected.frameOrdinal}-texture-${selected.textureId}-mip-${selected.mipLevel}-${selected.aspect}.bin`;
+      links.appendChild(raw);
+    }
+    const imageUrl = assetUrl(selected.imageFile);
+    if (imageUrl) {
+      const png = make('a', '下载 PNG', 'plain-button');
+      png.href = imageUrl;
+      png.download = `frame-${selected.frameOrdinal}-texture-${selected.textureId}-mip-${selected.mipLevel}-${selected.aspect}.png`;
+      links.appendChild(png);
+    }
+    holder.appendChild(links);
+    if (imageUrl) {
+      const box = make('div', undefined, 'resource-preview');
+      const image = make('img');
+      image.src = imageUrl;
+      image.alt = `第 ${selected.frameOrdinal} 帧末 Texture #${selected.textureId} mip ${selected.mipLevel} ${selected.aspect}`;
+      image.addEventListener('error', () => { box.replaceChildren(make('p', 'PNG 无法读取；原始像素可在 Texture Viewer 查看。', 'muted small')); });
+      box.appendChild(image);
+      holder.appendChild(box);
+    } else holder.appendChild(make('p', `PNG 未保存：${selected.imageReason || '可通过原始像素查看'}`, 'muted small'));
+  }
+  async function readResourceBufferPage(snapshot, offset, length) {
+    const url = assetUrl(snapshot.rawFile);
+    if (!url) throw new Error('Buffer 原始文件路径无效');
+    const total = Number(snapshot.rawByteLength);
+    if (!Number.isSafeInteger(total) || total !== snapshot.totalSize || offset < 0 ||
+        length < 0 || offset + length > total) throw new Error('Buffer 页范围与报告不符');
+    const response = await fetch(url, { headers: { Range: `bytes=${offset}-${offset + length - 1}` } });
+    if (!response.ok) throw new Error(`读取 Buffer 失败：HTTP ${response.status}`);
+    if (response.status === 206) {
+      const range = response.headers.get('Content-Range');
+      if (range !== `bytes ${offset}-${offset + length - 1}/${total}`) throw new Error('Buffer 分页响应范围不匹配');
+      const page = new Uint8Array(await response.arrayBuffer());
+      if (page.length !== length) throw new Error('Buffer 分页响应长度不匹配');
+      return page;
+    }
+    if (total > MAX_BUFFER_VIEW_BYTES) {
+      await response.body?.cancel();
+      throw new Error('当前文件服务不支持大 Buffer 按范围查看；完整原始文件仍可下载');
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length !== total) throw new Error('Buffer 文件长度与报告不符');
+    if (snapshot.rawSha256 && typeof crypto !== 'undefined' && crypto.subtle) {
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      if ([...hash].map(value => value.toString(16).padStart(2, '0')).join('') !== snapshot.rawSha256)
+        throw new Error('Buffer 文件 SHA-256 与报告不符');
+    }
+    return bytes.subarray(offset, offset + length);
+  }
+  function renderResourceBuffer(holder, item) {
+    const snapshots = frameResourceSnapshots(item, 'buffers');
+    if (!snapshots.length) {
+      holder.appendChild(make('p', `所选第 ${printable(state.selectedFrame)} 帧没有这个 Buffer 的帧末完整读回。`, 'inspect-note'));
+      return false;
+    }
+    const snapshot = snapshots[0];
+    holder.appendChild(make('p', `第 ${snapshot.frameOrdinal} 帧末 GPU 完整 Buffer · ${snapshot.totalSize} B · [0, ${snapshot.totalSize})。与 Draw 前绑定值是两个时刻。`, 'inspect-note'));
+    const rawUrl = assetUrl(snapshot.rawFile);
+    if (rawUrl) {
+      const download = make('a', '下载完整 Buffer .bin', 'plain-button');
+      download.href = rawUrl;
+      download.download = `frame-${snapshot.frameOrdinal}-buffer-${snapshot.bufferId}.bin`;
+      holder.appendChild(download);
+    }
+    if (!snapshot.totalSize) { holder.appendChild(make('p', '空 Buffer（0 B）。', 'muted small')); return true; }
+    const controls = make('div', undefined, 'resource-subresource');
+    controls.appendChild(make('label', '字节偏移'));
+    const input = make('input');
+    input.type = 'number';
+    input.min = '0';
+    input.max = String(snapshot.totalSize - 1);
+    input.step = '16';
+    input.value = String(Math.min(snapshot.totalSize - 1, state.resourceBufferOffset));
+    input.style.width = '125px';
+    const prev = make('button', '上一页', 'plain-button');
+    const next = make('button', '下一页', 'plain-button');
+    prev.type = next.type = 'button';
+    controls.append(input, prev, next);
+    holder.appendChild(controls);
+    const hex = make('pre', '读取原始字节…', 'resource-buffer-hex');
+    holder.appendChild(hex);
+    let request = 0;
+    const pageSize = 512;
+    const show = async () => {
+      const ticket = ++request;
+      const requested = Number(input.value);
+      const offset = Math.min(snapshot.totalSize - 1,
+        Math.max(0, Number.isSafeInteger(requested) ? requested : 0));
+      input.value = String(offset);
+      state.resourceBufferOffset = offset;
+      prev.disabled = offset === 0;
+      next.disabled = offset + pageSize >= snapshot.totalSize;
+      hex.textContent = '读取原始字节…';
+      try {
+        const bytes = await readResourceBufferPage(snapshot, offset, Math.min(pageSize, snapshot.totalSize - offset));
+        if (!hex.isConnected || ticket !== request) return;
+        const lines = [];
+        for (let at = 0; at < bytes.length; at += 16) {
+          const row = bytes.subarray(at, at + 16);
+          lines.push((offset + at).toString(16).padStart(8, '0') + '  ' +
+            [...row].map(value => value.toString(16).padStart(2, '0')).join(' ').padEnd(47) +
+            '  |' + [...row].map(value => value >= 32 && value < 127 ? String.fromCharCode(value) : '.').join('') + '|');
+        }
+        hex.textContent = lines.join('\n');
+        settleInspectorScroll();
+      } catch (error) { if (hex.isConnected && ticket === request) hex.textContent = error.message || String(error); }
+    };
+    input.addEventListener('change', () => { rememberNavigation(); show(); });
+    prev.addEventListener('click', () => { rememberNavigation(); input.value = String(Math.max(0, Number(input.value) - pageSize)); show(); });
+    next.addEventListener('click', () => { rememberNavigation(); input.value = String(Math.min(snapshot.totalSize - 1, Number(input.value) + pageSize)); show(); });
+    show();
+    return true;
   }
   function renderResourceDetail() {
     const holder = el('resource-detail');
@@ -2657,29 +3169,12 @@
     holder.appendChild(grid);
 
     if (kind === 'textures') {
-      const box = make('div', undefined, 'resource-preview');
-      const url = assetUrl(item.imageFile);
-      if (url) {
-        const img = make('img');
-        img.alt = `纹理 ${printable(item.label || item.id)} 的导出预览`;
-        const problem = make('p', '纹理图片无法读取；仍可查看描述信息。', 'muted small');
-        problem.hidden = true;
-        img.addEventListener('error', () => { img.hidden = true; problem.hidden = false; });
-        img.src = url;
-        box.append(img, problem);
-      } else {
-        box.appendChild(make('p', item.imageFile ? '图片路径无效，已拒绝加载。' :
-          `这张纹理没有导出的图片。${item.imageReason ? `原因：${item.imageReason}` : ''}`, 'muted small'));
-      }
-      holder.appendChild(box);
-      if (item.imageFile) holder.appendChild(make('p',
-        `来源：${item.imageSource || 'Inspector 纹理快照'}。仅代表捕获保存时的最终纹理状态，非任一 Draw 或 Pass 的当时输出。${item.imagePreviewTransform || ''}`,
-        'inspect-note'));
+      renderResourceTexture(holder, item);
     }
     if (kind === 'shaders') {
       if (typeof item.code === 'string' && item.code) {
         const section = make('section', undefined, 'data-section');
-        section.append(make('label', 'WGSL 源码'), make('pre', item.code));
+        section.append(make('label', 'WGSL 源码'), wgslCodeView(item.code));
         holder.appendChild(section);
       } else holder.appendChild(make('p', '捕获未包含这条着色器的 WGSL 源码。', 'muted small'));
     }
@@ -2696,6 +3191,7 @@
       }
     }
     if (kind === 'buffers') {
+      renderResourceBuffer(holder, item);
       const snapshots = list(state.report?.bufferSnapshots).filter(snapshot =>
         String(snapshot.bufferId) === String(item.id));
       const exact = snapshots.filter(snapshot => snapshot.captureMoment === 'pre-draw').length;
@@ -2708,6 +3204,7 @@
     const details = { ...item };
     delete details.code;
     delete details.imageFile;
+    delete details.frameEndSnapshots;
     addDataSection(holder, '资源描述', details);
   }
 
@@ -2775,6 +3272,7 @@
       }
       select.value = state.selectedOutputKey;
       select.addEventListener('change', () => {
+        rememberNavigation();
         state.selectedOutputKey = select.value;
         renderFrame();
         renderPreviewMode();
@@ -2838,7 +3336,7 @@
     el('pixel-readout').hidden = mesh;
     document.querySelector('.preview-evidence').hidden = mesh;
     document.querySelector('.preview-head-meta').hidden = mesh;
-    el('frame-title').textContent = mesh ? 'Mesh Preview' : 'Render Target';
+    el('frame-title').textContent = mesh ? 'Mesh Preview' : texture ? 'Texture Viewer' : 'Render Target';
     if (mesh) {
       renderMeshInspector();
       return;
@@ -2851,7 +3349,9 @@
       file: selected.file, snapshot: selected.snapshot,
       label: `${selected.role} · ${selected.label}`,
       format: selected.snapshot?.sourceFormat || selected.snapshot?.format || selected.texture?.format,
-      source: selected.evidence === 'pre-draw' ? `Draw #${selected.snapshot.drawCommandIndex} 前 GPU 输入读回 · mip ${selected.mipLevel ?? 0}` :
+      source: selected.evidence === 'pre-draw' ? `${inputReadbackOrigin(selected.snapshot, true)} · mip ${selected.mipLevel ?? 0}` :
+        selected.evidence === 'resource-frame-end' ?
+          `第 ${selected.snapshot.frameOrdinal} 帧末完整资源读回 · mip ${selected.mipLevel ?? 0} / 层 ${selected.arrayLayer ?? 0} / ${selected.snapshot.aspect}` :
         selected.evidence === 'pass-end-aspect' ?
           `Pass #${selected.snapshot.passIndex} 结束 GPU ${selected.role}读回` :
         selected.evidence === 'upstream-pass-candidate' ? `上游 Pass #${selected.snapshot.passIndex} 读回 · Draw 输入未验证` :
@@ -2874,7 +3374,9 @@
     saveRaw.hidden = !rawUrl;
     if (rawUrl) {
       saveRaw.href = rawUrl;
-      saveRaw.download = choice.snapshot.aspect ?
+      saveRaw.download = choice.snapshot.captureMoment === 'frame-end' ?
+        `frame-${choice.snapshot.frameOrdinal}-texture-${choice.snapshot.textureId}-mip-${choice.snapshot.mipLevel}-${choice.snapshot.aspect}.bin` :
+        choice.snapshot.aspect ?
         `pass-${choice.snapshot.passIndex}-${choice.snapshot.aspect}-${choice.snapshot.rawFormat}.bin` :
         choice.snapshot.captureMoment === 'pre-draw' ?
         `draw-${choice.snapshot.drawCommandIndex}-input-${choice.snapshot.textureId}-mip-${choice.snapshot.mipLevel ?? 0}-${choice.snapshot.rawFormat || 'raw'}.bin` :
@@ -2882,7 +3384,9 @@
     }
     if (url) {
       save.href = url;
-      save.download = texture ? `texture-${selected.id}${selected.snapshot?.aspect ?
+      save.download = texture && selected.evidence === 'resource-frame-end' ?
+        `frame-${selected.snapshot.frameOrdinal}-texture-${selected.id}-mip-${selected.mipLevel}-${selected.snapshot.aspect}.png` :
+        texture ? `texture-${selected.id}${selected.snapshot?.aspect ?
         `-pass-${selected.snapshot.passIndex}-${selected.snapshot.aspect}` :
         selected.evidence === 'pre-draw' ? `-draw-${selected.snapshot.drawCommandIndex}-input-mip-${selected.mipLevel ?? 0}` :
         selected.evidence === 'post-draw' ? `-draw-${selected.snapshot.drawCommandIndex}` :
@@ -2975,11 +3479,11 @@
       fill.style.width = `${Math.max(0.3, duration / max * 100)}%`;
       track.appendChild(fill);
       row.append(track, make('span', `${duration.toFixed(3)} ms`, 'gpu-bar-value'));
-      row.addEventListener('click', () => {
+      row.addEventListener('click', () => withNavigation(() => {
         state.mode = 'frame';
         renderMode();
         selectPass(pass.index);
-      });
+      }));
       bars.appendChild(row);
     }
     const measuredDuration = pass => pass.gpuTiming?.source === 'webgpu-timestamp-query' &&
@@ -2993,7 +3497,7 @@
       tr.title = `查看 ${describePass(pass)}`;
       for (const value of [describePass(pass), pass.draws ?? 0, pass.dispatches ?? 0,
         duration === null ? '—' : duration.toFixed(6), percent]) tr.appendChild(make('td', value));
-      const open = () => { state.mode = 'frame'; renderMode(); selectPass(pass.index); };
+      const open = () => withNavigation(() => { state.mode = 'frame'; renderMode(); selectPass(pass.index); });
       tr.addEventListener('click', open);
       tr.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
       rows.appendChild(tr);
@@ -3003,6 +3507,8 @@
   function renderAll(report) {
     if (!report || typeof report !== 'object' || Array.isArray(report)) throw new Error('report.json 不是有效的报告对象');
     state.report = report;
+    history.back.length = history.forward.length = 0;
+    updateHistoryButtons();
     for (const key of ['expandedFrames', 'collapsedFrames', 'expandedPasses', 'collapsedPasses',
       'expandedCategories', 'collapsedCategories', 'expandedBatches', 'collapsedBatches',
       'expandedSteps', 'collapsedSteps']) state[key].clear();
@@ -3012,9 +3518,7 @@
     const textureTimeline = buildTextureWriteTimeline(report);
     state.textureWrites = textureTimeline.writes;
     state.textureViews = textureTimeline.views;
-    const frames = list(report.frames);
-    state.selectedFrame = frames.length && finite(Number(frames[frames.length - 1]?.frameOrdinal)) ?
-      Number(frames[frames.length - 1].frameOrdinal) : null;
+    state.selectedFrame = initialFrameOrdinal(report);
     state.frameFilter = state.selectedFrame;
     state.selectedEvent = state.events.findLastIndex(event =>
       (state.selectedFrame === null || Number(event?.frameOrdinal) === state.selectedFrame) &&
@@ -3084,11 +3588,26 @@
     const index = state.navigationIndices[Number(el('event-range').value)];
     if (index !== undefined) selectEvent(index, true);
   });
-  el('mode-frame').addEventListener('click', () => { state.mode = 'frame'; renderMode(); });
-  el('mode-gpu').addEventListener('click', () => { state.mode = 'gpu'; renderMode(); });
-  el('preview-frame-button').addEventListener('click', () => { state.previewMode = 'frame'; renderPreviewMode(); });
-  el('preview-texture-button').addEventListener('click', () => { state.previewMode = 'texture'; renderPreviewMode(); });
-  el('preview-mesh-button').addEventListener('click', () => { state.previewMode = 'mesh'; renderPreviewMode(); });
+  for (const button of el('inspector-tabs').querySelectorAll('[data-page]')) {
+    button.addEventListener('click', () => {
+      if (inspectorPage() !== button.dataset.page) withNavigation(() => setInspectorPage(button.dataset.page));
+    });
+  }
+  el('history-back').addEventListener('click', () => moveHistory('back'));
+  el('history-forward').addEventListener('click', () => moveHistory('forward'));
+  el('inspector-scroll').addEventListener('wheel', () => { scrollRestore = null; }, { passive: true });
+  el('inspector-scroll').addEventListener('pointerdown', () => { scrollRestore = null; });
+  document.addEventListener('keydown', event => {
+    if (!event.altKey || event.ctrlKey || event.metaKey ||
+        (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+    event.preventDefault();
+    moveHistory(event.key === 'ArrowLeft' ? 'back' : 'forward');
+  });
+  el('mode-frame').addEventListener('click', () => { if (state.mode !== 'frame') withNavigation(() => { state.mode = 'frame'; renderMode(); }); });
+  el('mode-gpu').addEventListener('click', () => { if (state.mode !== 'gpu') withNavigation(() => { state.mode = 'gpu'; renderMode(); }); });
+  el('preview-frame-button').addEventListener('click', () => { if (state.previewMode !== 'frame') withNavigation(() => { state.previewMode = 'frame'; renderPreviewMode(); }); });
+  el('preview-texture-button').addEventListener('click', () => { if (state.previewMode !== 'texture') withNavigation(() => { state.previewMode = 'texture'; renderPreviewMode(); }); });
+  el('preview-mesh-button').addEventListener('click', () => { if (state.previewMode !== 'mesh') withNavigation(() => { state.previewMode = 'mesh'; renderPreviewMode(); }); });
   el('preview-maximize')?.addEventListener('click', () => {
     const host = document.querySelector('.frame-main');
     const maximized = host.classList.toggle('preview-maximized');
@@ -3100,6 +3619,7 @@
   setupSplitter(el('hierarchy-splitter'), el('frame-workspace'), '--tree-width', 'vertical');
   setupSplitter(el('preview-splitter'), document.querySelector('.frame-main'), '--preview-height', 'horizontal');
   el('frame-select').addEventListener('change', () => {
+    rememberNavigation();
     state.frameFilter = el('frame-select').value === 'all' ? null : Number(el('frame-select').value);
     state.selectedFrame = state.frameFilter;
     state.selectedPass = null;
@@ -3125,10 +3645,11 @@
     renderBufferInspector();
     renderFrame();
     renderPreviewMode();
+    renderResourceDetail();
     if (state.mode === 'gpu') renderGpu();
     if (state.selectedEvent !== null) el('event-tree').querySelector(`[data-event-index="${state.selectedEvent}"]`)?.scrollIntoView({ block: 'center' });
   });
-  el('clear-pass').addEventListener('click', () => {
+  el('clear-pass').addEventListener('click', () => withNavigation(() => {
     el('event-search').value = '';
     el('event-kind').value = 'visual';
     state.frameFilter = null;
@@ -3147,9 +3668,9 @@
       renderPreviewMode();
     }
     if (state.mode === 'gpu') renderGpu();
-  });
+  }));
   el('event-more').addEventListener('click', () => { state.eventLimit += PAGE_SIZE; renderEvents(); });
-  el('resource-search').addEventListener('input', renderResources);
+  el('resource-search').addEventListener('input', () => renderResources(false));
   el('texture-channel').addEventListener('change', () => surface.setChannel(el('texture-channel').value));
   el('texture-exposure').addEventListener('input', () => {
     const exposure = Number(el('texture-exposure').value);
@@ -3168,6 +3689,7 @@
     select.value = 'custom';
   });
   el('buffer-select').addEventListener('change', () => {
+    rememberNavigation();
     state.selectedBufferPayloadId = el('buffer-select').value;
     renderBufferInspector();
   });

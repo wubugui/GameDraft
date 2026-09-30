@@ -223,6 +223,15 @@ export class CutsceneRenderer {
   /** 在跑的打字机，键是台词容器（对白框 / 字幕）；dismiss / cleanup 时按键销号 */
   private typewriters = new Map<Container, TypewriterEntry>();
   private pendingRafIds = new Set<number>();
+  private pendingRafCallbacks = new Map<number, () => void>();
+  private capturePauseDepth = 0;
+  private capturePauseStartedAt = 0;
+  private capturePausedMs = 0;
+  private captureSteppedMs = 0;
+  private captureFlashStartedAt = 0;
+  private captureFlashPausedMs = 0;
+  private captureFrameActive = false;
+  private captureResumeCallbacks = new Set<() => void>();
   private activeFlash: { view: Graphics; finish: () => void } | null = null;
   private pendingTimerIds = new Set<ReturnType<typeof setTimeout>>();
   /** 过场跳过 / cleanup 时需立即 settle 的异步（animateAlpha、wait、镜头插值等） */
@@ -342,6 +351,7 @@ export class CutsceneRenderer {
   }
 
   tickTypewriters(dt: number): void {
+    if (this.capturePauseDepth > 0 && !this.captureFrameActive) return;
     if (this.typewriters.size === 0) return;
     // 打到一半玩家把逐字关掉（设置页与过场并存）或偏好根本没注入：这一帧直接补完，与 DialogueUI 同口径
     const scale = this.textSettings?.isTypewriterEnabled()
@@ -557,6 +567,7 @@ export class CutsceneRenderer {
         if (rafId !== null) {
           cancelAnimationFrame(rafId);
           this.pendingRafIds.delete(rafId);
+          this.pendingRafCallbacks.delete(rafId);
         }
         if (this.activeFlash?.view === flash) this.activeFlash = null;
         if (flash.parent) flash.parent.removeChild(flash);
@@ -564,10 +575,10 @@ export class CutsceneRenderer {
         resolve();
       });
       this.activeFlash = { view: flash, finish };
-      const start = this.flashNow();
+      const start = this.captureFlashNow();
       const tick = () => {
         rafId = null;
-        const t = Math.min(1, (this.flashNow() - start) / duration);
+        const t = Math.min(1, (this.captureFlashNow() - start) / duration);
         flash.alpha = peak * (1 - t);
         if (t < 1) rafId = this.trackRaf(tick);
         else finish();
@@ -724,7 +735,13 @@ export class CutsceneRenderer {
       if (cached && cached !== Texture.EMPTY) {
         place(cached);
       } else {
-        void this.assetManager.loadTexture(path).then(place).catch(() => { /* 缺图静默收起 */ });
+        const portraitEpoch = this.opEpoch;
+        void this.assetManager.loadTexture(path).then(async tex => {
+          if (portraitEpoch !== this.opEpoch || sprite.destroyed || !sprite.parent) return;
+          if (this.capturePauseDepth > 0) await this.waitCaptureResume(portraitEpoch);
+          if (portraitEpoch !== this.opEpoch) return;
+          place(tex);
+        }).catch(() => { /* 缺图静默收起 */ });
       }
     }
 
@@ -900,11 +917,60 @@ export class CutsceneRenderer {
 
   private trackRaf(fn: () => void): number {
     const id = requestAnimationFrame(() => {
+      if (!this.pendingRafCallbacks.has(id) || this.capturePauseDepth > 0) return;
       this.pendingRafIds.delete(id);
+      this.pendingRafCallbacks.delete(id);
       fn();
     });
     this.pendingRafIds.add(id);
+    this.pendingRafCallbacks.set(id, fn);
     return id;
+  }
+
+  private captureClockNow(): number {
+    return (this.capturePauseDepth > 0 ? this.capturePauseStartedAt : performance.now())
+      - this.capturePausedMs + this.captureSteppedMs;
+  }
+
+  private captureFlashNow(): number {
+    return (this.capturePauseDepth > 0 ? this.captureFlashStartedAt : this.flashNow())
+      - this.captureFlashPausedMs + this.captureSteppedMs;
+  }
+
+  suspendForCapture(): () => void {
+    if (this.capturePauseDepth++ === 0) {
+      this.capturePauseStartedAt = performance.now();
+      this.captureFlashStartedAt = this.flashNow();
+      for (const id of this.pendingRafIds) cancelAnimationFrame(id);
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--this.capturePauseDepth > 0) return;
+      this.capturePausedMs += performance.now() - this.capturePauseStartedAt;
+      this.captureFlashPausedMs += this.flashNow() - this.captureFlashStartedAt;
+      const pending = [...this.pendingRafCallbacks.values()];
+      this.pendingRafCallbacks.clear();
+      this.pendingRafIds.clear();
+      for (const callback of pending) callback();
+      const timers = [...this.captureResumeCallbacks];
+      this.captureResumeCallbacks.clear();
+      for (const resume of timers) resume();
+    };
+  }
+
+  beginCaptureFrame(dt: number): () => void {
+    this.captureSteppedMs += dt * 1000;
+    this.captureFrameActive = true;
+    const pending = [...this.pendingRafCallbacks.entries()];
+    for (const [id] of pending) {
+      cancelAnimationFrame(id);
+      this.pendingRafIds.delete(id);
+      this.pendingRafCallbacks.delete(id);
+    }
+    for (const [, callback] of pending) callback();
+    return () => { this.captureFrameActive = false; };
   }
 
   private createOpFinisher(onDone: () => void): () => void {
@@ -919,6 +985,18 @@ export class CutsceneRenderer {
     return finish;
   }
 
+  /** Keep I/O alive while deferring scene graph commits until the capture lease ends. */
+  private waitCaptureResume(epoch: number): Promise<void> {
+    if (epoch !== this.opEpoch || this.capturePauseDepth === 0) return Promise.resolve();
+    return new Promise(resolve => {
+      const finish = this.createOpFinisher(() => {
+        this.captureResumeCallbacks.delete(finish);
+        resolve();
+      });
+      this.captureResumeCallbacks.add(finish);
+    });
+  }
+
   /**
    * 取消过场中的 RAF/定时器并让进行中的 Promise 立即结束（供 Esc 跳过等）。
    * 先递进代际：被打断的 async 演出函数在 await 恢复后据此判定过期、立即 return，
@@ -928,6 +1006,8 @@ export class CutsceneRenderer {
     this.opEpoch++;
     this.pendingRafIds.forEach(id => cancelAnimationFrame(id));
     this.pendingRafIds.clear();
+    this.pendingRafCallbacks.clear();
+    this.captureResumeCallbacks.clear();
     this.pendingTimerIds.forEach(id => clearTimeout(id));
     this.pendingTimerIds.clear();
     const pending = [...this.cutsceneOpResolvers];
@@ -980,12 +1060,12 @@ export class CutsceneRenderer {
     }
     const ux = dx / dist;
     const uy = dy / dist;
-    const startTime = performance.now();
+    const startTime = this.captureClockNow();
 
     return new Promise(resolve => {
       const finish = this.createOpFinisher(() => resolve());
       const tick = () => {
-        const t = Math.min((performance.now() - startTime) / duration, 1);
+        const t = Math.min((this.captureClockNow() - startTime) / duration, 1);
         const s = applyCameraEase(t, easing ?? 'easeInOut');
         this.camera.snapTo(startX + ux * dist * s, startY + uy * dist * s);
         if (t < 1) this.trackRaf(tick); else finish();
@@ -996,13 +1076,13 @@ export class CutsceneRenderer {
 
   async cameraZoom(scale: number, duration: number, easing?: CutsceneCameraEasing): Promise<void> {
     const startScale = this.camera.getZoom();
-    const startTime = performance.now();
+    const startTime = this.captureClockNow();
     const dur = Math.max(1, duration);
 
     return new Promise(resolve => {
       const finish = this.createOpFinisher(() => resolve());
       const tick = () => {
-        const t = Math.min((performance.now() - startTime) / dur, 1);
+        const t = Math.min((this.captureClockNow() - startTime) / dur, 1);
         // 数据缺省时沿用历史默认曲线（ease-in-out quad），显式 easing 走 cubic 家族
         const ease = easing !== undefined
           ? applyCameraEase(t, easing)
@@ -1017,10 +1097,20 @@ export class CutsceneRenderer {
   wait(ms: number): Promise<void> {
     return new Promise(resolve => {
       const finish = this.createOpFinisher(() => resolve());
-      const id = setTimeout(() => {
+      const epoch = this.opEpoch;
+      const deadline = this.captureClockNow() + ms;
+      let id: ReturnType<typeof setTimeout>;
+      const check = () => {
         this.pendingTimerIds.delete(id);
-        finish();
-      }, ms);
+        if (epoch !== this.opEpoch) return;
+        if (this.capturePauseDepth > 0) { this.captureResumeCallbacks.add(check); return; }
+        const remaining = deadline - this.captureClockNow();
+        if (remaining > 0) {
+          id = setTimeout(check, remaining);
+          this.pendingTimerIds.add(id);
+        } else finish();
+      };
+      id = setTimeout(check, ms);
       this.pendingTimerIds.add(id);
     });
   }
@@ -1047,7 +1137,7 @@ export class CutsceneRenderer {
     const toX = Number(kb.toX ?? 0) || 0;
     const toY = Number(kb.toY ?? 0) || 0;
     const durationMs = Math.max(1, Number(kb.durationMs ?? 12000) || 12000);
-    const startTime = performance.now();
+    const startTime = this.captureClockNow();
 
     const apply = (t: number) => {
       const s = coverScale * (fromScale + (toScale - fromScale) * t);
@@ -1062,7 +1152,7 @@ export class CutsceneRenderer {
     apply(0);
     const tick = () => {
       if (this.images.get(id)?.sprite !== sprite) return;
-      const t = Math.min((performance.now() - startTime) / durationMs, 1);
+      const t = Math.min((this.captureClockNow() - startTime) / durationMs, 1);
       apply(t);
       if (t < 1) this.trackRaf(tick);
     };
@@ -1086,6 +1176,8 @@ export class CutsceneRenderer {
     } catch (err) {
       console.error(`[CutsceneRenderer] 图片加载失败: ${resolvedPath}`, err);
       if (this.imageOpStale(ep, id, seq)) return;
+      if (this.capturePauseDepth > 0) await this.waitCaptureResume(ep);
+      if (this.imageOpStale(ep, id, seq)) return;
       this.hideImg(id);
       const sw = this.screenWidth;
       const sh = this.screenHeight;
@@ -1097,6 +1189,8 @@ export class CutsceneRenderer {
       this.images.set(id, { sprite: placeholder, imagePath: resolvedPath, isPlaceholder: true, cover: true });
       return;
     }
+    if (this.imageOpStale(ep, id, seq)) return;
+    if (this.capturePauseDepth > 0) await this.waitCaptureResume(ep);
     if (this.imageOpStale(ep, id, seq)) return;
     if (!texture || texture.width <= 0 || texture.height <= 0) {
       console.warn(`[CutsceneRenderer] 图片尺寸异常: ${resolvedPath} (${texture?.width}x${texture?.height})`);
@@ -1199,6 +1293,8 @@ export class CutsceneRenderer {
     const seq = this.nextLayerSeq(kind, id);
     const build = await prepare();
     if (this.layerOpStale(kind, ep, id, seq)) return false;
+    if (this.capturePauseDepth > 0) await this.waitCaptureResume(ep);
+    if (this.layerOpStale(kind, ep, id, seq)) return false;
     this.hideLayer(kind, id);
     const r = percentLayerRect(this.screenWidth, this.screenHeight, texW, texH, xPercent, yPercent, widthPercent);
     const { node, disposeGpu } = build(r.cx, r.cy, r.dispW, r.dispH);
@@ -1237,6 +1333,8 @@ export class CutsceneRenderer {
     } catch (err) {
       console.error(`[CutsceneRenderer] 图片加载失败: ${resolvedPath}`, err);
       if (this.layerOpStale(kind, ep, id, seq)) return;
+      if (this.capturePauseDepth > 0) await this.waitCaptureResume(ep);
+      if (this.layerOpStale(kind, ep, id, seq)) return;
       const dispH = Math.max(8, dispW * 0.75);
       const placeholder = new Graphics();
       placeholder.rect(-dispW / 2, -dispH / 2, dispW, dispH);
@@ -1248,6 +1346,8 @@ export class CutsceneRenderer {
       this.layerMap(kind).set(id, { sprite: placeholder, imagePath: resolvedPath, isPlaceholder: true });
       return;
     }
+    if (this.layerOpStale(kind, ep, id, seq)) return;
+    if (this.capturePauseDepth > 0) await this.waitCaptureResume(ep);
     if (this.layerOpStale(kind, ep, id, seq)) return;
     if (!texture || texture.width <= 0 || texture.height <= 0) {
       console.warn(`[CutsceneRenderer] 图片尺寸异常: ${resolvedPath} (${texture?.width}x${texture?.height})`);
@@ -1298,6 +1398,8 @@ export class CutsceneRenderer {
       console.error(`[CutsceneRenderer] animLayer 加载失败: ${animFile}`, err);
       return;
     }
+    if (this.imageOpStale(ep, id, seq)) return;
+    if (this.capturePauseDepth > 0) await this.waitCaptureResume(ep);
     if (this.imageOpStale(ep, id, seq)) return;
 
     const stateName = opts.state && animDef.states?.[opts.state]
@@ -1365,12 +1467,12 @@ export class CutsceneRenderer {
     const frameDurationMs = 1000 / fps;
     const loop = stateDef.loop !== false;
     let idx = 0;
-    let last = performance.now();
+    let last = this.captureClockNow();
     let acc = 0;
     const tick = () => {
       if (stopped || this.images.get(id)?.sprite !== sprite) return;
       if (frameTextures.length > 1) {
-        const now = performance.now();
+        const now = this.captureClockNow();
         acc += now - last;
         last = now;
         let ended = false;
@@ -1440,6 +1542,8 @@ export class CutsceneRenderer {
       loaded.push({ def: layer, sprite, kf });
     }
     if (this.imageOpStale(ep, handleId, seq)) { for (const l of loaded) l.sprite.destroy(); return; }
+    if (this.capturePauseDepth > 0) await this.waitCaptureResume(ep);
+    if (this.imageOpStale(ep, handleId, seq)) { for (const l of loaded) l.sprite.destroy(); return; }
 
     // 新视差场景挂载即顶掉匿名镜头位（未写 handle 的 parallaxScene / 未写 id 的 showImg 托管于此，
     // 「不写句柄=自动销毁、写了=手动管理」契约）；同时递进其请求序号，令仍在加载中的匿名演出过期。
@@ -1469,11 +1573,11 @@ export class CutsceneRenderer {
         l.sprite.alpha = Math.max(0, Math.min(1, s.alpha));
       }
     };
-    const start = performance.now();
+    const start = this.captureClockNow();
     applyAll(0);
     const tick = () => {
       if (this.images.get(handleId)?.sprite !== wrap) return;
-      applyAll(performance.now() - start);
+      applyAll(this.captureClockNow() - start);
       this.trackRaf(tick);
     };
     this.trackRaf(tick);
@@ -1612,6 +1716,8 @@ export class CutsceneRenderer {
       }),
     ]);
     if (this.layerOpStale(kind, ep, id, seq)) return;
+    if (this.capturePauseDepth > 0) await this.waitCaptureResume(ep);
+    if (this.layerOpStale(kind, ep, id, seq)) return;
     if (!texFrom && !texTo) return;
     if (!texFrom) texFrom = texTo;
     if (!texTo) texTo = texFrom;
@@ -1654,11 +1760,11 @@ export class CutsceneRenderer {
 
     await new Promise<void>(resolve => {
       const finish = this.createOpFinisher(() => resolve());
-      const start = performance.now();
+      const start = this.captureClockNow();
       const tick = (): void => {
         // 中途过期（skip / 同 id 后发请求已销毁 mesh）：立即收束，不再驱动 uniform
         if (this.layerOpStale(kind, ep, id, seq)) { finish(); return; }
-        const u = Math.min((performance.now() - start) / dur, 1);
+        const u = Math.min((this.captureClockNow() - start) / dur, 1);
         setT(u);
         if (u < 1) this.trackRaf(tick);
         else finish();
@@ -1813,10 +1919,10 @@ export class CutsceneRenderer {
   animateAlpha(target: { alpha: number }, from: number, to: number, duration: number): Promise<void> {
     return new Promise(resolve => {
       const finish = this.createOpFinisher(() => resolve());
-      const startTime = performance.now();
+      const startTime = this.captureClockNow();
       target.alpha = from;
       const tick = () => {
-        const t = Math.min((performance.now() - startTime) / duration, 1);
+        const t = Math.min((this.captureClockNow() - startTime) / duration, 1);
         target.alpha = from + (to - from) * t;
         if (t < 1) this.trackRaf(tick); else finish();
       };

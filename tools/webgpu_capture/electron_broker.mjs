@@ -88,6 +88,7 @@ async function handleRequest(request, controller) {
     let result;
     if (request.method === 'GET') {
       if (action === 'targets') result = controller.list();
+      else if (action === 'settings') result = await controller.getSettings();
       else if (action === 'history') result = await controller.history({
         limit: qs.has('limit') ? Number(qs.get('limit')) : undefined,
       });
@@ -97,9 +98,10 @@ async function handleRequest(request, controller) {
       });
       else throw new Error('unknown action');
     } else if (request.method === 'POST') {
-      const body = await smallJson(request, 1024 * 1024);
+      const body = await smallJson(request, 16 * 1024 * 1024);
       if (body.action === 'register') result = controller.register(body);
       else if (body.action === 'request') result = await controller.request(body);
+      else if (body.action === 'settings') result = await controller.setSettings(body);
       else if (body.action === 'fail') result = controller.fail(body);
       else if (body.action === 'stop') result = controller.stop(body);
       else if (body.action === 'diagnostics') result = controller.diagnostics(body);
@@ -147,7 +149,19 @@ async function handleRequest(request, controller) {
         ...common, frameIndex: diagnosticFrameIndex,
         bufferOrdinal: Number(qs.get('bufferOrdinal') ?? NaN),
       });
-      else result = await controller.upload({ ...common, actualFrames: Number(qs.get('actualFrames')) });
+      else if (action === 'resource-texture-image') result = await controller.uploadResourceTextureImage({
+        ...common, frameIndex: diagnosticFrameIndex, resourceOrdinal: Number(qs.get('resourceOrdinal')),
+      });
+      else if (action === 'resource-texture-raw') result = await controller.uploadResourceTextureRaw({
+        ...common, frameIndex: diagnosticFrameIndex, resourceOrdinal: Number(qs.get('resourceOrdinal')),
+        format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
+        bytesPerRow: Number(qs.get('bytesPerRow')),
+      });
+      else if (action === 'resource-buffer-raw') result = await controller.uploadResourceBufferRaw({
+        ...common, frameIndex: diagnosticFrameIndex, resourceOrdinal: Number(qs.get('resourceOrdinal')),
+      });
+      else if (action === 'upload') result = await controller.upload({ ...common, actualFrames: Number(qs.get('actualFrames')) });
+      else throw new Error('unknown upload action');
     } else return json({ error: 'method not allowed' }, 405);
     return json(result);
   } catch (error) {

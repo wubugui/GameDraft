@@ -230,6 +230,10 @@ export class HUD {
   private flameTargetRatio: number = 1;
   private flameDisplayRatio: number = 1;
   private fixedTickMode = false;
+  private capturePauseDepth = 0;
+  private capturePauseStartedAt = 0;
+  private capturePausedMs = 0;
+  private captureSteppedMs = 0;
   /**
    * 三把火显隐（玩法清单 G.5：默认不显、动作控显、入存档）。真相在 flag，这里只是投影：
    * latch + 渐变权重（整层 alpha）+ 出场「轰一下」余量。三簇火各自的画法一个字不动。
@@ -343,11 +347,12 @@ export class HUD {
     const metaFrom = this.metaColumn.alpha;
     const metaTarget = includeMeta ? target : 1;
     if (from === target && metaFrom === metaTarget) return;
-    const start = performance.now();
+    const start = this.animationNow();
     const dur = UITheme.motion.normal;
     const tick = (): void => {
       if (this.container.destroyed) { this.hudFadeRaf = 0; return; }
-      const raw = Math.min((performance.now() - start) / dur, 1);
+      if (this.capturePauseDepth > 0) { this.hudFadeRaf = requestAnimationFrame(tick); return; }
+      const raw = Math.min((this.animationNow() - start) / dur, 1);
       const k = UITheme.motion.easeOut(raw);
       this.fadeLayer.alpha = from + (target - from) * k;
       this.metaColumn.alpha = metaFrom + (metaTarget - metaFrom) * k;
@@ -508,7 +513,7 @@ export class HUD {
       // 进场亮 4s，再 600ms 淡走；换场景重来。
       this.mapNameText.alpha = 1;
       if (this.sceneNameFadeTimer) window.clearTimeout(this.sceneNameFadeTimer);
-      this.sceneNameFadeTimer = window.setTimeout(() => this.fadeSceneNameOut(), 4000);
+      this.scheduleSceneNameFade(4000);
       // 上一张场景的区域提示不许跟着过来：切场景先收，新场景由 InteractionSystem 下一帧重发。
       this.setZoneInteractHint(null);
     };
@@ -735,13 +740,29 @@ export class HUD {
   }
 
   /** 场景名的退场淡出（600ms）；进新场景由 sceneEnterCb 拉回 alpha=1 重计时。 */
+  private scheduleSceneNameFade(durationMs: number): void {
+    const deadline = this.animationNow() + durationMs;
+    const finish = (): void => {
+      if (this.mapNameText.destroyed) { this.sceneNameFadeTimer = null; return; }
+      const remaining = deadline - this.animationNow();
+      if (this.capturePauseDepth > 0 || remaining > 0) {
+        this.sceneNameFadeTimer = window.setTimeout(finish, this.capturePauseDepth > 0 ? 100 : remaining);
+        return;
+      }
+      this.sceneNameFadeTimer = null;
+      this.fadeSceneNameOut();
+    };
+    this.sceneNameFadeTimer = window.setTimeout(finish, durationMs);
+  }
+
   private fadeSceneNameOut(): void {
     if (this.sceneNameFadeRaf) cancelAnimationFrame(this.sceneNameFadeRaf);
     const from = this.mapNameText.alpha;
-    const start = performance.now();
+    const start = this.animationNow();
     const tick = (): void => {
       if (this.mapNameText.destroyed) { this.sceneNameFadeRaf = 0; return; }
-      const t = Math.min(1, (performance.now() - start) / 600);
+      if (this.capturePauseDepth > 0) { this.sceneNameFadeRaf = requestAnimationFrame(tick); return; }
+      const t = Math.min(1, (this.animationNow() - start) / 600);
       this.mapNameText.alpha = from * (1 - UITheme.motion.easeOut(t));
       if (t < 1) this.sceneNameFadeRaf = requestAnimationFrame(tick);
       else this.sceneNameFadeRaf = 0;
@@ -1010,8 +1031,10 @@ export class HUD {
   /** 三把阳火逐帧动画自带 rAF（与 PressureHoldUI 一致：演出/对话间隙主循环可能没在更新）。 */
   private startFlameLoop(): void {
     if (this.fixedTickMode || this.flameRafId !== null || typeof requestAnimationFrame === 'undefined') return;
-    this.flameLastT = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    const step = (now: number): void => {
+    this.flameLastT = this.animationNow();
+    const step = (): void => {
+      if (this.capturePauseDepth > 0) { this.flameRafId = requestAnimationFrame(step); return; }
+      const now = this.animationNow();
       const dt = Math.min(0.05, Math.max(0, (now - this.flameLastT) / 1000));
       this.flameLastT = now;
       this.flameTime += dt;
@@ -1543,6 +1566,33 @@ export class HUD {
   }
 
   /** DEV 固定步截图/回放：冻结独立 rAF，并让 Game 的显式 tick 成为 HUD 唯一时钟。 */
+  private animationNow(): number {
+    const now = this.capturePauseDepth > 0 ? this.capturePauseStartedAt : performance.now();
+    return now - this.capturePausedMs + this.captureSteppedMs;
+  }
+
+  /** Capture pause preserves animation phases and excludes disk time from every HUD fade. */
+  suspendForCapture(): () => void {
+    if (this.capturePauseDepth++ === 0) this.capturePauseStartedAt = performance.now();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--this.capturePauseDepth === 0) {
+        this.capturePausedMs += performance.now() - this.capturePauseStartedAt;
+        this.flameLastT = this.animationNow();
+      }
+    };
+  }
+
+  stepCaptureFrame(dt: number): void {
+    if (this.capturePauseDepth === 0) return;
+    this.captureSteppedMs += dt * 1000;
+    this.flameTime += dt;
+    this.stepFlames(dt);
+    this.stepSmell(dt);
+  }
+
   setFixedTickMode(enabled: boolean): void {
     if (this.fixedTickMode === enabled) return;
     this.fixedTickMode = enabled;
@@ -1562,7 +1612,7 @@ export class HUD {
 
   /** 只由 DEV 固定步命令调用；普通运行继续走独立 rAF。 */
   stepFixedTick(dt: number): void {
-    if (!this.fixedTickMode) return;
+    if (!this.fixedTickMode || this.capturePauseDepth > 0) return;
     this.flameTime += dt;
     this.stepFlames(dt);
     this.stepSmell(dt);

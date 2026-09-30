@@ -31,6 +31,46 @@ export class DialogueVoiceDirector {
   private timerId: ReturnType<typeof setTimeout> | null = null;
   private unsubVoiceEnd: (() => void) | null = null;
   private bound: { event: string; fn: (payload?: any) => void }[] = [];
+  private capturePauseDepth = 0;
+  private timerRemainingMs: number | null = null;
+  private timerStartedAt = 0;
+  private deferredAutoAdvance = false;
+  private beatGeneration = 0;
+
+  suspendForCapture(): () => void {
+    if (this.capturePauseDepth++ === 0 && this.timerId !== null) {
+      clearTimeout(this.timerId);
+      this.timerId = null;
+      this.timerRemainingMs = Math.max(0, (this.timerRemainingMs ?? 0) - (performance.now() - this.timerStartedAt));
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--this.capturePauseDepth > 0) return;
+      if (this.deferredAutoAdvance) {
+        this.deferredAutoAdvance = false;
+        this.eventBus.emit('dialogue:autoAdvance', {});
+      } else if (this.timerRemainingMs !== null) this.startAdvanceTimer();
+    };
+  }
+
+  private emitAutoAdvance(generation: number): void {
+    if (generation !== this.beatGeneration) return;
+    if (this.capturePauseDepth > 0) this.deferredAutoAdvance = true;
+    else this.eventBus.emit('dialogue:autoAdvance', {});
+  }
+
+  private startAdvanceTimer(): void {
+    if (this.capturePauseDepth > 0 || this.timerRemainingMs === null) return;
+    const generation = this.beatGeneration;
+    this.timerStartedAt = performance.now();
+    this.timerId = setTimeout(() => {
+      this.timerId = null;
+      this.timerRemainingMs = null;
+      this.emitAutoAdvance(generation);
+    }, this.timerRemainingMs);
+  }
 
   constructor(eventBus: EventBus, channel: VoiceChannel) {
     this.eventBus = eventBus;
@@ -66,22 +106,24 @@ export class DialogueVoiceDirector {
   private armAutoAdvance(advance: VoiceAdvanceSpec | null): void {
     if (!advance) return;
     if (advance.mode === 'timer') {
-      this.timerId = setTimeout(() => {
-        this.timerId = null;
-        this.eventBus.emit('dialogue:autoAdvance', {});
-      }, advance.ms);
+      this.timerRemainingMs = advance.ms;
+      this.startAdvanceTimer();
       return;
     }
     /** 配音没起来（没配 / 未知 id / 没有留声可接管）→ 退化为等玩家点击，绝不闪切 */
     if (!this.ticket) return;
+    const generation = this.beatGeneration;
     this.unsubVoiceEnd = this.ticket.onEnd(() => {
       this.unsubVoiceEnd = null;
-      this.eventBus.emit('dialogue:autoAdvance', {});
+      this.emitAutoAdvance(generation);
     });
   }
 
   /** 结束当前行的配音记账（定时器 / 订阅一律撤，配音本身按 hold 决定停还是留声）。 */
   private endCurrentBeat(): void {
+    this.beatGeneration++;
+    this.timerRemainingMs = null;
+    this.deferredAutoAdvance = false;
     if (this.timerId !== null) {
       clearTimeout(this.timerId);
       this.timerId = null;

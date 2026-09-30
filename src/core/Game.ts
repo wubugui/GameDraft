@@ -315,7 +315,7 @@ import {
   type ScriptedSpeakerEntity,
 } from '../utils/scriptedDialogueSpeaker';
 import { resolveSpeakerSide } from '../utils/dialogueSpeakerSide';
-import { Container, Culler, Graphics, Rectangle, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from '../engine2d';
+import { Container, Culler, Graphics, Rectangle, RenderTexture, Sprite, Texture, Ticker, UPDATE_PRIORITY } from '../engine2d';
 import { bakeKeyFromBackground, breathingJsonUrl, dialogueGraphJsonUrl, sceneBakeDirUrl, sceneJsonUrl, sceneRuntimeAssetUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
 import type { TrajectoryAsset, TrajectoryKeyframe } from '../data/types';
 import type { TrajectoryEndReason } from '../systems/TrajectorySystem';
@@ -492,7 +492,7 @@ type EntityShadowEntry = {
  * · `narrative` = 叙事断点命中，等调试器发「继续」
  * · `authoring` = 进了运行时编辑模式（`src/authoring`），DEV 专用
  */
-type LogicFreezeReason = 'narrative' | 'authoring';
+type LogicFreezeReason = 'narrative' | 'authoring' | 'capture';
 
 /**
  * 运行时灯的来源。`SceneLightingSystem.setDynamicLights` 是**整表覆盖**，
@@ -927,6 +927,12 @@ export class Game {
    * 突然又能动了。
    */
   private readonly logicFreezeReasons = new Set<LogicFreezeReason>();
+  private captureFreezeDepth = 0;
+  private captureFrameStepActive = false;
+  private capturePauseStartedAt = 0;
+  private capturePausedMs = 0;
+  private captureSteppedMs = 0;
+  private captureInputBarrierOff: (() => void) | null = null;
   /** 冻结前 stage 的交互模式；全部解冻时原样还回去（不是写死 'static'）。 */
   private stageEventModeBeforeFreeze: import('../engine2d').EventMode | null = null;
   /** 主 ticker 与启动直达路由均已落地后才开放自动化命令，防启动场景覆盖测试场景。 */
@@ -965,6 +971,8 @@ export class Game {
   };
 
   constructor() {
+    // Register before any game's capture-phase keyboard listeners can consume input.
+    this.installCaptureInputBarrier();
     this.eventBus = new EventBus();
     if (import.meta.env.DEV) this.eventBus.enableDebugTrace();
     this.flagStore = new FlagStore(this.eventBus);
@@ -3785,6 +3793,9 @@ export class Game {
       applyDebugSceneWorldSize: (w, h) => this.applyDebugSceneWorldSize(w, h),
       isDevMode: () => this.isDevMode,
       getCaptureBootId: () => this.runtimeBootId,
+      getCaptureReadiness: () => this.getCaptureReadiness(),
+      suspendGameForCapture: () => this.suspendGameForCapture(),
+      advanceCaptureFrame: () => this.advanceCaptureFrame(),
       getNarrativeDebugStatus: () => this.getNarrativeDebugStatus(),
       setNarrativeDebugEnabled: (on, port) => {
         if (on) this.enableNarrativeDebugBridge({ port, persist: true });
@@ -4292,9 +4303,9 @@ export class Game {
     this.lastTime = performance.now();
     this.mainTick = () => {
       const now = performance.now();
-      const dt = Math.min((now - this.lastTime) / 1000, 0.1);
+      const dt = this.captureFrameStepActive ? 1 / 60 : Math.min((now - this.lastTime) / 1000, 0.1);
       this.lastTime = now;
-      if (this.logicFreezeReasons.size > 0) {
+      if ([...this.logicFreezeReasons].some(reason => reason !== 'capture' || !this.captureFrameStepActive)) {
         /**
          * 断点冻结期间仍要**每帧清一次输入沿**。`endFrame()` 原本是 tick 的最后一句，
          * tick 被整个跳过的话 `keyJustPressed` / `mouseJustClicked` 会一直攒着——
@@ -4555,6 +4566,131 @@ export class Game {
     }
   }
 
+  /** Keep transport and capture DOM controls alive while the complete game stays frozen. */
+  private suspendGameForCapture(): () => void {
+    if (this.tearDownComplete) throw new Error('Cannot capture a destroyed game');
+    const readiness = this.getCaptureReadiness();
+    if (!readiness.ready) throw new Error(readiness.reason);
+    if (this.captureFreezeDepth++ === 0) this.capturePauseStartedAt = performance.now();
+    this.setLogicFrozen('capture', true);
+    const releases: Array<() => void> = [];
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      for (const off of releases.reverse()) {
+        try { off(); } catch (error) { console.warn('[capture] thaw cleanup failed', error); }
+      }
+      this.captureFreezeDepth--;
+      if (this.captureFreezeDepth === 0) {
+        this.capturePausedMs += performance.now() - this.capturePauseStartedAt;
+        this.inputManager.clearInputEdges();
+        this.lastTime = performance.now();
+        this.setLogicFrozen('capture', false);
+      }
+    };
+    try {
+      releases.push(this.inputManager.suspendForCapture());
+      releases.push(this.hud.suspendForCapture());
+      releases.push(this.dialogueUI.suspendForCapture());
+      releases.push(this.dialogueVoiceDirector.suspendForCapture());
+      releases.push(this.pressureHoldUI.suspendForCapture());
+      releases.push(this.cutsceneRenderer.suspendForCapture());
+      releases.push(this.sceneManager.suspendForCapture());
+      releases.push(this.cutsceneManager.suspendForCapture());
+      releases.push(this.audioManager.suspendForCapture());
+      // Capture input and rendering are separate holds: releasing a disk wait never lets
+      // the normal animation loop run between adjacent captured frames.
+      const tickers = new Set([this.renderer.app.ticker, Ticker.shared, Ticker.system]);
+      for (const ticker of tickers) releases.push(ticker.suspend());
+
+      const media = [...document.querySelectorAll<HTMLMediaElement>('audio, video')]
+        .filter(item => !item.paused && !item.ended);
+      for (const item of media) item.pause();
+      releases.push(() => {
+        if (!this.tearDownComplete) for (const item of media) void item.play().catch(() => {});
+      });
+      return release;
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+
+  /** One synchronous frame is permitted by the capture client after the previous disk ack. */
+  private advanceCaptureFrame(): void {
+    if (this.tearDownComplete || this.captureFreezeDepth === 0 || this.captureFrameStepActive) return;
+    this.captureFrameStepActive = true;
+    const presentationReleases: Array<() => void> = [];
+    try {
+      this.captureSteppedMs += 1000 / 60;
+      this.hud.stepCaptureFrame(1 / 60);
+      this.pressureHoldUI.stepCaptureFrame(1 / 60);
+      this.sceneManager.stepCaptureFrame(1 / 60);
+      presentationReleases.push(this.dialogueUI.beginCaptureFrame(1 / 60));
+      presentationReleases.push(this.cutsceneRenderer.beginCaptureFrame(1 / 60));
+      this.renderer.app.ticker.step(1000 / 60);
+    } finally {
+      for (const release of presentationReleases.reverse()) release();
+      this.captureFrameStepActive = false;
+      this.lastTime = performance.now();
+    }
+  }
+
+  private assertCaptureMutationAllowed(): void {
+    if (this.captureFreezeDepth > 0) throw new Error('抓帧正在完整写入磁盘，游戏已冻结；请等待完成或停止抓帧');
+  }
+
+  private getCaptureReadiness(): { ready: boolean; reason: string } {
+    if (this.tearDownComplete || !this.renderer.isInitialized()) {
+      return { ready: false, reason: '游戏渲染尚未就绪' };
+    }
+    if (!this.runtimeReady) return { ready: false, reason: '游戏启动及场景初始化尚未完成' };
+    if (this.stateController.currentState === GameState.SceneTransition || !this.sceneManager.captureSceneReady) {
+      return { ready: false, reason: '场景正在加载或切换，完成后才能抓帧' };
+    }
+    return { ready: true, reason: '' };
+  }
+
+  private installCaptureInputBarrier(): void {
+    const events = ['keydown', 'keyup', 'pointerdown', 'pointerup', 'pointermove',
+      'pointercancel', 'mousedown', 'mouseup', 'mousemove', 'click', 'dblclick',
+      'contextmenu', 'wheel', 'touchstart', 'touchmove', 'touchend', 'touchcancel'] as const;
+    const blockInput = (event: Event): void => {
+      if (this.captureFreezeDepth === 0) return;
+      if (event instanceof KeyboardEvent && event.code === 'F2') {
+        if (event.type === 'keydown' && !event.repeat && this.debugPanelUI) {
+          if (this.debugPanelUI.isOpen) this.debugPanelUI.close();
+          else this.debugPanelUI.open();
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      const target = event.target;
+      const captureControl = target instanceof Element && (target.closest('[data-capture-controls]')
+        || target.closest('#debug-dock .debug-dock__tabs')
+        || target.closest('#debug-dock .debug-dock__close')
+        || target.closest('#debug-dock summary'));
+      if (captureControl) {
+        // Native text editing/button activation survives; game keyboard listeners do not.
+        if (event instanceof KeyboardEvent) event.stopImmediatePropagation();
+        return;
+      }
+      if (event.cancelable) event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    for (const event of events) window.addEventListener(event, blockInput, { capture: true, passive: false });
+    this.captureInputBarrierOff = () => {
+      for (const event of events) window.removeEventListener(event, blockInput, true);
+    };
+  }
+
+  private captureClockNow(): number {
+    return (this.captureFreezeDepth > 0 ? this.capturePauseStartedAt : performance.now())
+      - this.capturePausedMs + this.captureSteppedMs;
+  }
+
   /** 真正把探针挂上去（连接、观察者、五个玩家动作事件）。只由 enable 路径调用。 */
   private attachNarrativeDebugBridge(port: number): void {
     const bridge = installNarrativeDebugBridge({
@@ -4562,16 +4698,16 @@ export class Game {
       getSceneId: () => this.sceneManager.currentSceneData?.id ?? '',
       canSave: () => this.saveManager.canSaveNow(),
       exportSave: () => this.saveManager.capturePayload(),
-      importSave: (payload) => this.saveManager.loadPayload(payload),
-      emitSignal: (signal) => this.narrativeStateManager.emitNarrativeSignal({
+      importSave: (payload) => { this.assertCaptureMutationAllowed(); return this.saveManager.loadPayload(payload); },
+      emitSignal: (signal) => { this.assertCaptureMutationAllowed(); return this.narrativeStateManager.emitNarrativeSignal({
         sourceType: signal.sourceType as NarrativeSignal['sourceType'],
         sourceId: signal.sourceId,
         signal: signal.signal,
         // 私有信号的定向依据。调试器没挑实体时不带，行为与从前一字不差。
         ...(signal.owner ? { owner: signal.owner } : {}),
-      }),
-      setState: (graphId, stateId) => this.narrativeStateManager.debugSetNarrativeState(graphId, stateId),
-      reloadScene: (sceneId) => this.devLoadScene(sceneId || (this.sceneManager.currentSceneData?.id ?? '')),
+      }); },
+      setState: (graphId, stateId) => { this.assertCaptureMutationAllowed(); return this.narrativeStateManager.debugSetNarrativeState(graphId, stateId); },
+      reloadScene: (sceneId) => { this.assertCaptureMutationAllowed(); return this.devLoadScene(sceneId || (this.sceneManager.currentSceneData?.id ?? '')); },
       /** 断点期间冻主 tick（只冻游戏逻辑；Pixi 照渲、WebSocket 照收，所以「继续」送得进来） */
       setLogicFrozen: (frozen) => this.setLogicFrozen('narrative', frozen),
     }, { port });
@@ -7432,7 +7568,7 @@ export class Game {
     const env = this.currentLightEnv;
     if (!env || this.entityShadows.size === 0) return;
 
-    const now = performance.now();
+    const now = this.captureClockNow();
     const dtMs = this.shadowDriveLastMs > 0 ? Math.min(now - this.shadowDriveLastMs, 100) : 16;
     this.shadowDriveLastMs = now;
 
@@ -8671,6 +8807,14 @@ export class Game {
         this.emoteBubbleManager.cleanupByOwner(BUBBLE_ANCHOR_PREVIEW_OWNER);
       },
     };
+    const devApi = window.__gameDevAPI as unknown as Record<string, unknown>;
+    for (const [name, value] of Object.entries(devApi)) {
+      if (typeof value !== 'function' || name.startsWith('get') || name.startsWith('is')) continue;
+      devApi[name] = (...args: unknown[]) => {
+        this.assertCaptureMutationAllowed();
+        return value(...args);
+      };
+    }
     /** 启动直达路由（过场直启 / 场景直达 / 各小游戏预览）需要主 tick 驱动位移与小游戏
      *  update——存起来由 start() 在 `ticker.add(mainTick)` 之后调用（真实就绪信号，
      *  替代旧 300/900/450ms 魔数延时）；顺序 await 保证过场播完才进下一站。 */
@@ -9653,6 +9797,7 @@ export class Game {
         volumes: this.audioManager.serialize(),
       },
       inFlight: {
+        captureFrozen: this.captureFreezeDepth > 0,
         runtimeReady: this.runtimeReady,
         fixedTickMode: this.fixedTickMode,
         sceneSwitching: this.sceneManager.switching,
@@ -9837,6 +9982,11 @@ export class Game {
   }
 
   private applyRuntimeCommand(command: unknown): Promise<{ id: string; type: string; ok: boolean; message: string }> {
+    if (this.captureFreezeDepth > 0 && (command as { type?: unknown } | null)?.type !== 'captureSnapshot') {
+      const raw = command as { id?: unknown; type?: unknown } | null;
+      return Promise.resolve({ id: String(raw?.id ?? ''), type: String(raw?.type ?? 'unknown'),
+        ok: false, message: '抓帧正在完整写入磁盘，游戏已冻结；请等待完成或停止抓帧' });
+    }
     return applyDevRuntimeCommand(command, {
       captureSnapshot: (reason) => this.publishRuntimeDebugSnapshot(reason),
       clearEventTrace: () => this.eventBus.clearDebugTrace(),
@@ -9923,6 +10073,7 @@ export class Game {
   }
 
   private async debugStepTicks(ticks: number, dtMs?: number): Promise<void> {
+    this.assertCaptureMutationAllowed();
     // 参数一律先夹成有限值再用：命令通道那头有兜底，但 `__gameDevAPI.stepFixedTicks` 是**裸暴露**的，
     // 少传一个 dtMs 就是 undefined/1000 = NaN → dt=NaN → 步长 `0*NaN=NaN` → 玩家世界坐标被写成 NaN。
     // 这个坏法极其阴：位移分支靠 `stepX !== 0` 放行，NaN 恰好过闸；越界/碰撞判据遇 NaN 又全是 false，
@@ -9931,6 +10082,7 @@ export class Game {
     const ms = Number.isFinite(dtMs) ? (dtMs as number) : 1000 / 60;
     const dt = Math.max(0.001, Math.min(0.1, ms / 1000));
     for (let index = 0; index < count; index++) {
+      this.assertCaptureMutationAllowed();
       this.tick(dt);
       this.hud.stepFixedTick(dt);
       // 真实 Ticker 的每帧之间会回到事件循环并清空整条微任务链；单次
@@ -10203,6 +10355,8 @@ export class Game {
   destroy(): void {
     if (this.tearDownComplete) return;
     this.tearDownComplete = true;
+    this.captureInputBarrierOff?.();
+    this.captureInputBarrierOff = null;
 
     /**
      * 脱手演出最先收：它是唯一一条**在玩家背后自己跑**的时间线，各系统一个个销毁的过程中
@@ -10534,6 +10688,7 @@ export class Game {
    * 加一个暂停源就得记得改两处——2026-09-19 收成这一处。
    */
   private isWorldPaused(): boolean {
+    if (this.captureFreezeDepth > 0 && !this.captureFrameStepActive) return true;
     if (this.systemNotePauseDepth > 0) return true;
     const s = this.stateController.currentState;
     return s === GameState.SceneTransition
@@ -10543,6 +10698,7 @@ export class Game {
   }
 
   private tick(dt: number): void {
+    if (this.captureFreezeDepth > 0 && !this.captureFrameStepActive) return;
     /**
      * 引导浮标的「收起来」判据必须每帧现算，且**排在下面所有 early-return 之前**：
      * 它是写在容器上的可见性状态，停一帧就把上一帧的可见性冻住——说明卡 / 死亡这条
@@ -10788,7 +10944,7 @@ export class Game {
     this.updateFrustumCulling();
 
     // 燃烧滤镜的相机 uniform：相机本帧已定稿（早于这里推，镜头一动烧痕就滑一帧）；限速上传燃烧场纹理
-    this.burnRenderer.update(performance.now(), {
+    this.burnRenderer.update(this.captureClockNow(), {
       x: this.renderer.worldContainer.x,
       y: this.renderer.worldContainer.y,
       scale: this.camera.getProjectionScale(),

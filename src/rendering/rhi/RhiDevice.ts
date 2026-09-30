@@ -265,6 +265,8 @@ export interface RhiDrawInputCapture {
   readonly texture: GPUTexture | null;
   readonly textureId: number | null;
   readonly viewId: number | null;
+  /** 本次提交中该原生纹理内容的单调版本；相同版本才可复用 GPU 回读。 */
+  readonly contentVersion: number;
   readonly mipLevel: number;
   readonly arrayLayer: number;
   readonly width: number;
@@ -301,12 +303,49 @@ export interface RhiDrawBufferCapture {
   readonly reason?: string;
 }
 
+/** Snapshot of one live RHI texture subresource at the end of a frame submission. */
+export interface RhiFrameResourceTextureCapture {
+  readonly encoder: GPUCommandEncoder;
+  readonly texture: GPUTexture | null;
+  readonly textureId: number | null;
+  readonly textureOrdinal: number;
+  readonly label: string;
+  readonly width: number;
+  readonly height: number;
+  readonly sourceFormat: RhiTextureFormat;
+  readonly mipLevel: number;
+  readonly arrayLayer: number;
+  readonly aspect: 'color' | 'depth' | 'stencil';
+  readonly sampleCount: number;
+  readonly reason?: string;
+}
+
+/** Snapshot of one whole live RHI buffer at the end of a frame submission. */
+export interface RhiFrameResourceBufferCapture {
+  readonly encoder: GPUCommandEncoder;
+  readonly buffer: GPUBuffer | null;
+  readonly bufferId: number | null;
+  readonly bufferOrdinal: number;
+  readonly label: string;
+  readonly totalSize: number;
+  readonly reason?: string;
+}
+
+export interface RhiFrameResourceInventory {
+  readonly textureCount: number;
+  readonly bufferCount: number;
+  readonly textureSubresourceCount: number;
+}
+
 export interface RhiFrameDebugCapture {
   /** 只拦截下一次匹配的命令提交，回调同步执行；onSubmitted 后可以异步 map 回读缓冲。 */
   captureNextSubmission(hooks: {
     kind?: 'frame' | 'submit' | 'any';
     onDrawInput?: (input: RhiDrawInputCapture) => void;
     onDrawBuffer?: (buffer: RhiDrawBufferCapture) => void;
+    onResourceTexture?: (texture: RhiFrameResourceTextureCapture) => void;
+    onResourceBuffer?: (buffer: RhiFrameResourceBufferCapture) => void;
+    onResourceInventory?: (inventory: RhiFrameResourceInventory) => void;
     onPassEnd: (pass: RhiRenderPassEndCapture) => void;
     onAspectEnd?: (aspect: RhiDepthStencilAspectCapture) => void;
     onSubmitted?: () => void;

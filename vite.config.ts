@@ -114,6 +114,7 @@ function webgpuCaptureApi(): Plugin {
           let result: unknown;
           if (req.method === 'GET') {
             if (action === 'targets') result = controller.list();
+            else if (action === 'settings') result = await controller.getSettings();
             else if (action === 'history') result = await controller.history({
               limit: qs.has('limit') ? Number(qs.get('limit')) : undefined,
             });
@@ -128,7 +129,7 @@ function webgpuCaptureApi(): Plugin {
             for await (const chunk of req) {
               const bytes = chunk as Buffer;
               size += bytes.length;
-              if (size > 1024 * 1024) throw new Error('request too large');
+              if (size > 16 * 1024 * 1024) throw new Error('request too large');
               chunks.push(bytes);
             }
             const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
@@ -139,7 +140,9 @@ function webgpuCaptureApi(): Plugin {
             else if (body.action === 'request') result = await controller.request({
               targetBootId: body.targetBootId, frames: body.frames,
               detailedFrameIndex: body.detailedFrameIndex,
+              outputDirectory: body.outputDirectory,
             });
+            else if (body.action === 'settings') result = await controller.setSettings(body);
             else if (body.action === 'fail') result = controller.fail({ jobId: body.jobId, targetBootId: body.targetBootId, error: body.error });
             else if (body.action === 'stop') result = controller.stop({ jobId: body.jobId, targetBootId: body.targetBootId });
             else if (body.action === 'diagnostics') result = controller.diagnostics(body);
@@ -202,12 +205,31 @@ function webgpuCaptureApi(): Plugin {
                 bufferOrdinal: Number(qs.get('bufferOrdinal') ?? NaN),
                 stream: req, contentLength,
               });
-            } else {
+            } else if (action === 'resource-texture-image') {
+              result = await controller.uploadResourceTextureImage({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: Number(qs.get('frameIndex')), resourceOrdinal: Number(qs.get('resourceOrdinal')),
+                stream: req, contentLength,
+              });
+            } else if (action === 'resource-texture-raw') {
+              result = await controller.uploadResourceTextureRaw({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: Number(qs.get('frameIndex')), resourceOrdinal: Number(qs.get('resourceOrdinal')),
+                format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
+                bytesPerRow: Number(qs.get('bytesPerRow')), stream: req, contentLength,
+              });
+            } else if (action === 'resource-buffer-raw') {
+              result = await controller.uploadResourceBufferRaw({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: Number(qs.get('frameIndex')), resourceOrdinal: Number(qs.get('resourceOrdinal')),
+                stream: req, contentLength,
+              });
+            } else if (action === 'upload') {
               result = await controller.upload({
                 jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
                 actualFrames: Number(qs.get('actualFrames')), stream: req, contentLength,
               });
-            }
+            } else throw new Error('unknown upload action');
           } else {
             res.statusCode = 405;
             res.end(JSON.stringify({ error: 'method not allowed' }));

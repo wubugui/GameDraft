@@ -1,15 +1,18 @@
 // Game canvas and pass readbacks are separate evidence. Inspector texture mip
 // payloads may contain only a final state; never reuse them for earlier passes.
-import { copyFile, lstat, mkdir, open, readFile, readdir, realpath, unlink } from 'node:fs/promises';
+import { copyFile, link, lstat, mkdir, open, readFile, readdir, realpath, unlink } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const MAX_SIDECAR_BYTES = 128 * 1024 * 1024;
-const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
-const MAX_PASS_RAW_BYTES = 512 * 1024 * 1024;
-const MAX_BUFFER_ITEM_BYTES = 16 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
+const MAX_PASS_RAW_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_INPUT_RAW_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_BUFFER_ITEM_BYTES = 256 * 1024 * 1024;
+const MAX_RESOURCE_TEXTURE_RAW_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_RESOURCE_BUFFER_RAW_BYTES = 1024 * 1024 * 1024;
 const RAW_FORMAT_BYTES = new Map([
   ['r8unorm', 1], ['rg8unorm', 2], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4],
   ['bgra8unorm', 4], ['bgra8unorm-srgb', 4],
@@ -18,6 +21,58 @@ const RAW_FORMAT_BYTES = new Map([
   ['r32uint', 4], ['rgba32uint', 16],
   ['stencil8', 1],
 ]);
+
+function sameContentIdentity(a, b) {
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size &&
+    a.mtimeNs === b.mtimeNs;
+}
+
+async function checkedSourceHash(source, expectedSha256, description) {
+  const before = await lstat(source, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw new Error(`${description} is not an ordinary file`);
+  }
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(source)) hash.update(chunk);
+  const after = await lstat(source, { bigint: true });
+  if (!sameContentIdentity(before, after) || before.ctimeNs !== after.ctimeNs) {
+    throw new Error(`${description} changed during SHA-256 validation`);
+  }
+  if (hash.digest('hex') !== expectedSha256) {
+    throw new Error(`${description} SHA-256 differs from manifest`);
+  }
+  return after;
+}
+
+async function linkVerifiedSidecar(source, dest, outputDir, expectedSha256,
+  sourceInfo, verifiedFiles) {
+  if (!verifiedFiles || !sourceInfo || typeof sourceInfo.ino !== 'bigint' ||
+      sourceInfo.ino <= 0n) return false;
+  try {
+    await link(source, dest);
+  } catch (error) {
+    if (['EXDEV', 'ENOTSUP', 'ENOSYS', 'EPERM', 'EACCES', 'EMLINK', 'EINVAL']
+      .includes(error?.code)) return false;
+    throw error;
+  }
+  try {
+    const currentSource = await lstat(source, { bigint: true });
+    const linked = await lstat(dest, { bigint: true });
+    if (!currentSource.isFile() || !linked.isFile() ||
+        !sameContentIdentity(sourceInfo, currentSource) ||
+        !sameContentIdentity(currentSource, linked)) {
+      throw new Error('sidecar hard link does not match its verified source');
+    }
+    const name = relative(outputDir, dest).replaceAll('\\', '/');
+    verifiedFiles.set(name, { sha256: expectedSha256, dev: linked.dev,
+      ino: linked.ino, size: linked.size, mtimeNs: linked.mtimeNs,
+      ctimeNs: linked.ctimeNs });
+    return true;
+  } catch (error) {
+    try { await unlink(dest); } catch { /* Preserve the identity error. */ }
+    throw error;
+  }
+}
 
 function relativePng(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= 240 &&
@@ -57,18 +112,23 @@ async function readSidecarManifest(sourceDir) {
   try { stat = await lstat(path); }
   catch (error) { if (error?.code === 'ENOENT') return null; throw error; }
   if (!stat.isFile() || stat.size > MAX_MANIFEST_BYTES) {
-    throw new Error('sidecars.json must be a regular file of at most 4 MiB');
+    throw new Error('sidecars.json must be a regular file of at most 64 MiB');
   }
   const manifest = JSON.parse(await readFile(path, 'utf8'));
   if (!manifest || manifest.schemaVersion !== 1 ||
       !Array.isArray(manifest.frames) || !Array.isArray(manifest.passSnapshots) ||
       !Array.isArray(manifest.gpuTimings) ||
       (manifest.inputSnapshots !== undefined && !Array.isArray(manifest.inputSnapshots)) ||
-      (manifest.inputSnapshots?.length ?? 0) > 1024 ||
+      (manifest.inputSnapshots?.length ?? 0) > 120 * 1024 ||
       (manifest.aspectSnapshots !== undefined && !Array.isArray(manifest.aspectSnapshots)) ||
-      (manifest.aspectSnapshots?.length ?? 0) > 2048 ||
+      (manifest.aspectSnapshots?.length ?? 0) > 120 * 2048 ||
       (manifest.bufferSnapshots !== undefined && !Array.isArray(manifest.bufferSnapshots)) ||
-      (manifest.bufferSnapshots?.length ?? 0) > 1024 ||
+      (manifest.bufferSnapshots?.length ?? 0) > 120 * 8192 ||
+      (manifest.resourceTextureSnapshots !== undefined && !Array.isArray(manifest.resourceTextureSnapshots)) ||
+      (manifest.resourceTextureSnapshots?.length ?? 0) > 120 * 8192 ||
+      (manifest.resourceBufferSnapshots !== undefined && !Array.isArray(manifest.resourceBufferSnapshots)) ||
+      (manifest.resourceBufferSnapshots?.length ?? 0) > 120 * 4096 ||
+      (manifest.diagnosticFrames !== undefined && !Array.isArray(manifest.diagnosticFrames)) ||
       (manifest.passUnavailable !== undefined && !Array.isArray(manifest.passUnavailable))) {
     throw new Error('sidecars.json requires schemaVersion 1 and frames, passSnapshots, gpuTimings arrays');
   }
@@ -182,7 +242,7 @@ export function verifiedDrawBufferBinding(pass, events, resources, item) {
 }
 
 async function copySidecar(sourceDir, outputDir, file, destination, expectedWidth, expectedHeight,
-  expectedSha256 = null) {
+  expectedSha256 = null, verifiedFiles = null) {
   const safe = relativePng(file);
   if (!safe) throw new Error('sidecar PNG path must be a safe relative path');
   if (expectedSha256 !== null && (typeof expectedSha256 !== 'string' ||
@@ -204,6 +264,10 @@ async function copySidecar(sourceDir, outputDir, file, destination, expectedWidt
   const dest = join(outputDir, destination);
   await mkdir(dirname(dest), { recursive: true });
   try { await unlink(dest); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  const sourceInfo = expectedSha256 === null ? null :
+    await checkedSourceHash(physicalSource, expectedSha256, 'sidecar PNG');
+  if (sourceInfo && await linkVerifiedSidecar(physicalSource, dest, outputDir,
+    expectedSha256, sourceInfo, verifiedFiles)) return dest;
   await copyFile(source, dest);
   if (expectedSha256 !== null) {
     const hash = createHash('sha256');
@@ -217,7 +281,8 @@ async function copySidecar(sourceDir, outputDir, file, destination, expectedWidt
 }
 
 async function copyRawSidecar(sourceDir, outputDir, item, destination, requireHash = false,
-  expectedFormat = item.format) {
+  expectedFormat = item.format, maxBytes = MAX_PASS_RAW_BYTES, allowPacked = false,
+  verifiedFiles = null) {
   const safe = relativeRaw(item.rawFile);
   if (!safe) throw new Error('raw pass path must be a safe relative .bin path');
   const bpp = RAW_FORMAT_BYTES.get(item.rawFormat);
@@ -227,9 +292,10 @@ async function copyRawSidecar(sourceDir, outputDir, item, destination, requireHa
   if (!bpp || item.rawFormat !== expectedFormat ||
       !Number.isSafeInteger(width) || !Number.isSafeInteger(height) ||
       width < 1 || height < 1 || width > 16384 || height > 16384 ||
-      stride !== Math.ceil(width * bpp / 256) * 256 ||
+      stride !== Math.ceil(width * bpp / 256) * 256 &&
+        !(allowPacked && stride === width * bpp) ||
       !Number.isSafeInteger(item.rawByteLength) || item.rawByteLength !== stride * height ||
-      item.rawByteLength > MAX_PASS_RAW_BYTES) {
+      item.rawByteLength > maxBytes) {
     throw new Error('raw pass format, dimensions, stride, or byte length is invalid');
   }
   const sourceRoot = await realpath(sourceDir);
@@ -246,16 +312,17 @@ async function copyRawSidecar(sourceDir, outputDir, item, destination, requireHa
   if (requireHash && item.rawSha256 === undefined) {
     throw new Error('raw input SHA-256 is missing');
   }
+  let sourceInfo = null;
   if (item.rawSha256 !== undefined) {
     if (typeof item.rawSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(item.rawSha256)) {
       throw new Error('raw pass SHA-256 is invalid');
     }
-    const hash = createHash('sha256');
-    for await (const chunk of createReadStream(source)) hash.update(chunk);
-    if (hash.digest('hex') !== item.rawSha256) throw new Error('raw pass SHA-256 differs from manifest');
+    sourceInfo = await checkedSourceHash(physical, item.rawSha256, 'raw pass');
   }
   const dest = join(outputDir, destination);
   await mkdir(dirname(dest), { recursive: true });
+  if (sourceInfo && await linkVerifiedSidecar(physical, dest, outputDir,
+    item.rawSha256, sourceInfo, verifiedFiles)) return dest;
   await copyFile(source, dest);
   if (requireHash) {
     const hash = createHash('sha256');
@@ -268,7 +335,8 @@ async function copyRawSidecar(sourceDir, outputDir, item, destination, requireHa
   return dest;
 }
 
-async function copyDrawBufferSidecar(sourceDir, outputDir, item, destination) {
+async function copyDrawBufferSidecar(sourceDir, outputDir, item, destination,
+  maxBytes = MAX_BUFFER_ITEM_BYTES, verifiedFiles = null) {
   const safe = relativeRaw(item.rawFile);
   if (!safe) throw new Error('Draw buffer path must be a safe relative .bin path');
   if (typeof item.rawSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(item.rawSha256)) {
@@ -276,7 +344,7 @@ async function copyDrawBufferSidecar(sourceDir, outputDir, item, destination) {
   }
   if (!Number.isSafeInteger(item.rawByteLength) ||
       item.rawByteLength !== item.copiedSize || item.rawByteLength < 4 ||
-      item.rawByteLength > MAX_BUFFER_ITEM_BYTES) {
+      item.rawByteLength > maxBytes) {
     throw new Error('Draw buffer length differs from copied range');
   }
   const sourceRoot = await realpath(sourceDir);
@@ -290,11 +358,11 @@ async function copyDrawBufferSidecar(sourceDir, outputDir, item, destination) {
   if (!stat.isFile() || stat.size !== item.rawByteLength) {
     throw new Error('Draw buffer file length differs from manifest');
   }
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(source)) hash.update(chunk);
-  if (hash.digest('hex') !== item.rawSha256) throw new Error('Draw buffer SHA-256 differs from manifest');
+  const sourceInfo = await checkedSourceHash(physical, item.rawSha256, 'Draw buffer');
   const dest = join(outputDir, destination);
   await mkdir(dirname(dest), { recursive: true });
+  if (await linkVerifiedSidecar(physical, dest, outputDir,
+    item.rawSha256, sourceInfo, verifiedFiles)) return dest;
   await copyFile(source, dest);
   const copiedHash = createHash('sha256');
   for await (const chunk of createReadStream(dest)) copiedHash.update(chunk);
@@ -324,14 +392,18 @@ function passRecord(item, frames, passes) {
 }
 
 export async function attachFrameSidecars(captureFile, outputDir, frames, passes,
-  events = [], resources = {}) {
+  events = [], resources = {}, options = {}) {
   const sourceDir = dirname(captureFile);
   const exports = [];
+  const verifiedFiles = new Map();
+  const linkCredentials = options.preferHardLinks === true ? verifiedFiles : null;
   const errors = [];
   const passSnapshots = [];
   const inputSnapshots = [];
   const aspectSnapshots = [];
   const bufferSnapshots = [];
+  const resourceTextureSnapshots = [];
+  const resourceBufferSnapshots = [];
   const passUnavailable = [];
   let attached = 0;
   let manifest = null;
@@ -339,34 +411,63 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
   try { manifest = await readSidecarManifest(sourceDir); }
   catch (error) { errors.push({ file: 'sidecars.json', reason: error.message }); }
 
-  // New multi-frame sidecars carry both the user-selected capture index and
-  // the independently parsed Inspector frame ordinal. Reject the entire deep
-  // section if either side changes, even when adjacent frames reuse labels.
-  if (manifest?.detailedFrameIndex !== undefined) {
+  // Every new diagnostic frame carries its independently parsed Inspector
+  // ordinal. Keep the selected-frame check for older sidecar manifests.
+  if (manifest?.diagnosticFrames || manifest?.detailedFrameIndex !== undefined) {
     try {
       const deepItems = [
         ...manifest.passSnapshots, ...(manifest.passUnavailable ?? []),
         ...(manifest.inputSnapshots ?? []), ...(manifest.aspectSnapshots ?? []),
-        ...(manifest.bufferSnapshots ?? []), ...manifest.gpuTimings,
+        ...(manifest.bufferSnapshots ?? []),
+        ...(manifest.resourceTextureSnapshots ?? []),
+        ...(manifest.resourceBufferSnapshots ?? []), ...manifest.gpuTimings,
       ];
       if (!Number.isInteger(manifest.actualFrames) || manifest.actualFrames < 1 ||
-          manifest.actualFrames > 120 || !Number.isInteger(manifest.detailedFrameIndex) ||
-          manifest.detailedFrameIndex < 1 || manifest.detailedFrameIndex > manifest.actualFrames) {
-        throw new Error('sidecar selected frame index is invalid');
+          manifest.actualFrames > 120) {
+        throw new Error('sidecar actual frame count is invalid');
       }
       captureFrames = inspectorCaptureFrames(frames, passes, manifest.actualFrames);
-      if (deepItems.length) {
+      if (manifest.diagnosticFrames) {
+        if (captureFrames.length !== manifest.actualFrames ||
+            manifest.diagnosticFrames.length !== manifest.actualFrames ||
+            manifest.diagnosticFrames.some((item, index) =>
+              item?.frameIndex !== index + 1 ||
+              item.frameOrdinal !== captureFrames[index]?.frameOrdinal) ||
+            deepItems.some(item => !manifest.diagnosticFrames.some(frame =>
+              frame.frameOrdinal === item?.frameOrdinal))) {
+          throw new Error('sidecar diagnostics do not match all Inspector capture frames');
+        }
+        for (const frame of manifest.diagnosticFrames) {
+          const inventory = frame.resourceInventory;
+          const textures = (manifest.resourceTextureSnapshots ?? []).filter(item =>
+            item.frameOrdinal === frame.frameOrdinal);
+          const buffers = (manifest.resourceBufferSnapshots ?? []).filter(item =>
+            item.frameOrdinal === frame.frameOrdinal);
+          if (!inventory || textures.length !== inventory.textureSubresourceCount ||
+              new Set(textures.map(item => item.textureOrdinal)).size !== inventory.textureCount ||
+              buffers.length !== inventory.bufferCount ||
+              textures.some((item, index) => item.resourceOrdinal !== index || !item.rawFile) ||
+              buffers.some((item, index) => item.resourceOrdinal !== index || !item.rawFile)) {
+            throw new Error('sidecar frame-end resource inventory is incomplete');
+          }
+        }
+      } else {
+        if (!Number.isInteger(manifest.detailedFrameIndex) ||
+            manifest.detailedFrameIndex < 1 || manifest.detailedFrameIndex > manifest.actualFrames) {
+          throw new Error('sidecar selected frame index is invalid');
+        }
         const selected = captureFrames[manifest.detailedFrameIndex - 1];
-        if (!selected ||
+        if (deepItems.length && (!selected ||
             manifest.diagnosticFrameOrdinal !== selected.frameOrdinal ||
-            deepItems.some(item => item?.frameOrdinal !== selected.frameOrdinal)) {
+            deepItems.some(item => item?.frameOrdinal !== selected.frameOrdinal))) {
           throw new Error('sidecar deep diagnostics do not belong to the selected Inspector frame');
         }
       }
     } catch (error) {
       errors.push({ file: 'sidecars.json', reason: error.message });
       manifest = { ...manifest, passSnapshots: [], passUnavailable: [], inputSnapshots: [],
-        aspectSnapshots: [], bufferSnapshots: [], gpuTimings: [] };
+        aspectSnapshots: [], bufferSnapshots: [], resourceTextureSnapshots: [],
+        resourceBufferSnapshots: [], diagnosticFrames: [], gpuTimings: [] };
     }
   }
 
@@ -390,7 +491,7 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
       }
       const relativeFile = `frames/${frame.frameOrdinal}.png`;
       const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile,
-        item.width, item.height, item.sha256 ?? null);
+        item.width, item.height, item.sha256 ?? null, linkCredentials);
       frame.imageFile = relativeFile;
       frame.imageSource = `game canvas readback sidecar ${item.file}`;
       frame.imageEvidence = item.source;
@@ -434,7 +535,7 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
             throw new Error('pass PNG SHA-256 is missing');
           }
           const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile,
-            item.width, item.height, item.imageSha256 ?? null);
+            item.width, item.height, item.imageSha256 ?? null, linkCredentials);
           snapshot.imageFile = relativeFile;
           exports.push(dest);
         } catch (error) {
@@ -445,7 +546,8 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
       if (item.rawFile) {
         try {
           const relativeFile = `pass-raw/frame-${item.frameOrdinal}-pass-${item.passIndex}-color-${target.slot}.bin`;
-          const dest = await copyRawSidecar(sourceDir, outputDir, item, relativeFile);
+          const dest = await copyRawSidecar(sourceDir, outputDir, item, relativeFile,
+            false, item.format, MAX_PASS_RAW_BYTES, false, linkCredentials);
           snapshot.rawFile = relativeFile;
           snapshot.rawFormat = item.rawFormat;
           snapshot.rawBytesPerRow = item.rawBytesPerRow;
@@ -475,21 +577,47 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
   }
 
   const inputOrdinals = new Set();
+  const inputManifestByOrdinal = new Map((manifest?.inputSnapshots ?? []).map(item =>
+    [`${item.frameOrdinal}:${item.inputOrdinal}`, item]));
+  const copiedInputPng = new Map();
+  const copiedInputRaw = new Map();
   for (const item of manifest?.inputSnapshots ?? []) {
     try {
       const pass = passRecord(item, frames, passes);
       if (!Number.isSafeInteger(item.inputOrdinal) || item.inputOrdinal < 0 ||
-          item.inputOrdinal >= 1024 || inputOrdinals.has(item.inputOrdinal) ||
+          item.inputOrdinal >= 1024 ||
+          inputOrdinals.has(`${item.frameOrdinal}:${item.inputOrdinal}`) ||
           typeof item.bindingName !== 'string' || !item.bindingName.trim() ||
           item.bindingName.length > 160 ||
           !Number.isSafeInteger(item.mipLevel) || item.mipLevel < 0 ||
           !Number.isSafeInteger(item.arrayLayer) || item.arrayLayer < 0 ||
           !Number.isSafeInteger(item.width) || item.width < 0 || item.width > 16384 ||
           !Number.isSafeInteger(item.height) || item.height < 0 || item.height > 16384 ||
-          typeof item.format !== 'string' || item.format.length > 80) {
+          typeof item.format !== 'string' || item.format.length > 80 ||
+          (item.contentVersion !== undefined &&
+            (!Number.isSafeInteger(item.contentVersion) || item.contentVersion < 0))) {
         throw new Error('input snapshot metadata is invalid or duplicated');
       }
-      inputOrdinals.add(item.inputOrdinal);
+      inputOrdinals.add(`${item.frameOrdinal}:${item.inputOrdinal}`);
+      const aliasSource = item.rawAliasInputOrdinal === undefined ? null :
+        inputManifestByOrdinal.get(`${item.frameOrdinal}:${item.rawAliasInputOrdinal}`);
+      if (item.rawAliasInputOrdinal !== undefined &&
+          (!Number.isInteger(item.rawAliasInputOrdinal) ||
+            item.rawAliasInputOrdinal < 0 || item.rawAliasInputOrdinal >= item.inputOrdinal ||
+            !aliasSource || aliasSource.rawAliasInputOrdinal !== undefined ||
+            !Number.isSafeInteger(item.contentVersion) ||
+            item.contentVersion !== aliasSource.contentVersion ||
+            item.textureId !== aliasSource.textureId || item.viewId !== aliasSource.viewId ||
+            item.mipLevel !== aliasSource.mipLevel || item.arrayLayer !== aliasSource.arrayLayer ||
+            item.format !== aliasSource.format || item.width !== aliasSource.width ||
+            item.height !== aliasSource.height || item.rawFormat !== aliasSource.rawFormat ||
+            item.rawBytesPerRow !== aliasSource.rawBytesPerRow ||
+            item.rawByteLength !== aliasSource.rawByteLength ||
+            item.rawSha256 !== aliasSource.rawSha256 || item.rawFile !== aliasSource.rawFile ||
+            item.file !== aliasSource.file || item.imageSha256 !== aliasSource.imageSha256 ||
+            item.rawSourceBeforeCommandIndex !== aliasSource.beforeCommandIndex)) {
+        throw new Error('input raw alias differs from its verified source Draw');
+      }
       const binding = verifiedInputBinding(pass, events, resources, item);
       const drawCommandIndex = pass.frameDebugStep?.drawCommandIndex;
       const base = {
@@ -498,6 +626,9 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
         textureId: item.textureId ?? null, viewId: item.viewId ?? null,
         mipLevel: item.mipLevel, arrayLayer: item.arrayLayer,
         width: item.width, height: item.height, format: item.format,
+        ...(item.contentVersion !== undefined ? { contentVersion: item.contentVersion } : {}),
+        ...(aliasSource ? { rawAliasInputOrdinal: item.rawAliasInputOrdinal,
+          rawSourceBeforeCommandIndex: item.rawSourceBeforeCommandIndex } : {}),
         imageFile: null, rawFile: null,
       };
       if (!binding || item.beforeCommandIndex !== drawCommandIndex ||
@@ -514,20 +645,36 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
         continue;
       }
       const snapshot = { ...base, captureMoment: 'pre-draw',
-        drawCommandIndex, groupSlot: binding.groupSlot, binding: binding.binding,
+        drawCommandIndex, beforeCommandIndex: drawCommandIndex,
+        groupSlot: binding.groupSlot, binding: binding.binding,
         ...(binding.bindingAmbiguous ? {
           bindingAmbiguous: true, bindingCandidates: binding.bindingCandidates,
         } : {}),
-        source: 'RHI pre-Draw GPU readback' };
+        source: aliasSource ?
+          'RHI pre-Draw GPU readback reused after verified unchanged texture' :
+          'RHI pre-Draw GPU readback' };
       if (item.file) {
         try {
           if (typeof item.imageSha256 !== 'string') throw new Error('input PNG SHA-256 is missing');
-          const relativeFile = `input-snapshots/frame-${item.frameOrdinal}-pass-${item.passIndex}-input-${item.inputOrdinal}.png`;
-          const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile,
-            item.width, item.height, item.imageSha256);
-          snapshot.imageFile = relativeFile;
+          const imageKey = `${item.frameOrdinal}:${item.file}`;
+          let copied = copiedInputPng.get(imageKey);
+          if (copied && copied.sha256 !== item.imageSha256) {
+            throw new Error('input PNG SHA-256 differs from shared source');
+          }
+          if (copied && (copied.width !== item.width || copied.height !== item.height)) {
+            throw new Error('shared input PNG dimensions differ from source');
+          }
+          if (!copied) {
+            const relativeFile = `input-snapshots/frame-${item.frameOrdinal}-pass-${item.passIndex}-input-${item.inputOrdinal}.png`;
+            const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile,
+              item.width, item.height, item.imageSha256, linkCredentials);
+            copied = { relativeFile, sha256: item.imageSha256,
+              width: item.width, height: item.height };
+            copiedInputPng.set(imageKey, copied);
+            exports.push(dest);
+          }
+          snapshot.imageFile = copied.relativeFile;
           snapshot.imageSha256 = item.imageSha256;
-          exports.push(dest);
         } catch (error) {
           snapshot.imageReason = error.message;
           errors.push({ inputOrdinal: item.inputOrdinal, file: item.file, reason: error.message });
@@ -535,14 +682,29 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
       } else snapshot.imageReason = item.imageReason || 'Input PNG was not saved';
       if (item.rawFile) {
         try {
-          const relativeFile = `input-raw/frame-${item.frameOrdinal}-pass-${item.passIndex}-input-${item.inputOrdinal}.bin`;
-          const dest = await copyRawSidecar(sourceDir, outputDir, item, relativeFile, true);
-          snapshot.rawFile = relativeFile;
+          const rawKey = `${item.frameOrdinal}:${item.rawFile}`;
+          let copied = copiedInputRaw.get(rawKey);
+          if (copied && (copied.sha256 !== item.rawSha256 ||
+              copied.format !== item.rawFormat || copied.width !== item.width ||
+              copied.height !== item.height || copied.bytesPerRow !== item.rawBytesPerRow ||
+              copied.bytes !== item.rawByteLength)) {
+            throw new Error('shared input raw metadata differs from its source');
+          }
+          if (!copied) {
+            const relativeFile = `input-raw/frame-${item.frameOrdinal}-pass-${item.passIndex}-input-${item.inputOrdinal}.bin`;
+            const dest = await copyRawSidecar(sourceDir, outputDir, item, relativeFile,
+              true, item.format, MAX_INPUT_RAW_BYTES, false, linkCredentials);
+            copied = { relativeFile, sha256: item.rawSha256, format: item.rawFormat,
+              width: item.width, height: item.height, bytesPerRow: item.rawBytesPerRow,
+              bytes: item.rawByteLength };
+            copiedInputRaw.set(rawKey, copied);
+            exports.push(dest);
+          }
+          snapshot.rawFile = copied.relativeFile;
           snapshot.rawFormat = item.rawFormat;
           snapshot.rawBytesPerRow = item.rawBytesPerRow;
           snapshot.rawByteLength = item.rawByteLength;
           snapshot.rawSha256 = item.rawSha256;
-          exports.push(dest);
         } catch (error) {
           snapshot.rawReason = error.message;
           errors.push({ inputOrdinal: item.inputOrdinal, file: item.rawFile, reason: error.message });
@@ -567,7 +729,8 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
     try {
       const pass = passRecord(item, frames, passes);
       if (!Number.isSafeInteger(item.bufferOrdinal) || item.bufferOrdinal < 0 ||
-          item.bufferOrdinal >= 1024 || bufferOrdinals.has(item.bufferOrdinal) ||
+          item.bufferOrdinal >= 8192 ||
+          bufferOrdinals.has(`${item.frameOrdinal}:${item.bufferOrdinal}`) ||
           !Number.isSafeInteger(item.passOrdinal) || item.passOrdinal < 0 ||
           !['uniform', 'storage', 'read-only-storage', 'vertex', 'index'].includes(item.role) ||
           !Number.isSafeInteger(item.totalSize) || item.totalSize < 0 ||
@@ -577,7 +740,7 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
           !['binding', 'draw-indices', 'bound-suffix'].includes(item.rangeScope)) {
         throw new Error('pre-Draw buffer metadata is invalid or duplicated');
       }
-      bufferOrdinals.add(item.bufferOrdinal);
+      bufferOrdinals.add(`${item.frameOrdinal}:${item.bufferOrdinal}`);
       const renderPasses = passes.filter(value =>
         value.frameOrdinal === item.frameOrdinal && value.type === 'render');
       const binding = renderPasses[item.passOrdinal]?.index === pass.index ?
@@ -623,7 +786,8 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
         source: 'RHI pre-Draw GPU buffer copy' };
       try {
         const relativeFile = `buffer-snapshots/frame-${item.frameOrdinal}-pass-${item.passIndex}-buffer-${item.bufferOrdinal}.bin`;
-        const dest = await copyDrawBufferSidecar(sourceDir, outputDir, item, relativeFile);
+        const dest = await copyDrawBufferSidecar(sourceDir, outputDir, item, relativeFile,
+          MAX_BUFFER_ITEM_BYTES, linkCredentials);
         snapshot.rawFile = relativeFile;
         snapshot.rawByteLength = item.rawByteLength;
         snapshot.rawSha256 = item.rawSha256;
@@ -653,7 +817,8 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
           !Number.isSafeInteger(item.passOrdinal) || item.passOrdinal < 0 ||
           (item.aspectOrdinal !== null &&
             (!Number.isSafeInteger(item.aspectOrdinal) || item.aspectOrdinal < 0 ||
-              item.aspectOrdinal >= 1024 || aspectOrdinals.has(item.aspectOrdinal))) ||
+              item.aspectOrdinal >= 1024 ||
+              aspectOrdinals.has(`${item.frameOrdinal}:${item.aspectOrdinal}`))) ||
           aspectKeys.has(`${item.frameOrdinal}:${item.passIndex}:${item.aspect}`) ||
           typeof item.sourceFormat !== 'string' || item.sourceFormat.length > 80 ||
           item.rawFormat !== (item.aspect === 'depth' ? 'r32float' : 'stencil8') ||
@@ -664,7 +829,7 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
               item.sampleIndex >= item.sampleCount))) {
         throw new Error('depth/stencil aspect metadata is invalid or duplicated');
       }
-      if (item.aspectOrdinal !== null) aspectOrdinals.add(item.aspectOrdinal);
+      if (item.aspectOrdinal !== null) aspectOrdinals.add(`${item.frameOrdinal}:${item.aspectOrdinal}`);
       aspectKeys.add(`${item.frameOrdinal}:${item.passIndex}:${item.aspect}`);
       const target = pass.targets?.find(value => value.kind === 'depth-stencil');
       const texture = resources?.textures?.find(value => value.id === target?.textureId);
@@ -707,7 +872,7 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
           if (typeof item.imageSha256 !== 'string') throw new Error('aspect PNG SHA-256 is missing');
           const relativeFile = `aspect-snapshots/frame-${item.frameOrdinal}-pass-${item.passIndex}-${item.aspect}.png`;
           const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile,
-            item.width, item.height, item.imageSha256);
+            item.width, item.height, item.imageSha256, linkCredentials);
           snapshot.imageFile = relativeFile;
           snapshot.imageSha256 = item.imageSha256;
           exports.push(dest);
@@ -720,7 +885,7 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
         try {
           const relativeFile = `aspect-raw/frame-${item.frameOrdinal}-pass-${item.passIndex}-${item.aspect}.bin`;
           const dest = await copyRawSidecar(sourceDir, outputDir, item, relativeFile, true,
-            item.rawFormat);
+            item.rawFormat, MAX_PASS_RAW_BYTES, false, linkCredentials);
           snapshot.rawFile = relativeFile;
           snapshot.rawBytesPerRow = item.rawBytesPerRow;
           snapshot.rawByteLength = item.rawByteLength;
@@ -742,6 +907,100 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
     } catch (error) {
       errors.push({ aspectOrdinal: item?.aspectOrdinal, passIndex: item?.passIndex,
         file: item?.file ?? item?.rawFile, reason: error.message });
+    }
+  }
+
+  const resourceTextureKeys = new Set();
+  for (const item of manifest?.resourceTextureSnapshots ?? []) {
+    try {
+      frameRecord(item, frames);
+      const texture = resources?.textures?.find(value => value.id === item.textureId);
+      const width = texture?.width ?? texture?.descriptor?.size?.width;
+      const height = texture?.height ?? texture?.descriptor?.size?.height;
+      const layers = texture?.depthOrArrayLayers ?? texture?.descriptor?.size?.depthOrArrayLayers ?? 1;
+      const mipCount = texture?.descriptor?.mipLevelCount ?? 1;
+      const samples = texture?.descriptor?.sampleCount ?? 1;
+      const key = `${item.frameOrdinal}:${item.resourceOrdinal}`;
+      if (!texture || !Number.isInteger(item.resourceOrdinal) || item.resourceOrdinal < 0 ||
+          !Number.isInteger(item.textureOrdinal) || item.textureOrdinal < 0 ||
+          resourceTextureKeys.has(key) || item.captureMoment !== 'frame-end' ||
+          texture.format !== item.sourceFormat || texture.dimension !== '2d' ||
+          layers !== 1 || samples !== 1 || item.sampleCount !== samples ||
+          !Number.isInteger(item.mipLevel) || item.mipLevel < 0 ||
+          item.mipLevel >= mipCount || item.arrayLayer !== 0 ||
+          item.width !== Math.max(1, Math.floor(width / 2 ** item.mipLevel)) ||
+          item.height !== Math.max(1, Math.floor(height / 2 ** item.mipLevel)) ||
+          !['color', 'depth', 'stencil'].includes(item.aspect) ||
+          (item.aspect === 'color' && item.rawFormat !== item.sourceFormat) ||
+          (item.aspect === 'depth' && item.rawFormat !== 'r32float') ||
+          (item.aspect === 'stencil' && item.rawFormat !== 'stencil8')) {
+        throw new Error('frame-end resource texture differs from Inspector descriptor');
+      }
+      resourceTextureKeys.add(key);
+      const snapshot = { frameOrdinal: item.frameOrdinal,
+        resourceOrdinal: item.resourceOrdinal, textureOrdinal: item.textureOrdinal,
+        textureId: item.textureId, label: item.label,
+        width: item.width, height: item.height, sourceFormat: item.sourceFormat,
+        rawFormat: item.rawFormat, mipLevel: item.mipLevel, arrayLayer: item.arrayLayer,
+        aspect: item.aspect, sampleCount: item.sampleCount, captureMoment: 'frame-end',
+        imageFile: null, rawFile: null };
+      if (item.file) {
+        try {
+          if (typeof item.imageSha256 !== 'string') throw new Error('resource texture PNG SHA-256 is missing');
+          const relativeFile = `resource-textures/frame-${item.frameOrdinal}-texture-${item.textureId}-mip-${item.mipLevel}-${item.aspect}.png`;
+          const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile,
+            item.width, item.height, item.imageSha256, linkCredentials);
+          snapshot.imageFile = relativeFile;
+          exports.push(dest);
+        } catch (error) {
+          snapshot.imageReason = error.message;
+          errors.push({ frameOrdinal: item.frameOrdinal, resourceOrdinal: item.resourceOrdinal,
+            file: item.file, reason: error.message });
+        }
+      } else snapshot.imageReason = item.imageReason || 'Resource PNG was not saved';
+      const relativeRaw = `resource-texture-raw/frame-${item.frameOrdinal}-texture-${item.textureId}-mip-${item.mipLevel}-${item.aspect}.bin`;
+      const dest = await copyRawSidecar(sourceDir, outputDir, item, relativeRaw,
+        true, item.rawFormat, MAX_RESOURCE_TEXTURE_RAW_BYTES, true, linkCredentials);
+      snapshot.rawFile = relativeRaw;
+      snapshot.rawBytesPerRow = item.rawBytesPerRow;
+      snapshot.rawByteLength = item.rawByteLength;
+      snapshot.rawSha256 = item.rawSha256;
+      exports.push(dest);
+      (texture.frameEndSnapshots ??= []).push(snapshot);
+      resourceTextureSnapshots.push(snapshot);
+    } catch (error) {
+      errors.push({ frameOrdinal: item?.frameOrdinal, resourceOrdinal: item?.resourceOrdinal,
+        file: item?.rawFile, reason: error.message });
+    }
+  }
+
+  const resourceBufferKeys = new Set();
+  for (const item of manifest?.resourceBufferSnapshots ?? []) {
+    try {
+      frameRecord(item, frames);
+      const buffer = resources?.buffers?.find(value => value.id === item.bufferId);
+      const key = `${item.frameOrdinal}:${item.resourceOrdinal}`;
+      if (!buffer || !Number.isInteger(item.resourceOrdinal) || item.resourceOrdinal < 0 ||
+          resourceBufferKeys.has(key) || item.captureMoment !== 'frame-end' ||
+          !Number.isSafeInteger(item.totalSize) || buffer.size !== item.totalSize ||
+          item.copiedOffset !== 0 || item.copiedSize !== item.totalSize) {
+        throw new Error('frame-end resource Buffer differs from Inspector descriptor');
+      }
+      resourceBufferKeys.add(key);
+      const relativeRaw = `resource-buffers/frame-${item.frameOrdinal}-buffer-${item.bufferId}.bin`;
+      const dest = await copyDrawBufferSidecar(sourceDir, outputDir, item, relativeRaw,
+        MAX_RESOURCE_BUFFER_RAW_BYTES, linkCredentials);
+      const snapshot = { frameOrdinal: item.frameOrdinal,
+        resourceOrdinal: item.resourceOrdinal, bufferId: item.bufferId, label: item.label,
+        totalSize: item.totalSize, copiedOffset: 0, copiedSize: item.totalSize,
+        captureMoment: 'frame-end', rawFile: relativeRaw,
+        rawByteLength: item.rawByteLength, rawSha256: item.rawSha256 };
+      exports.push(dest);
+      (buffer.frameEndSnapshots ??= []).push(snapshot);
+      resourceBufferSnapshots.push(snapshot);
+    } catch (error) {
+      errors.push({ frameOrdinal: item?.frameOrdinal, resourceOrdinal: item?.resourceOrdinal,
+        file: item?.rawFile, reason: error.message });
     }
   }
 
@@ -800,9 +1059,13 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
     reason: typeof status.reason === 'string' ? status.reason.slice(0, 500) : null,
   } : null;
   return {
-    exports, attached, errors, frameImage, passSnapshots, inputSnapshots,
-    aspectSnapshots, bufferSnapshots, passUnavailable,
+    exports, verifiedFiles, attached, errors, frameImage, passSnapshots, inputSnapshots,
+    aspectSnapshots, bufferSnapshots, resourceTextureSnapshots,
+    resourceBufferSnapshots, passUnavailable,
+    resourceFrames: manifest?.diagnosticFrames?.map(frame => frame.frameIndex) ?? [],
+    diagnosticFrames: manifest?.diagnosticFrames ?? [],
     manifest: manifest ? { schemaVersion: 1, file: 'sidecars.json' } : null,
+    sourceManifest: manifest,
     gpuProfilerStatus,
     passCaptureWarning: typeof manifest?.passCaptureWarning === 'string' ?
       manifest.passCaptureWarning.slice(0, 500) : null,

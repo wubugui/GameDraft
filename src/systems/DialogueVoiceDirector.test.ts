@@ -35,6 +35,49 @@ const LINE = (text: string, extra: Partial<DialogueLine> = {}): DialogueLine =>
   ({ speaker: '旁白', text, tags: [], ...extra });
 
 describe('DialogueVoiceDirector', () => {
+  it('抓帧冻结保留当前台词计时剩余量，嵌套 lease 最后释放后才继续', () => {
+    vi.useFakeTimers();
+    vi.spyOn(performance, 'now').mockImplementation(() => Date.now());
+    const rig = makeRig();
+    try {
+      rig.bus.emit('dialogue:line', LINE('这句停 2 秒', { autoAdvance: 2000 }));
+      vi.advanceTimersByTime(500);
+      const release = rig.director.suspendForCapture();
+      const releaseNested = rig.director.suspendForCapture();
+      vi.advanceTimersByTime(120_000);
+      release(); release();
+      vi.advanceTimersByTime(120_000);
+      expect(rig.autoAdvances).not.toHaveBeenCalled();
+      releaseNested();
+      vi.advanceTimersByTime(1499);
+      expect(rig.autoAdvances).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(rig.autoAdvances).toHaveBeenCalledTimes(1);
+    } finally { rig.director.destroy(); vi.restoreAllMocks(); vi.useRealTimers(); }
+  });
+
+  it('抓帧冻结暂存自然配音结束；换行/销毁时丢弃过期的推进', () => {
+    const rig = makeRig();
+    rig.bus.emit('dialogue:line', LINE('第一句', { voice: 'a', autoAdvance: 'voice' }));
+    const release = rig.director.suspendForCapture();
+    rig.finish('a');
+    expect(rig.autoAdvances).not.toHaveBeenCalled();
+    rig.bus.emit('dialogue:line', LINE('第二句', { voice: 'b', autoAdvance: 'voice' }));
+    release();
+    expect(rig.autoAdvances).not.toHaveBeenCalled();
+    const releaseNext = rig.director.suspendForCapture();
+    rig.finish('b');
+    expect(rig.autoAdvances).not.toHaveBeenCalled();
+    releaseNext(); releaseNext();
+    expect(rig.autoAdvances).toHaveBeenCalledTimes(1);
+    rig.bus.emit('dialogue:line', LINE('第三句', { voice: 'c', autoAdvance: 'voice' }));
+    const releaseDestroyed = rig.director.suspendForCapture();
+    rig.finish('c');
+    rig.director.destroy();
+    releaseDestroyed();
+    expect(rig.autoAdvances).toHaveBeenCalledTimes(1);
+  });
+
   it('每行配音跟本行一起结束（换行即停）', () => {
     const rig = makeRig();
     rig.bus.emit('dialogue:line', LINE('第一句', { voice: 'a' }));

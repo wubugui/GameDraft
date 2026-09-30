@@ -92,6 +92,39 @@ describe('状态切换时丢弃未消费的输入沿', () => {
     h = makeHarness();
   });
 
+  it('抓帧期间丢弃键盘、指针、触屏及注入输入，保留 F2，嵌套释放不会留下 held 或沿', () => {
+    const anyInput = vi.fn(), pointer = vi.fn(), key = vi.fn();
+    h.inputManager.subscribeAnyInput(anyInput);
+    h.inputManager.subscribePointerDown(pointer);
+    h.inputManager.subscribeKeyDown(key);
+    h.dom.dispatch('keydown', { code: 'KeyW', repeat: false });
+    h.inputManager.setTouchKeyHeld('KeyC', true);
+    h.inputManager.setTouchMoveAxes(1, 0);
+    const release = h.inputManager.suspendForCapture();
+    const nested = h.inputManager.suspendForCapture();
+    anyInput.mockClear(); key.mockClear();
+    h.dom.dispatch('keydown', { code: 'Space', repeat: false });
+    h.dom.dispatch('pointerdown', {});
+    h.inputManager.injectKeyJustPressed('KeyE');
+    h.inputManager.injectPointerDown();
+    h.inputManager.setTouchKeyHeld('KeyC', true);
+    h.inputManager.setTouchMoveAxes(1, 0);
+    h.dom.dispatch('keydown', { code: 'F2', repeat: false });
+    expect(key).toHaveBeenCalledOnce();
+    expect(anyInput).not.toHaveBeenCalled();
+    expect(pointer).not.toHaveBeenCalled();
+    expect(h.inputManager.getMovementDirection()).toEqual({ x: 0, y: 0 });
+    expect(h.inputManager.wasMouseJustClicked()).toBe(false);
+    release(); release();
+    h.dom.dispatch('keydown', { code: 'KeyD', repeat: false });
+    expect(h.inputManager.isKeyDown('KeyD')).toBe(false);
+    nested();
+    expect(h.inputManager.isTouchKeyHeld('KeyC')).toBe(false);
+    expect(h.inputManager.wasKeyJustPressed('KeyE')).toBe(false);
+    h.dom.dispatch('keydown', { code: 'KeyD', repeat: false });
+    expect(h.inputManager.isKeyDown('KeyD')).toBe(true);
+  });
+
   it('对话里按空格推进并结束对话，下一帧不触发跳跃', () => {
     h.stateController.setState(GameState.Dialogue);
     // DialogueUI 替身：与真实实现同款——window 监听，登记在 InputManager 之后，

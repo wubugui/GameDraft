@@ -1,6 +1,6 @@
 outs:
-- md5: 95ecd342a0adeeb258a224ca03ca067b.dir
-  size: 1018101141
+- md5: ef1653e7c70d28e082f0aeed6cf1bf25.dir
+  size: 1018039267
   nfiles: 1564
   hash: md5
   path: editor_projects

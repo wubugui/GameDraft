@@ -1,15 +1,20 @@
-import type { RhiDepthStencilAspectCapture, RhiDevice, RhiDrawBufferCapture, RhiDrawInputCapture, RhiGpuSubmissionProfile,
-  RhiRenderPassEndCapture } from '../rendering/rhi/RhiDevice';
+import type { RhiDepthStencilAspectCapture, RhiDevice, RhiDrawBufferCapture, RhiDrawInputCapture,
+  RhiFrameResourceBufferCapture, RhiFrameResourceInventory, RhiFrameResourceTextureCapture,
+  RhiGpuSubmissionProfile, RhiRenderPassEndCapture } from '../rendering/rhi/RhiDevice';
 
-const MAX_RAW_BYTES = 512 * 1024 * 1024;
+const MAX_RAW_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_PASS_RECORDS = 512;
 const MAX_INPUT_RECORDS = 1024;
-const MAX_INPUT_RAW_BYTES = 256 * 1024 * 1024;
+const MAX_INPUT_RAW_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ASPECT_RECORDS = 1024;
 const MAX_ASPECT_RAW_BYTES = 512 * 1024 * 1024;
-const MAX_BUFFER_RECORDS = 1024;
+const MAX_BUFFER_RECORDS = 8192;
 const MAX_BUFFER_ITEM_BYTES = 16 * 1024 * 1024;
 const MAX_BUFFER_RAW_BYTES = 256 * 1024 * 1024;
+const MAX_RESOURCE_TEXTURE_RECORDS = 8192;
+const MAX_RESOURCE_BUFFER_RECORDS = 4096;
+const MAX_RESOURCE_TEXTURE_RAW_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_RESOURCE_BUFFER_RAW_BYTES = 1024 * 1024 * 1024;
 const MAX_PNG_RGBA_BYTES = 128 * 1024 * 1024;
 const MAP_TIMEOUT_MS = 30_000;
 const PROFILE_TIMEOUT_MS = 10_000;
@@ -36,6 +41,7 @@ export interface CapturedInputPixels {
   binding: number;
   textureId: number | null;
   viewId: number | null;
+  contentVersion: number;
   mipLevel: number;
   arrayLayer: number;
   width: number;
@@ -89,6 +95,36 @@ export interface CapturedDrawBuffer {
   rawBytes?: Uint8Array;
 }
 
+/** One live RHI texture mip/aspect, snapped after the frame's render and compute work. */
+export interface CapturedResourceTexture {
+  textureOrdinal: number;
+  textureId: number | null;
+  label: string;
+  width: number;
+  height: number;
+  sourceFormat: string;
+  rawFormat: string;
+  mipLevel: number;
+  arrayLayer: number;
+  aspect: 'color' | 'depth' | 'stencil';
+  sampleCount: number;
+  captureMoment: 'frame-end';
+  reason?: string;
+  rawPixels?: Uint8Array;
+  rawBytesPerRow?: number;
+}
+
+export interface CapturedResourceBuffer {
+  bufferId: number | null;
+  label: string;
+  totalSize: number;
+  copiedOffset: 0;
+  copiedSize: number;
+  captureMoment: 'frame-end';
+  reason?: string;
+  rawBytes?: Uint8Array;
+}
+
 export interface CapturedGpuPass {
   ordinal: number;
   kind: 'render' | 'compute';
@@ -101,6 +137,9 @@ export interface CapturedFrameDiagnostics {
   inputs: CapturedInputPixels[];
   aspects: CapturedAspectPixels[];
   buffers: CapturedDrawBuffer[];
+  resourceInventory: RhiFrameResourceInventory;
+  resourceTextures: CapturedResourceTexture[];
+  resourceBuffers: CapturedResourceBuffer[];
   gpuPasses: CapturedGpuPass[];
   gpuProfilerStatus: { state: 'enabled' | 'unsupported' | 'disabled'; reason?: string };
   warning?: string;
@@ -116,6 +155,7 @@ interface PendingInput {
   info: CapturedInputPixels;
   buffer?: GPUBuffer;
   bytesPerRow?: number;
+  sharedFrom?: PendingInput;
 }
 
 interface PendingAspect {
@@ -126,6 +166,17 @@ interface PendingAspect {
 
 interface PendingDrawBuffer {
   info: CapturedDrawBuffer;
+  buffer?: GPUBuffer;
+}
+
+interface PendingResourceTexture {
+  info: CapturedResourceTexture;
+  buffer?: GPUBuffer;
+  bytesPerRow?: number;
+}
+
+interface PendingResourceBuffer {
+  info: CapturedResourceBuffer;
   buffer?: GPUBuffer;
 }
 
@@ -241,6 +292,25 @@ export function visualizeCapturedAspectPixels(aspect: CapturedAspectPixels): Uin
   return out;
 }
 
+export function visualizeCapturedResourceTexture(texture: CapturedResourceTexture): Uint8ClampedArray {
+  if (!texture.rawPixels || !texture.rawBytesPerRow) throw new Error('资源纹理没有可回读的像素');
+  if (texture.width * texture.height * 4 > MAX_PNG_RGBA_BYTES) {
+    throw new Error('资源纹理 PNG 预览超过 128 MiB 解码上限，原始字节仍会导出');
+  }
+  if (texture.aspect === 'color') {
+    return visualize(texture.rawPixels, texture.width, texture.height,
+      texture.rawBytesPerRow, texture.rawFormat);
+  }
+  return visualizeCapturedAspectPixels({
+    passOrdinal: -1, label: texture.label, targetLabel: texture.label,
+    aspect: texture.aspect, textureId: texture.textureId, viewId: null,
+    width: texture.width, height: texture.height, sourceFormat: texture.sourceFormat,
+    rawFormat: texture.aspect === 'depth' ? 'r32float' : 'stencil8',
+    sampleCount: texture.sampleCount, sampleIndex: null,
+    rawPixels: texture.rawPixels, rawBytesPerRow: texture.rawBytesPerRow,
+  });
+}
+
 const DEPTH_READBACK_WGSL = `
 @group(0) @binding(0) var sourceDepth: texture_depth_2d;
 @group(0) @binding(1) var<storage, read_write> values: array<f32>;
@@ -273,15 +343,22 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
 }
 
 /** One-shot pass-end snapshots and real timestamp queries for a single captured frame. */
-export function captureFrameDiagnostics(rhi: RhiDevice): {
+export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
+  disableRecording(): void;
+  enableRecording(): void;
+}): {
   finish: () => Promise<CapturedFrameDiagnostics>;
   cancel: () => void;
 } {
   const device = rhi.native.device;
   const pending: PendingPass[] = [];
   const pendingInputs: PendingInput[] = [];
+  const inputReadbackCache = new WeakMap<GPUTexture, Map<string, PendingInput>>();
   const pendingAspects: PendingAspect[] = [];
   const pendingBuffers: PendingDrawBuffer[] = [];
+  const pendingResourceTextures: PendingResourceTexture[] = [];
+  const pendingResourceBuffers: PendingResourceBuffer[] = [];
+  let resourceInventory: RhiFrameResourceInventory | null = null;
   // 顺序编码：每次 depth compute 紧跟 copy 到独立 staging，后续 pass 可复用 storage 缓冲。
   const depthScratchBuffers: GPUBuffer[] = [];
   let depthScratch: GPUBuffer | null = null;
@@ -290,6 +367,8 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
   let inputAllocated = 0;
   let aspectAllocated = 0;
   let bufferAllocated = 0;
+  let resourceTextureAllocated = 0;
+  let resourceBufferAllocated = 0;
   let omittedReadbacks = 0;
   let omittedInputs = 0;
   let omittedAspects = 0;
@@ -359,7 +438,7 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
       if (!Number.isSafeInteger(size) || size > device.limits.maxBufferSize) {
         info.reason = '此颜色输出超过 GPU 单缓冲回读上限';
       } else if (size > MAX_RAW_BYTES - allocated) {
-        info.reason = '本帧中间画面回读达到 512 MiB 上限';
+        info.reason = '本帧中间画面回读达到 2 GiB 上限';
       } else {
         let buffer: GPUBuffer | undefined;
         try {
@@ -387,7 +466,8 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
     const info: CapturedInputPixels = {
       passOrdinal: event.passOrdinal, bindingName: event.bindingName,
       groupSlot: event.groupSlot, binding: event.binding,
-      textureId: event.textureId, viewId: event.viewId, mipLevel: event.mipLevel,
+      textureId: event.textureId, viewId: event.viewId, contentVersion: event.contentVersion,
+      mipLevel: event.mipLevel,
       arrayLayer: event.arrayLayer, width: event.width, height: event.height, format: event.format,
     };
     const record: PendingInput = { info };
@@ -395,16 +475,25 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
     const bpp = bytesPerPixel(event.format);
     if (event.reason || !event.texture) info.reason = event.reason ?? 'Draw 输入纹理不可回读';
     else if (event.textureId === null || event.viewId === null) info.reason = '缺少 Inspector 纹理或视图 ID';
+    else if (!Number.isSafeInteger(event.contentVersion) || event.contentVersion < 0) {
+      info.reason = 'Draw 输入纹理内容版本无效';
+    }
     else if (!bpp) info.reason = `暂不支持 ${event.format || '未知'} 格式的 Draw 输入纹理回读`;
     else if (event.width < 1 || event.height < 1 || !Number.isSafeInteger(event.width * event.height * bpp)) {
       info.reason = 'Draw 输入纹理尺寸无效';
     } else {
       const bytesPerRow = Math.ceil(event.width * bpp / 256) * 256;
       const size = bytesPerRow * event.height;
+      const key = [event.contentVersion, event.viewId, event.mipLevel, event.arrayLayer,
+        event.format, event.width, event.height].join(':');
+      const cached = inputReadbackCache.get(event.texture)?.get(key);
       if (!Number.isSafeInteger(size) || size > device.limits.maxBufferSize) {
         info.reason = '此 Draw 输入纹理超过 GPU 单缓冲回读上限';
+      } else if (cached?.buffer && !cached.info.reason) {
+        record.sharedFrom = cached;
+        record.bytesPerRow = cached.bytesPerRow;
       } else if (size > MAX_INPUT_RAW_BYTES - inputAllocated) {
-        info.reason = '本帧 Draw 输入回读达到 256 MiB 上限';
+        info.reason = '本帧 Draw 输入回读达到 2 GiB 上限';
       } else {
         let buffer: GPUBuffer | undefined;
         try {
@@ -417,6 +506,12 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
           record.buffer = buffer;
           record.bytesPerRow = bytesPerRow;
           inputAllocated += size;
+          let versions = inputReadbackCache.get(event.texture);
+          if (!versions) {
+            versions = new Map();
+            inputReadbackCache.set(event.texture, versions);
+          }
+          versions.set(key, record);
         } catch (error) {
           buffer?.destroy();
           info.reason = `Draw 输入纹理拷贝失败：${String(error)}`;
@@ -565,8 +660,141 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
     }
   };
 
+  const onResourceTexture = (event: RhiFrameResourceTextureCapture): void => {
+    if (pendingResourceTextures.length >= MAX_RESOURCE_TEXTURE_RECORDS) {
+      throw new Error(`活纹理子资源超过 ${MAX_RESOURCE_TEXTURE_RECORDS} 条上限`);
+    }
+    const info: CapturedResourceTexture = {
+      textureOrdinal: event.textureOrdinal, textureId: event.textureId,
+      label: event.label, width: event.width, height: event.height,
+      sourceFormat: event.sourceFormat,
+      rawFormat: event.aspect === 'depth' ? 'r32float'
+        : event.aspect === 'stencil' ? 'stencil8' : event.sourceFormat,
+      mipLevel: event.mipLevel, arrayLayer: event.arrayLayer, aspect: event.aspect,
+      sampleCount: event.sampleCount, captureMoment: 'frame-end',
+    };
+    const record: PendingResourceTexture = { info };
+    pendingResourceTextures.push(record);
+    const texture = event.texture;
+    if (event.reason || !texture) { info.reason = event.reason ?? '资源纹理不可访问'; return; }
+    if (event.textureId === null) { info.reason = '缺少 Inspector 纹理 ID'; return; }
+    if (event.width < 1 || event.height < 1 || !Number.isSafeInteger(event.width * event.height * 4)) {
+      info.reason = '资源纹理尺寸无效'; return;
+    }
+    const bpp = event.aspect === 'depth' ? 4
+      : event.aspect === 'stencil' ? 1 : bytesPerPixel(event.sourceFormat);
+    if (!bpp) { info.reason = `不支持 ${event.sourceFormat} 资源纹理格式回读`; return; }
+    const bytesPerRow = event.aspect === 'depth' ? event.width * 4
+      : Math.ceil(event.width * bpp / 256) * 256;
+    const size = bytesPerRow * event.height;
+    if (!Number.isSafeInteger(size) || size > device.limits.maxBufferSize) {
+      info.reason = '资源纹理超过 GPU 单缓冲回读上限'; return;
+    }
+    if (size > MAX_RESOURCE_TEXTURE_RAW_BYTES - resourceTextureAllocated) {
+      info.reason = '本帧资源纹理回读达到 2 GiB 上限'; return;
+    }
+    try {
+      if (event.aspect === 'depth') {
+        if (size > device.limits.maxStorageBufferBindingSize) {
+          info.reason = '深度资源纹理超过 GPU 存储缓冲绑定上限'; return;
+        }
+        const pipeline = pipelineForDepth(1);
+        const view = texture.createView({ aspect: 'depth-only', dimension: '2d',
+          baseMipLevel: event.mipLevel, mipLevelCount: 1,
+          baseArrayLayer: event.arrayLayer, arrayLayerCount: 1 });
+        if (!depthScratch || depthScratchSize < size) {
+          depthScratch = device.createBuffer({ label: `frame-debug resource depth scratch ${size}`,
+            size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+          depthScratchBuffers.push(depthScratch);
+          depthScratchSize = size;
+        }
+        const buffer = device.createBuffer({ label: `frame-debug resource depth ${event.label} mip ${event.mipLevel}`,
+          size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        record.buffer = buffer;
+        const bindGroup = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: view }, { binding: 1, resource: { buffer: depthScratch } },
+        ] });
+        const pass = event.encoder.beginComputePass({ label: `frame-debug resource depth ${event.label}` });
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.dispatchWorkgroups(Math.ceil(event.width / 8), Math.ceil(event.height / 8));
+        pass.end();
+        event.encoder.copyBufferToBuffer(depthScratch, 0, buffer, 0, size);
+      } else {
+        const buffer = device.createBuffer({ label: `frame-debug resource texture ${event.label} mip ${event.mipLevel}`,
+          size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        record.buffer = buffer;
+        event.encoder.copyTextureToBuffer({ texture, mipLevel: event.mipLevel,
+          origin: { z: event.arrayLayer },
+          ...(event.aspect === 'stencil' ? { aspect: 'stencil-only' as const } : {}) },
+        { buffer, bytesPerRow, rowsPerImage: event.height },
+        { width: event.width, height: event.height, depthOrArrayLayers: 1 });
+      }
+      record.bytesPerRow = bytesPerRow;
+      resourceTextureAllocated += size;
+    } catch (error) {
+      record.buffer?.destroy(); record.buffer = undefined;
+      info.reason = `资源纹理 GPU 拷贝失败：${String(error)}`;
+    }
+  };
+
+  const onResourceBuffer = (event: RhiFrameResourceBufferCapture): void => {
+    if (pendingResourceBuffers.length >= MAX_RESOURCE_BUFFER_RECORDS) {
+      throw new Error(`活 Buffer 超过 ${MAX_RESOURCE_BUFFER_RECORDS} 条上限`);
+    }
+    const info: CapturedResourceBuffer = {
+      bufferId: event.bufferId, label: event.label, totalSize: event.totalSize,
+      copiedOffset: 0, copiedSize: event.totalSize, captureMoment: 'frame-end',
+    };
+    const record: PendingResourceBuffer = { info };
+    pendingResourceBuffers.push(record);
+    if (event.reason || !event.buffer) { info.reason = event.reason ?? '资源 Buffer 不可访问'; return; }
+    if (event.bufferId === null) { info.reason = '缺少 Inspector Buffer ID'; return; }
+    const size = event.totalSize;
+    if (!Number.isSafeInteger(size) || size < 4 || size % 4 !== 0) {
+      info.reason = '资源 Buffer 全长无法按 4 字节对齐回读'; return;
+    }
+    if (size > device.limits.maxBufferSize || size > MAX_RESOURCE_BUFFER_RAW_BYTES - resourceBufferAllocated) {
+      info.reason = '资源 Buffer 超过 GPU 或单帧 1 GiB 回读上限'; return;
+    }
+    try {
+      const buffer = device.createBuffer({ label: `frame-debug whole buffer ${event.label}`,
+        size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      record.buffer = buffer;
+      event.encoder.copyBufferToBuffer(event.buffer, 0, buffer, 0, size);
+      resourceBufferAllocated += size;
+    } catch (error) {
+      record.buffer?.destroy(); record.buffer = undefined;
+      info.reason = `资源 Buffer GPU 拷贝失败：${String(error)}`;
+    }
+  };
+
+  const onResourceInventory = (inventory: RhiFrameResourceInventory): void => {
+    resourceInventory = inventory;
+    if (inventory.textureSubresourceCount !== pendingResourceTextures.length ||
+        inventory.bufferCount !== pendingResourceBuffers.length) {
+      throw new Error('RHI 活资源清单与逐项快照数不一致');
+    }
+  };
+
+  // These hooks only encode diagnostic copies. Their native GPU work must execute,
+  // but Inspector already has the real game commands and the complete sidecars.
+  // Keep the copies out of WGPUCAP so every staging buffer is not recorded twice.
+  const withoutInspectorRecording = <T>(callback: (event: T) => void): (event: T) => void => (event) => {
+    if (!recordingControl) { callback(event); return; }
+    recordingControl.disableRecording();
+    try { callback(event); }
+    finally { recordingControl.enableRecording(); }
+  };
   const stopHook = rhi.frameDebugCapture?.captureNextSubmission({
-    kind: 'frame', onPassEnd, onDrawInput, onDrawBuffer, onAspectEnd,
+    kind: 'frame',
+    onPassEnd: withoutInspectorRecording(onPassEnd),
+    onDrawInput: withoutInspectorRecording(onDrawInput),
+    onDrawBuffer: withoutInspectorRecording(onDrawBuffer),
+    onAspectEnd: withoutInspectorRecording(onAspectEnd),
+    onResourceTexture: withoutInspectorRecording(onResourceTexture),
+    onResourceBuffer: withoutInspectorRecording(onResourceBuffer),
+    onResourceInventory,
     onSubmitted: () => submittedResolve(),
     onAborted: () => abortedReject(new Error('GPU 提交中止')),
   });
@@ -598,6 +826,16 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
       record.buffer = undefined;
       record.info.rawBytes = undefined;
     }
+    for (const record of pendingResourceTextures) {
+      record.buffer?.destroy();
+      record.buffer = undefined;
+      record.info.rawPixels = undefined;
+    }
+    for (const record of pendingResourceBuffers) {
+      record.buffer?.destroy();
+      record.buffer = undefined;
+      record.info.rawBytes = undefined;
+    }
     for (const buffer of depthScratchBuffers) buffer.destroy();
     depthScratchBuffers.length = 0;
     submittedResolve();
@@ -610,6 +848,7 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
     let gpuPasses: CapturedGpuPass[] = [];
     try {
       await withTimeout(submitted, MAP_TIMEOUT_MS, 'GPU 帧提交超时');
+      if (!resourceInventory && !cancelled) throw new Error('RHI 未返回帧末活资源清单');
       if (!cancelled) {
         for (const record of pendingInputs) {
           const buffer = record.buffer;
@@ -626,6 +865,14 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
             buffer.destroy();
             record.buffer = undefined;
           }
+        }
+        for (const record of pendingInputs) {
+          if (!record.sharedFrom) continue;
+          const source = record.sharedFrom.info;
+          if (source.rawPixels && source.rawBytesPerRow) {
+            record.info.rawPixels = source.rawPixels;
+            record.info.rawBytesPerRow = source.rawBytesPerRow;
+          } else record.info.reason = source.reason ?? '共享 Draw 输入回读失败';
         }
         for (const record of pending) {
           const buffer = record.buffer;
@@ -675,6 +922,37 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
             record.buffer = undefined;
           }
         }
+        for (const record of pendingResourceTextures) {
+          const buffer = record.buffer;
+          if (!buffer || record.info.reason) continue;
+          try {
+            await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU 资源纹理回读超时');
+            if (cancelled) continue;
+            record.info.rawPixels = new Uint8Array(buffer.getMappedRange()).slice();
+            record.info.rawBytesPerRow = record.bytesPerRow;
+          } catch (error) {
+            record.info.reason = `GPU 资源纹理回读失败：${String(error)}`;
+          } finally {
+            try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
+            buffer.destroy();
+            record.buffer = undefined;
+          }
+        }
+        for (const record of pendingResourceBuffers) {
+          const buffer = record.buffer;
+          if (!buffer || record.info.reason) continue;
+          try {
+            await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU 资源 Buffer 回读超时');
+            if (cancelled) continue;
+            record.info.rawBytes = new Uint8Array(buffer.getMappedRange()).slice();
+          } catch (error) {
+            record.info.reason = `GPU 资源 Buffer 回读失败：${String(error)}`;
+          } finally {
+            try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
+            buffer.destroy();
+            record.buffer = undefined;
+          }
+        }
       }
       if (status.state !== 'unsupported' && !cancelled) {
         try {
@@ -708,6 +986,14 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
         record.buffer?.destroy();
         record.buffer = undefined;
       }
+      for (const record of pendingResourceTextures) {
+        record.buffer?.destroy();
+        record.buffer = undefined;
+      }
+      for (const record of pendingResourceBuffers) {
+        record.buffer?.destroy();
+        record.buffer = undefined;
+      }
       for (const buffer of depthScratchBuffers) buffer.destroy();
       depthScratchBuffers.length = 0;
     }
@@ -721,6 +1007,9 @@ export function captureFrameDiagnostics(rhi: RhiDevice): {
     return { passes: pending.map(record => record.info), inputs: pendingInputs.map(record => record.info),
       aspects: pendingAspects.map(record => record.info), gpuPasses, gpuProfilerStatus,
       buffers: pendingBuffers.map(record => record.info),
+      resourceInventory: resourceInventory ?? { textureCount: 0, bufferCount: 0, textureSubresourceCount: 0 },
+      resourceTextures: pendingResourceTextures.map(record => record.info),
+      resourceBuffers: pendingResourceBuffers.map(record => record.info),
       ...(omitted ? { warning: omitted } : {}) };
   };
   return { finish, cancel };

@@ -3,6 +3,7 @@ export class InputManager {
   private keyJustPressed: Set<string> = new Set();
   /** 为 true 时不写入按键状态，查询移动/按键视为无输入（如 Debug 侧栏聚焦时避免吃掉快捷键） */
   private gameKeyboardBlocked = false;
+  private captureInputHolds = 0;
   private mousePos: { x: number; y: number } = { x: 0, y: 0 };
   private mouseDown: boolean = false;
   private mouseJustClicked: boolean = false;
@@ -60,6 +61,11 @@ export class InputManager {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
+    if (this.captureInputHolds > 0) {
+      // F2 controls the DOM capture panel; every gameplay subscriber stays frozen.
+      if (e.code === 'F2') for (const cb of [...this.keyDownSubscribers]) cb(e);
+      return;
+    }
     // 订阅者分发一律快照遍历（对齐 EventBus.emit 的 [...set]）：回调内退订会 splice
     // 正在遍历的数组，跳过后一个订阅者（B2）
     if (!this.gameKeyboardBlocked) {
@@ -80,11 +86,13 @@ export class InputManager {
   }
 
   private onPointerMove(e: PointerEvent): void {
+    if (this.captureInputHolds > 0) return;
     this.mousePos.x = e.clientX;
     this.mousePos.y = e.clientY;
   }
 
   private onPointerDown(_e: PointerEvent): void {
+    if (this.captureInputHolds > 0) return;
     this.mouseDown = true;
     this.mouseJustClicked = true;
     for (const cb of [...this.anyInputSubscribers]) cb();
@@ -102,6 +110,7 @@ export class InputManager {
 
   /** 触屏「按住」某键（姿态键的 toggle 用）；held=false 松开。 */
   setTouchKeyHeld(code: string, held: boolean): void {
+    if (this.captureInputHolds > 0) return;
     if (held) this.touchHeldKeys.add(code);
     else this.touchHeldKeys.delete(code);
   }
@@ -192,29 +201,51 @@ export class InputManager {
 
   /** 触屏「互动」：本帧内视为按下 E 一次（供 InteractionSystem 使用） */
   injectKeyJustPressed(code: string): void {
-    if (this.gameKeyboardBlocked) return;
+    if (this.gameKeyboardBlocked || this.captureInputHolds > 0) return;
     this.keyJustPressed.add(code);
   }
 
   /** 注入一次"点击/继续"（与真实 pointerdown 同效，通知过场/点击继续/任意输入订阅者）。
    *  供玩家同构测试的 playerTap：推进过场、点击继续、对话行等玩家用鼠标点的路径。 */
   injectPointerDown(): void {
+    if (this.captureInputHolds > 0) return;
     this.mouseJustClicked = true;
     for (const cb of [...this.anyInputSubscribers]) cb();
     for (const cb of [...this.pointerDownSubscribers]) cb();
   }
 
   setTouchMoveAxes(x: -1 | 0 | 1, y: -1 | 0 | 1): void {
+    if (this.captureInputHolds > 0) return;
     this.touchMoveX = x;
     this.touchMoveY = y;
   }
 
   setTouchRunHeld(held: boolean): void {
+    if (this.captureInputHolds > 0) return;
     this.touchRunHeld = held;
   }
 
   setGameKeyboardBlocked(blocked: boolean): void {
     this.gameKeyboardBlocked = blocked;
+  }
+
+  /** A capture owns input until its final disk acknowledgement; stale held keys never resume. */
+  suspendForCapture(): () => void {
+    this.captureInputHolds++;
+    const clear = (): void => {
+      this.onFocusLost();
+      this.touchMoveX = this.touchMoveY = 0;
+      this.touchRunHeld = false;
+      this.touchHeldKeys.clear();
+    };
+    clear();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.captureInputHolds--;
+      if (this.captureInputHolds === 0) clear();
+    };
   }
 
   subscribeKeyDown(cb: (e: KeyboardEvent) => void): () => void {

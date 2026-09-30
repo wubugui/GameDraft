@@ -79,6 +79,8 @@ export class Ticker {
   private _maxElapsedMS = 100;
   private _minElapsedMS = 0;
   private _protected = false;
+  private _suspensions = 0;
+  private _stepping = false;
   private _lastFrame = -1;
   private _head: TickerListener | null = new TickerListener<unknown>(null, null, Infinity);
   private readonly _tick: (time: number) => void;
@@ -88,9 +90,9 @@ export class Ticker {
     this.elapsedMS = 1 / Ticker.targetFPMS;
     this._tick = (time: number) => {
       this._requestId = null;
-      if (this.started) {
+      if (this.started && this._suspensions === 0) {
         this.update(time);
-        if (this.started && this._requestId === null && this._head?.next) {
+        if (this.started && this._suspensions === 0 && this._requestId === null && this._head?.next) {
           this._requestId = requestAnimationFrame(this._tick);
         }
       }
@@ -98,7 +100,7 @@ export class Ticker {
   }
 
   private _requestIfNeeded(): void {
-    if (this._requestId === null && this._head?.next) {
+    if (this._suspensions === 0 && this._requestId === null && this._head?.next) {
       this.lastTime = performance.now();
       this._lastFrame = this.lastTime;
       this._requestId = requestAnimationFrame(this._tick);
@@ -176,6 +178,38 @@ export class Ticker {
     }
   }
 
+  /** Hold frame updates without changing start/stop intent; release is idempotent. */
+  suspend(): () => void {
+    this._suspensions++;
+    this._cancelIfNeeded();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this._suspensions--;
+      if (this._suspensions === 0 && this._head) {
+        // Disk/GPU readback time is not game time. Resume with a fresh RAF delta.
+        this.lastTime = this._lastFrame = performance.now();
+        if (this.started) this._requestIfNeeded();
+      }
+    };
+  }
+
+  /** Run exactly one explicit frame while a suspension still blocks automatic RAFs. */
+  step(deltaMS = 1000 / 60): void {
+    if (!Number.isFinite(deltaMS) || deltaMS <= 0) throw new Error('Ticker step requires a positive frame duration');
+    if (!this._head) return;
+    if (this._stepping) throw new Error('Ticker step cannot be nested');
+    const now = performance.now();
+    this.lastTime = this._lastFrame = now - deltaMS;
+    this._stepping = true;
+    try { this.update(now); }
+    finally {
+      this._stepping = false;
+      this.lastTime = this._lastFrame = now;
+    }
+  }
+
   destroy(): void {
     if (this._protected) return;
     this.stop();
@@ -186,12 +220,13 @@ export class Ticker {
   }
 
   update(currentTime: number = performance.now()): void {
+    if (this._suspensions > 0 && !this._stepping || !this._head) return;
     let elapsedMS: number;
     if (currentTime > this.lastTime) {
       elapsedMS = this.elapsedMS = currentTime - this.lastTime;
       if (elapsedMS > this._maxElapsedMS) elapsedMS = this._maxElapsedMS;
       elapsedMS *= this.speed;
-      if (this._minElapsedMS) {
+      if (this._minElapsedMS && !this._stepping) {
         const delta = (currentTime - this._lastFrame) | 0;
         if (delta < this._minElapsedMS) return;
         this._lastFrame = currentTime - (delta % this._minElapsedMS);

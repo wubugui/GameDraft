@@ -134,6 +134,19 @@ export class RhiResourceScope {
     return this.children.size;
   }
 
+  /** Read-only snapshot of live resources in this scope and all descendants. */
+  liveResources(): readonly RhiResource[] {
+    const result: RhiResource[] = [];
+    const visit = (scope: RhiResourceScope): void => {
+      for (const resource of scope.resources) {
+        if (!resource.destroyed) result.push(resource);
+      }
+      for (const child of scope.children) visit(child);
+    };
+    visit(this);
+    return result;
+  }
+
   createChild(label: string): RhiResourceScope {
     this.assertAlive();
     return new RhiResourceScope(label, this.factory, this);

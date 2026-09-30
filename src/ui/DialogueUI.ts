@@ -1,5 +1,5 @@
 import { Container, Graphics, Sprite, Text, Texture } from '../engine2d';
-import { UITheme, fadeIn } from './UITheme';
+import { UITheme } from './UITheme';
 import { createPanel, SKINS } from './PanelSkin';
 import { ContinueIndicator } from './components/ContinueIndicator';
 import { drawSelectedRow } from './components/UIDecor';
@@ -136,6 +136,38 @@ function portraitPath(ref: DialoguePortraitRef): string {
 
 
 export class DialogueUI {
+  private capturePauseDepth = 0;
+  private capturePauseStartedAt = 0;
+  private capturePausedMs = 0;
+  private captureSteppedMs = 0;
+  private captureFrameActive = false;
+  private captureResumeCallbacks = new Set<() => void>();
+
+  private captureClockNow(): number {
+    return (this.capturePauseDepth > 0 ? this.capturePauseStartedAt : performance.now())
+      - this.capturePausedMs + this.captureSteppedMs;
+  }
+
+  suspendForCapture(): () => void {
+    if (this.capturePauseDepth++ === 0) this.capturePauseStartedAt = performance.now();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--this.capturePauseDepth === 0) {
+        this.capturePausedMs += performance.now() - this.capturePauseStartedAt;
+        const pending = [...this.captureResumeCallbacks];
+        this.captureResumeCallbacks.clear();
+        for (const resume of pending) resume();
+      }
+    };
+  }
+
+  beginCaptureFrame(dt: number): () => void {
+    this.captureSteppedMs += dt * 1000;
+    this.captureFrameActive = true;
+    return () => { this.captureFrameActive = false; };
+  }
   private renderer: Renderer;
   private eventBus: EventBus;
   private strings: StringsProvider;
@@ -577,10 +609,11 @@ export class DialogueUI {
     flash.fill({ color: UITheme.colors.gold, alpha: 0.45 });
     flash.eventMode = 'none';
     layer.addChild(flash);
-    const start = performance.now();
+    const start = this.captureClockNow();
     const fade = (): void => {
       if (flash.destroyed) return;
-      const t = Math.min(1, (performance.now() - start) / 280);
+      if (this.capturePauseDepth > 0) { requestAnimationFrame(fade); return; }
+      const t = Math.min(1, (this.captureClockNow() - start) / 280);
       flash.alpha = (1 - UITheme.motion.easeOut(t)) * 0.45;
       if (t < 1) { requestAnimationFrame(fade); return; }
       if (flash.parent) flash.parent.removeChild(flash);
@@ -700,8 +733,12 @@ export class DialogueUI {
     void this.assetManager
       .loadTexture(path)
       .then((tex) => {
-        if (token !== this.portraitToken || !this.container) return;
-        this.applyPortrait(tex);
+        const commit = () => {
+          if (token !== this.portraitToken || !this.container) return;
+          this.applyPortrait(tex);
+        };
+        if (this.capturePauseDepth > 0) this.captureResumeCallbacks.add(commit);
+        else commit();
       })
       .catch(() => { /* 缺图：保持收起，正文空间已让出 */ });
   }
@@ -819,7 +856,17 @@ export class DialogueUI {
     this.relayout();
 
     this.renderer.uiLayer.addChild(this.container);
-    fadeIn(this.container, UITheme.motion.normal);
+    const shown = this.container;
+    shown.alpha = 0;
+    const fadeStarted = this.captureClockNow();
+    const fade = () => {
+      if (shown.destroyed) return;
+      if (this.capturePauseDepth > 0) { requestAnimationFrame(fade); return; }
+      const t = Math.min((this.captureClockNow() - fadeStarted) / UITheme.motion.normal, 1);
+      shown.alpha = t;
+      if (t < 1) requestAnimationFrame(fade);
+    };
+    requestAnimationFrame(fade);
 
     window.addEventListener('pointerdown', this.onClickBound);
     window.addEventListener('keydown', this.onKeyBound);
@@ -1202,6 +1249,7 @@ export class DialogueUI {
   }
 
   update(dt: number): void {
+    if (this.capturePauseDepth > 0 && !this.captureFrameActive) return;
     if (!this.container) return;
 
     // 跟随必须在任何 early return 之前：打字机播完、等推进、选项期，气泡都得继续跟着人走
@@ -1243,12 +1291,14 @@ export class DialogueUI {
   }
 
   private onClick(e: PointerEvent): void {
+    if (this.capturePauseDepth > 0) return;
     if (!isEventOnGameCanvas(this.renderer, e)) return;
     if (isPointerConsumed(e)) return;
     this.handleAdvance();
   }
 
   private onKey(e: KeyboardEvent): void {
+    if (this.capturePauseDepth > 0) return;
     if (e.repeat) return;
     /**
      * 选项期先给焦点：方向键挪焦点、回车/空格选中当前项。
@@ -1367,6 +1417,7 @@ export class DialogueUI {
   }
 
   destroy(): void {
+    this.captureResumeCallbacks.clear();
     this.hide();
     this.choiceFocus.destroy();
     this.eventBus.off('dialogue:line', this.dialogueLineCb);
