@@ -8,6 +8,7 @@
     ['shaders', '着色器'],
     ['pipelines', '管线'],
     ['buffers', '缓冲'],
+    ['samplers', '采样器'],
   ];
   const PAGE_SIZE = 200;
   const state = {
@@ -23,6 +24,8 @@
     selectedResource: null,
     selectedTextureKey: null,
     textureChoices: [],
+    selectedOutputKey: null,
+    outputChoices: [],
     textureWrites: new Map(),
     textureViews: new Map(),
     frameChoice: null,
@@ -89,7 +92,21 @@
   }
   function treePassLabel(pass, withinEffect) {
     const label = pass?.frameDebugStep?.logicalLabel || pass?.label || `${pass?.type || 'pass'} pass`;
-    if (passCategory(pass).key === 'unlabeled') return label;
+    if (passCategory(pass).key === 'unlabeled') {
+      if (!/^engine2d pass \d+$/i.test(label.trim())) return label;
+      const target = list(pass.targets).find(item => item.kind === 'color') || list(pass.targets)[0];
+      const targetId = target?.outputTextureId ?? target?.textureId;
+      const targetName = target?.outputTextureLabel || target?.textureLabel ||
+        (targetId != null ? `纹理 #${targetId}` : '');
+      const pipelines = new Map();
+      for (const event of state.events) {
+        if (Number(event?.passIndex) !== Number(pass.index) ||
+          !['draw', 'dispatch'].includes(eventKind(String(event?.method || ''))) || event.pipelineId == null) continue;
+        pipelines.set(String(event.pipelineId), event.pipelineLabel || `Pipeline #${event.pipelineId}`);
+      }
+      const pipelineClue = pipelines.size > 1 ? `${pipelines.size} 条管线` : [...pipelines.values()][0] || '';
+      return `未标注 Pass #${pass.index}${targetName ? ` → ${targetName}` : ''}${pipelineClue ? ` · ${pipelineClue}` : ''}`;
+    }
     const parts = label.split(' / ');
     return parts.length >= 3 ? parts.slice(withinEffect ? 2 : 1).join(' / ') :
       parts.length === 2 ? parts[1] : label;
@@ -165,8 +182,8 @@
   }
   function setupSplitter(handle, host, cssVariable, orientation) {
     const vertical = orientation === 'vertical';
-    const lower = vertical ? 300 : 260;
-    const reserve = vertical ? 320 : 260;
+    const lower = vertical ? 300 : 320;
+    const reserve = vertical ? 320 : 150;
     const setPosition = client => {
       const rect = host.getBoundingClientRect();
       const span = vertical ? rect.width : rect.height;
@@ -312,7 +329,7 @@
     if (!query) return true;
     const pass = event?.passIndex == null ? null : passFor(event.passIndex);
     const head = [method, event?.commandIndex, event?.pipelineId, event?.pipelineLabel,
-      event?.passIndex, event?.frameOrdinal, pass?.label,
+      event?.passIndex, event?.frameOrdinal, pass?.label, pass && treePassLabel(pass, false),
       pass?.frameDebugStep?.logicalLabel].map(printable).join(' ').toLocaleLowerCase();
     if (head.includes(query)) return true;
     return safeJson([event?.args, event?.bindGroups], 12000).toLocaleLowerCase().includes(query);
@@ -334,9 +351,8 @@
     const holder = el('event-tree');
     const previousScroll = holder.scrollTop;
     clear(holder);
-    if (!matches.length) {
-      holder.appendChild(make('p', state.events.length ? '没有符合条件的事件。' : '报告没有事件明细；可查看 Pass 与统计。', 'empty'));
-    }
+    let shownTreeNodes = 0;
+    let zeroDrawPassCount = 0;
     const visible = matches.slice(0, state.eventLimit);
     const byPass = new Map();
     for (const index of visible) {
@@ -363,25 +379,36 @@
     const allFrames = list(state.report?.frames);
     const frames = allFrames.length ? allFrames.filter(frame => state.frameFilter === null ||
       Number(frame?.frameOrdinal) === Number(state.frameFilter)) : [null];
-    if (matches.length) for (const frame of frames) {
+    for (const frame of frames) {
       const ordinal = frame?.frameOrdinal ?? null;
       const belongs = event => ordinal === null || Number(event?.frameOrdinal) === Number(ordinal);
       const inFrame = visible.filter(index => belongs(state.events[index]));
-      if (!inFrame.length && query) continue;
-      holder.appendChild(make('div', frame ?
-        `▾ 第 ${frame.frameOrdinal} 帧 · 命令 ${printable(frame.beginCommand)}–${printable(frame.endCommand)}` :
-        '▾ 捕获事件', 'tree-frame'));
       const passes = list(state.report?.passes).filter(pass =>
         (kind === 'all' || !pass?.diagnosticAuxiliary) &&
         (ordinal === null || Number(pass?.frameOrdinal) === Number(ordinal)));
       const passIds = new Set(passes.map(pass => String(pass.index)));
       const ungrouped = inFrame.filter(index => state.events[index]?.passIndex == null ||
         !passIds.has(String(state.events[index].passIndex)));
-      const nodes = passes.filter(pass => (byPass.get(String(pass.index)) || []).length)
+      const nodes = passes.filter(pass => (byPass.get(String(pass.index)) || []).length ||
+        (kind === 'visual' && pass.type === 'render' && pass.draws === 0 &&
+          (!query || [pass.label, treePassLabel(pass, false), pass.index, ...list(pass.targets).map(target =>
+            target.outputTextureLabel || target.textureLabel || target.outputTextureId || target.textureId)]
+            .map(printable).join(' ').toLocaleLowerCase().includes(query))))
         .map(pass => ({ type: 'pass', value: pass, order: Number(pass.beginCommand) || 0 }));
       for (const index of ungrouped) nodes.push({ type: 'event', value: index,
         order: Number(state.events[index]?.commandIndex) || 0 });
       nodes.sort((a, b) => a.order - b.order || (a.type === 'pass' ? -1 : 1));
+      if (!nodes.length) continue;
+      shownTreeNodes += nodes.length;
+      zeroDrawPassCount += nodes.filter(node => node.type === 'pass' && node.value.draws === 0 &&
+        !(byPass.get(String(node.value.index)) || []).length).length;
+      holder.appendChild(make('div', frame ?
+        `▾ 第 ${frame.frameOrdinal} 帧 · 命令 ${printable(frame.beginCommand)}–${printable(frame.endCommand)}` :
+        '▾ 捕获事件', 'tree-frame'));
+      let categoryGroup = null;
+      let categoryContainer = null;
+      let categoryCount = null;
+      let categoryLength = 0;
       let batchContainer = null;
       let batchGroup = null;
       let batchSubject = null;
@@ -396,6 +423,7 @@
           batchContainer = null;
           stepContainer = null;
           previousCategoryKey = null;
+          categoryContainer = null;
           appendEvents(holder, [node.value]);
           continue;
         }
@@ -406,8 +434,34 @@
           stepContainer = null;
           stepGroupKey = null;
           previousCategoryKey = category.key;
+          categoryLength = 0;
+          const runKey = `${ordinal ?? 'all'}:${pass.index}`;
+          const stageSubject = (category.key === 'canvas' || category.key === 'offscreen') ?
+            String(pass.frameDebugStep?.logicalLabel || pass.label || '').split(' / ')[1] : '';
+          const stageLabel = stageSubject ? `${category.label} · ${stageSubject}` : category.label;
+          categoryGroup = make('details', undefined, 'tree-category');
+          categoryGroup.open = state.expandedCategories.has(runKey) || !!query;
+          const summary = make('summary', undefined, 'tree-category-head');
+          summary.title = stageLabel;
+          summary.appendChild(make('span', stageLabel, 'tree-label'));
+          categoryCount = make('span', '', 'tree-meta');
+          summary.appendChild(categoryCount);
+          const currentCategoryGroup = categoryGroup;
+          summary.addEventListener('click', event => {
+            event.preventDefault();
+            currentCategoryGroup.open = !currentCategoryGroup.open;
+            if (currentCategoryGroup.open) state.expandedCategories.add(runKey);
+            else state.expandedCategories.delete(runKey);
+          });
+          categoryGroup.appendChild(summary);
+          categoryContainer = make('div', undefined, 'tree-category-children');
+          categoryGroup.appendChild(categoryContainer);
+          holder.appendChild(categoryGroup);
         }
-        let passContainer = holder;
+        categoryLength++;
+        categoryCount.textContent = `${categoryLength} Pass`;
+        if (state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index)) categoryGroup.open = true;
+        let passContainer = categoryContainer;
         if (category.key === 'filter' || category.key === 'mask') {
           const segments = (pass.frameDebugStep?.logicalLabel || pass.label || '').split(' / ');
           const subject = `${category.label} · ${(segments[1] || pass.label || '未命名').replace(/gaussian-blur-(horizontal|vertical)-kernel-\d+/g, 'gaussian-blur')}`;
@@ -430,11 +484,13 @@
             batchContainer = make('div', undefined, 'tree-batch-children');
             batchGroup.appendChild(batchContainer);
             const currentBatchGroup = batchGroup;
-            batchGroup.addEventListener('toggle', () => {
+            summary.addEventListener('click', event => {
+              event.preventDefault();
+              currentBatchGroup.open = !currentBatchGroup.open;
               if (currentBatchGroup.open) state.expandedBatches.add(batchKey);
               else state.expandedBatches.delete(batchKey);
             });
-            holder.appendChild(batchGroup);
+            categoryContainer.appendChild(batchGroup);
           }
           batchLength++;
           batchCount.textContent = `${batchLength} Pass`;
@@ -442,7 +498,7 @@
           passContainer = batchContainer;
         }
         const step = pass.frameDebugStep;
-        if (step?.totalDraws > 1 && kind !== 'visual') {
+        if (step?.totalDraws > 1) {
           const logicalKey = `${ordinal ?? 'all'}:${category.key}:${step.logicalLabel}:${step.totalDraws}`;
           if (!stepContainer || stepGroupKey !== logicalKey || step.drawOrdinal !== stepOrdinal + 1) {
             stepGroupKey = logicalKey;
@@ -456,7 +512,9 @@
             group.appendChild(summary);
             stepContainer = make('div', undefined, 'tree-batch-children');
             group.appendChild(stepContainer);
-            group.addEventListener('toggle', () => {
+            summary.addEventListener('click', event => {
+              event.preventDefault();
+              group.open = !group.open;
               if (group.open) state.expandedSteps.add(expansionKey);
               else state.expandedSteps.delete(expansionKey);
             });
@@ -472,6 +530,19 @@
         }
         const key = String(pass.index);
         const passEvents = byPass.get(key) || [];
+        if (kind === 'visual' && passEvents.length === 0 && Number(pass.draws ?? 0) === 0) {
+          const head = make('button', undefined, 'tree-pass-head tree-pass-leaf');
+          head.type = 'button';
+          head.dataset.passIndex = key;
+          head.classList.toggle('active', state.selectedPass === Number(pass.index));
+          head.setAttribute('aria-selected', String(state.selectedPass === Number(pass.index)));
+          head.title = `${describePass(pass)}\n0 Draw；可能只有 clear/load 操作，以附件状态为准。`;
+          head.appendChild(make('span', `${treePassLabel(pass, passContainer === batchContainer && !!batchContainer)} · 0 Draw`, 'tree-label'));
+          head.appendChild(make('span', `P${pass.index}`, 'tree-meta'));
+          head.addEventListener('click', () => selectPass(pass.index, { keepTreeScroll: true }));
+          passContainer.appendChild(head);
+          continue;
+        }
         if (kind === 'visual' && passEvents.length === 1) {
           const eventIndex = passEvents[0];
           const drawEvent = state.events[eventIndex];
@@ -482,8 +553,9 @@
             head.dataset.eventIndex = String(eventIndex);
             head.classList.toggle('active', state.selectedEvent === eventIndex);
             head.setAttribute('aria-selected', String(state.selectedEvent === eventIndex));
-            const label = treePassLabel(pass, passContainer === batchContainer && !!batchContainer);
-            const ordinalLabel = step?.totalDraws > 1 ? ` · ${step.drawOrdinal}/${step.totalDraws}` : '';
+            const label = step?.totalDraws > 1 ? `Draw ${step.drawOrdinal}/${step.totalDraws}` :
+              treePassLabel(pass, passContainer === batchContainer && !!batchContainer);
+            const ordinalLabel = '';
             head.title = `${describePass(pass)}\n#${printable(drawEvent.commandIndex ?? eventIndex)} ${printable(drawEvent.method)}${drawEvent.pipelineLabel ? `\n${drawEvent.pipelineLabel}` : ''}`;
             head.appendChild(make('span', `${label}${ordinalLabel}`, 'tree-label'));
             const gpuMs = pass.gpuTiming?.source === 'webgpu-timestamp-query' && finite(pass.gpuTiming.durationMs) ?
@@ -522,8 +594,10 @@
         passContainer.appendChild(group);
       }
     }
+    if (!shownTreeNodes) holder.appendChild(make('p', state.events.length ?
+      '没有符合条件的事件或 Pass。' : '报告没有事件明细；可查看 Pass 与统计。', 'empty'));
     holder.scrollTop = previousScroll;
-    el('event-list-status').textContent = `显示 ${Math.min(matches.length, state.eventLimit)} / ${matches.length} 条`;
+    el('event-list-status').textContent = `显示 ${Math.min(matches.length, state.eventLimit)} / ${matches.length} 事件${zeroDrawPassCount ? ` · ${zeroDrawPassCount} 个 0 Draw Pass` : ''}`;
     el('event-more').hidden = matches.length <= state.eventLimit;
     const step = matches.indexOf(state.selectedEvent);
     const range = el('event-range');
@@ -544,8 +618,6 @@
     state.focusScope = 'draw';
     if (event.passIndex !== null && event.passIndex !== undefined) {
       state.selectedPass = Number(event.passIndex);
-      state.expandedPasses.add(String(event.passIndex));
-      state.expandedCategories.add(passCategory(passFor(event.passIndex)).key);
     } else state.selectedPass = null;
     if (event.frameOrdinal !== null && event.frameOrdinal !== undefined) {
       state.selectedFrame = Number(event.frameOrdinal);
@@ -576,8 +648,6 @@
     const firstDraw = state.events.findIndex(event => Number(event?.passIndex) === Number(index) &&
       ['draw', 'dispatch'].includes(eventKind(String(event?.method || ''))));
     state.selectedEvent = firstDraw < 0 ? null : firstDraw;
-    state.expandedPasses.add(String(index));
-    state.expandedCategories.add(passCategory(pass).key);
     state.selectedTextureKey = null;
     state.selectedBufferPayloadId = null;
     if (state.previewMode !== 'mesh') state.previewMode = 'frame';
@@ -615,6 +685,7 @@
         const resource = entry?.resource;
         if (resource?.textureId !== undefined) add('textures', resource.textureId, resource.label);
         else if (resource?.type === 'Buffer') add('buffers', resource.id, resource.label);
+        else if (resource?.type === 'Sampler') add('samplers', resource.id, resource.label);
       }
     }
     for (const target of list(event.targets)) add('textures', target?.textureId, target?.textureLabel);
@@ -625,7 +696,8 @@
     section.appendChild(make('label', '相关资源'));
     const links = make('div', undefined, 'resource-jumps');
     for (const target of targets) {
-      const button = make('button', `${target.kind === 'textures' ? '纹理' : '缓冲'} #${target.id} ${target.label || ''}`, 'plain-button');
+      const kindLabel = { textures: '纹理', buffers: '缓冲', samplers: '采样器' };
+      const button = make('button', `${kindLabel[target.kind]} #${target.id} ${target.label || ''}`, 'plain-button');
       button.type = 'button';
       button.addEventListener('click', () => {
         el('resource-search').value = '';
@@ -658,10 +730,15 @@
       addDetailRow(grid, 'Draw / Dispatch', `${pass.draws ?? 0} / ${pass.dispatches ?? 0}`);
       addDetailRow(grid, 'GPU 时间', pass.gpuTiming?.source === 'webgpu-timestamp-query' && finite(pass.gpuTiming.durationMs) ?
         `${pass.gpuTiming.durationMs.toFixed(6)} ms${pass.frameDebugStep ? '（单 Draw 物理 Pass，含 Pass 开销）' : ''}` : '未测量');
-      addDetailRow(grid, 'Pass 输出', list(pass.snapshots).length ? `${pass.snapshots.length} 张 GPU 结束读回` :
+      const readable = snapshot => !!(snapshot?.imageFile || snapshot?.rawFile);
+      const colors = list(pass.snapshots).filter(readable).length;
+      const depth = list(pass.aspectSnapshots).filter(item => item?.aspect === 'depth' && readable(item)).length;
+      const stencil = list(pass.aspectSnapshots).filter(item => item?.aspect === 'stencil' && readable(item)).length;
+      const outputCounts = [colors && `${colors} Color`, depth && `${depth} Depth`, stencil && `${stencil} Stencil`].filter(Boolean);
+      addDetailRow(grid, 'Pass 输出', outputCounts.length ? `${outputCounts.join(' / ')} 可查看的 GPU 读回` :
         `无读回${pass.outputUnavailableReason ? `：${pass.outputUnavailableReason}` : ''}`);
     }
-    if (event) {
+    if (event && state.focusScope !== 'pass') {
       addDetailRow(grid, '选中命令', `#${printable(event.commandIndex)} ${printable(event.method)}`);
       if (eventKind(String(event.method || '')) === 'draw') {
         const output = postDrawSnapshots(pass, event);
@@ -675,6 +752,14 @@
     const scopeDraws = state.focusScope === 'pass' && pass ? state.events.filter(item =>
       Number(item?.passIndex) === Number(pass.index) &&
       ['draw', 'dispatch'].includes(eventKind(String(item?.method || '')))) : event ? [event] : [];
+    if (state.focusScope === 'pass' && pass) {
+      const pipelines = new Map();
+      for (const draw of scopeDraws) if (draw.pipelineId != null) {
+        pipelines.set(String(draw.pipelineId), `#${draw.pipelineId} ${draw.pipelineLabel || ''}`.trim());
+      }
+      addDetailRow(grid, '管线数', `${pipelines.size} 条${pipelines.size > 1 ? '；请选择具体 Draw 查看当时管线和参数' : ''}`);
+      if (pipelines.size) addDetailRow(grid, '涉及管线', [...pipelines.values()].join('；'));
+    }
     const bound = scopeDraws.flatMap(draw => list(draw.bindGroups).flatMap(group => list(group.resources)));
     const textureCount = new Set(bound.filter(item => item?.resource?.textureId != null)
       .map(item => `${item.resource.textureId}:${item.resource.id}`)).size;
@@ -686,7 +771,8 @@
       (state.focusScope === 'pass' ? ` · ${scopeDraws.length} 个 Draw / Dispatch` : '') +
       '。这些是命令绑定状态，不能证明 Shader 实际读取了每个槽位。',
       'muted small'));
-    const pipeline = resourceArray('pipelines').find(item => String(item.id) === String(event?.pipelineId));
+    const pipeline = state.focusScope === 'pass' && scopeDraws.length !== 1 ? null :
+      resourceArray('pipelines').find(item => String(item.id) === String(event?.pipelineId));
     if (pipeline) {
       const entryPoints = [pipeline.descriptor?.vertex?.entryPoint, pipeline.descriptor?.fragment?.entryPoint,
         pipeline.descriptor?.compute?.entryPoint].filter(Boolean);
@@ -705,7 +791,7 @@
       jumps.appendChild(button);
     }
     holder.appendChild(jumps);
-    if (event) {
+    if (event && state.focusScope !== 'pass') {
       const raw = make('details', undefined, 'data-section');
       raw.appendChild(make('summary', '原始命令数据'));
       raw.appendChild(pre(event));
@@ -717,6 +803,12 @@
 
   function focusedDraw() {
     const event = state.events[state.selectedEvent];
+    if (state.focusScope === 'pass') {
+      const pass = state.selectedPass == null ? null : passFor(state.selectedPass);
+      const draws = pass ? state.events.filter(item => Number(item?.passIndex) === Number(pass.index) &&
+        ['draw', 'dispatch'].includes(eventKind(String(item?.method || '')))) : [];
+      return draws.length === 1 ? draws[0] : null;
+    }
     if (event && ['draw', 'dispatch'].includes(eventKind(String(event.method || '')))) return event;
     const pass = state.selectedPass == null ? null : passFor(state.selectedPass);
     return pass ? state.events.find(item => Number(item?.passIndex) === Number(pass.index) &&
@@ -748,6 +840,78 @@
     node.appendChild(body);
     container.appendChild(node);
   }
+  function openDrawBuffer(draw, predicate) {
+    const index = state.events.indexOf(draw);
+    if (index < 0) return;
+    const choice = bufferChoices(draw).find(predicate);
+    selectEvent(index);
+    if (choice) state.selectedBufferPayloadId = choice.key;
+    renderBufferInspector();
+    setInspectorPage('buffers');
+  }
+  function stageShaderBindings(shader) {
+    const pattern = /@group\s*\(\s*(\d+)\s*\)\s*@binding\s*\(\s*(\d+)\s*\)\s*var(?:\s*<[^>]*>)?\s+([A-Za-z_]\w*)\s*:\s*([^;]+);/g;
+    return [...String(shader?.code || '').matchAll(pattern)].map(match => ({
+      group: Number(match[1]), binding: Number(match[2]), name: match[3], type: match[4].trim(),
+    })).sort((a, b) => a.group - b.group || a.binding - b.binding);
+  }
+  function appendStageBindings(holder, draw, shader) {
+    const declarations = stageShaderBindings(shader);
+    holder.appendChild(make('h3', 'Shader 模块声明与当前 Draw 绑定', 'section-caption'));
+    holder.appendChild(make('p', '按 WGSL 模块声明关联绑定槽；模块声明不证明这个阶段实际读取了资源。', 'muted small'));
+    if (!declarations.length) {
+      holder.appendChild(make('p', shader?.code ? 'WGSL 中没有可识别的 @group/@binding 声明。' :
+        '没有 WGSL 源码，无法把绑定槽归入此阶段；完整绑定仍可在「输入与输出」查看。', 'muted small'));
+      return;
+    }
+    const byGroup = new Map();
+    for (const declaration of declarations) {
+      if (!byGroup.has(declaration.group)) byGroup.set(declaration.group, []);
+      byGroup.get(declaration.group).push(declaration);
+    }
+    for (const [slot, entries] of byGroup) {
+      const section = make('details', undefined, 'binding-resource');
+      section.open = slot === 0 || declarations.length <= 12;
+      section.appendChild(make('summary', `Bind Group ${slot} · ${entries.length} 个 WGSL 声明`));
+      const grid = make('table', undefined, 'binding-table');
+      grid.innerHTML = '<thead><tr><th>Binding</th><th>WGSL 名称 / 类型</th><th>此 Draw 绑定资源</th><th>检查</th></tr></thead>';
+      const body = make('tbody');
+      const group = list(draw.bindGroups).find(item => Number(item.slot) === slot);
+      for (const declaration of entries) {
+        const resource = list(group?.resources).find(item => Number(item.binding) === declaration.binding)?.resource;
+        const row = make('tr');
+        row.appendChild(make('td', `${slot} / ${declaration.binding}`));
+        row.appendChild(make('td', `${declaration.name} · ${declaration.type}`));
+        row.appendChild(make('td', resource ? `#${resource.id} ${resource.label || ''}${resource.textureId != null ?
+          ` · Texture #${resource.textureId}` : ''}` : '未绑定'));
+        const action = make('td');
+        if (resource?.type === 'Buffer') {
+          const button = make('button', '查看值 / 字节', 'inline-link');
+          button.type = 'button';
+          button.addEventListener('click', () => openDrawBuffer(draw, item =>
+            Number(item.groupSlot) === slot && Number(item.binding) === declaration.binding &&
+            String(item.bufferId) === String(resource.id)));
+          action.appendChild(button);
+        } else if (resource?.textureId != null) {
+          const button = make('button', '查看纹理', 'inline-link');
+          button.type = 'button';
+          button.addEventListener('click', () => previewTexture(resource.textureId,
+            resource.type === 'TextureView' ? resource.id : null, true));
+          action.appendChild(button);
+        } else if (resource?.type === 'Sampler' && resourceIndexById('samplers', resource.id) >= 0) {
+          const button = make('button', '查看采样状态', 'inline-link');
+          button.type = 'button';
+          button.addEventListener('click', () => selectResource('samplers', resourceIndexById('samplers', resource.id)));
+          action.appendChild(button);
+        }
+        row.appendChild(action);
+        body.appendChild(row);
+      }
+      grid.appendChild(body);
+      section.appendChild(grid);
+      holder.appendChild(section);
+    }
+  }
   function previewTexture(id, viewId = null, input = false) {
     const option = state.textureChoices.find(item => String(item.id) === String(id) &&
       (!input || item.role === '绑定输入') &&
@@ -764,7 +928,25 @@
     clear(holder);
     const draw = focusedDraw();
     const pipeline = pipelineForEvent(draw);
-    if (!pipeline) { holder.appendChild(make('p', '所选 Pass / 命令没有可用管线描述。', 'empty')); return; }
+    if (!pipeline) {
+      const pass = state.selectedPass == null ? null : passFor(state.selectedPass);
+      const draws = state.focusScope === 'pass' && pass ? state.events.filter(item =>
+        Number(item?.passIndex) === Number(pass.index) &&
+        ['draw', 'dispatch'].includes(eventKind(String(item?.method || '')))) : [];
+      if (draws.length > 1) {
+        const ids = new Set(draws.filter(item => item.pipelineId != null).map(item => String(item.pipelineId)));
+        holder.appendChild(make('p', `此 Pass 有 ${draws.length} 个 Draw / Dispatch、${ids.size} 条管线。请选择具体命令查看准确的管线状态和参数。`, 'inspect-note'));
+        const links = make('div', undefined, 'resource-jumps');
+        for (const item of draws) {
+          const button = make('button', `#${item.commandIndex} ${item.pipelineLabel || `Pipeline #${printable(item.pipelineId)}`}`, 'plain-button');
+          button.type = 'button';
+          button.addEventListener('click', () => selectEvent(state.events.indexOf(item), true));
+          links.appendChild(button);
+        }
+        holder.appendChild(links);
+      } else holder.appendChild(make('p', '所选 Pass / 命令没有可用管线描述。', 'empty'));
+      return;
+    }
     const descriptor = pipeline.descriptor || {};
     const compute = pipeline.type === 'ComputePipeline' || !!descriptor.compute;
     const stages = compute ? [['compute', 'Compute', descriptor.compute?.entryPoint || '—']] :
@@ -785,7 +967,7 @@
       flow.appendChild(button);
     }
     holder.appendChild(flow);
-    holder.appendChild(make('p', `Pipeline #${pipeline.id} · ${pipeline.label || pipeline.type || '未命名'} · Draw #${draw.commandIndex}`, 'muted small'));
+    holder.appendChild(make('p', `Pipeline #${pipeline.id} · ${pipeline.label || pipeline.type || '未命名'} · Draw #${draw.commandIndex}${state.focusScope === 'pass' ? '（此 Pass 只有一个 Draw）' : ''}。这里显示 API 管线状态，不执行 Shader 单步调试。`, 'muted small'));
     const stage = state.pipelineStage;
     if (stage === 'input') {
       holder.appendChild(make('h3', '顶点缓冲与布局', 'section-caption'));
@@ -795,7 +977,22 @@
         return [`${buffer.slot}`, `#${buffer.id} ${buffer.label || ''}`, `${layout?.arrayStride ?? '—'} B / ${layout?.stepMode || '—'}`, attrs || '—'];
       });
       table(holder, ['Slot', 'Buffer', 'Stride', 'Attributes'], rows);
+      for (const buffer of list(draw.vertexBuffers)) {
+        const button = make('button', `查看 Slot ${buffer.slot} · Buffer #${buffer.id} 字节`, 'inline-link');
+        button.type = 'button';
+        button.addEventListener('click', () => openDrawBuffer(draw, item =>
+          item.role === 'vertex' && Number(item.vertexSlot) === Number(buffer.slot) &&
+          String(item.bufferId) === String(buffer.id)));
+        holder.append(button, make('span', ' '));
+      }
       if (draw.indexBuffer) holder.appendChild(make('p', `索引：#${draw.indexBuffer.id} ${draw.indexBuffer.label || ''} · ${draw.indexBuffer.format || '格式未记载'}`, 'data-section'));
+      if (draw.indexBuffer) {
+        const button = make('button', `查看 Index Buffer #${draw.indexBuffer.id} 字节`, 'inline-link');
+        button.type = 'button';
+        button.addEventListener('click', () => openDrawBuffer(draw, item =>
+          item.role === 'index' && String(item.bufferId) === String(draw.indexBuffer.id)));
+        holder.appendChild(button);
+      }
       return;
     }
     if (stage === 'raster') {
@@ -823,6 +1020,7 @@
     const shader = shaderForStage(pipeline, shaderStage);
     const entry = descriptor[shaderStage]?.entryPoint;
     holder.appendChild(make('h3', `${stage === 'vertex' ? 'Vertex Shader' : stage === 'fragment' ? 'Fragment Shader' : 'Compute Shader'} · ${entry || '入口未记载'}`, 'section-caption'));
+    appendStageBindings(holder, draw, shader);
     if (!shader?.code) { holder.appendChild(make('p', '这份捕获没有该阶段的 WGSL 源码。', 'muted')); return; }
     const link = make('button', `打开 WGSL #${shader.id}`, 'inline-link');
     link.type = 'button';
@@ -1117,7 +1315,9 @@
       for (const row of rows.values()) {
         const group = make('details', undefined, 'binding-resource');
         const summary = make('summary');
-        summary.appendChild(make('span', `${row.kind} #${row.id} ${row.resource.label || ''}`));
+        const names = [...new Set([...row.bindings.values()].map(item => item.name?.name).filter(Boolean))];
+        const bindingName = names.length ? `${names.slice(0, 2).join(' / ')}${names.length > 2 ? ` +${names.length - 2}` : ''} · ` : '';
+        summary.appendChild(make('span', `${bindingName}${row.kind} #${row.id} ${row.resource.label || ''}`));
         summary.appendChild(make('span', `${row.bindings.size} 个槽位 · ${row.draws.size} Draw`, 'binding-sub'));
         group.appendChild(summary);
         const slotTable = make('table', undefined, 'binding-table');
@@ -1165,6 +1365,11 @@
             renderBufferInspector();
             setInspectorPage('buffers');
           });
+          group.appendChild(button);
+        } else if (row.kind === 'Sampler' && resourceIndexById('samplers', row.id) >= 0) {
+          const button = make('button', '查看采样状态');
+          button.type = 'button';
+          button.addEventListener('click', () => selectResource('samplers', resourceIndexById('samplers', row.id)));
           group.appendChild(button);
         }
         holder.appendChild(group);
@@ -1815,7 +2020,9 @@
       button.classList.toggle('active', state.selectedResource === i);
       button.appendChild(make('span', `${printable(item?.label || kind.slice(0, -1))} · #${printable(item?.id ?? i)}`));
       const sub = kind === 'textures' ? [item?.width, item?.height, item?.format].filter(value => value !== undefined && value !== null).join(' × ') :
-        kind === 'shaders' ? `${typeof item?.code === 'string' ? item.code.length : 0} 字符 WGSL` : '';
+        kind === 'shaders' ? `${typeof item?.code === 'string' ? item.code.length : 0} 字符 WGSL` :
+        kind === 'samplers' ? [item?.descriptor?.minFilter, item?.descriptor?.magFilter,
+          item?.descriptor?.addressModeU, item?.descriptor?.addressModeV].filter(Boolean).join(' · ') : '';
       if (sub) button.appendChild(make('span', sub, 'sub'));
       button.addEventListener('click', () => selectResource(kind, i));
       holder.appendChild(button);
@@ -1833,6 +2040,15 @@
     addDetailRow(grid, '标签', item.label);
     if (item.format !== undefined) addDetailRow(grid, '格式', item.format);
     if (item.width !== undefined || item.height !== undefined) addDetailRow(grid, '尺寸', `${printable(item.width)} × ${printable(item.height)}`);
+    if (kind === 'samplers') {
+      const descriptor = item.descriptor || {};
+      addDetailRow(grid, 'Min / Mag / Mipmap', [descriptor.minFilter, descriptor.magFilter,
+        descriptor.mipmapFilter].map(printable).join(' / '));
+      addDetailRow(grid, 'U / V / W 寻址', [descriptor.addressModeU, descriptor.addressModeV,
+        descriptor.addressModeW].map(printable).join(' / '));
+      addDetailRow(grid, 'LOD', `${printable(descriptor.lodMinClamp)}–${printable(descriptor.lodMaxClamp)}`);
+      addDetailRow(grid, 'Compare / Anisotropy', `${printable(descriptor.compare)} / ${printable(descriptor.maxAnisotropy)}`);
+    }
     holder.appendChild(grid);
 
     if (kind === 'textures') {
@@ -1905,27 +2121,82 @@
       `Sidecar ${error?.file || ''}：${error?.reason || '未知错误'}`, 'error-item'));
   }
 
+  function outputChoicesFor(pass) {
+    if (!pass) return [];
+    const choices = [];
+    for (const target of list(pass.targets)) {
+      const color = target.kind === 'color';
+      if (!color && target.kind !== 'depth-stencil') continue;
+      const textureId = color ? target.outputTextureId ?? target.textureId : target.textureId;
+      const aspects = color ? [null] : target.format?.includes('stencil') ? ['depth', 'stencil'] : ['depth'];
+      for (const aspect of aspects) {
+        const snapshot = color ? list(pass.snapshots).find(item =>
+          String(item.textureId) === String(textureId)) : list(pass.aspectSnapshots).find(item =>
+            item.aspect === aspect && String(item.textureId) === String(textureId) &&
+            String(item.viewId) === String(target.viewId));
+        const role = color ? `Color ${target.slot}` : aspect === 'depth' ? 'Depth' : 'Stencil';
+        const label = `${role} · #${printable(textureId)} ${target.outputTextureLabel || target.textureLabel || ''}`.trim();
+        choices.push({
+          key: `${pass.index}:${role}:${textureId}`, label, role, target, snapshot: snapshot || null,
+          unavailableReason: snapshot?.reason || (!snapshot?.imageFile && !snapshot?.rawFile ?
+            snapshot?.imageReason || snapshot?.rawReason : null) ||
+            pass.outputUnavailableReason || pass.partialOutputUnavailableReason ||
+            '该输出没有此 Pass 结束时的 GPU 读回',
+        });
+      }
+    }
+    return choices;
+  }
+
   function renderFrame() {
     const frame = state.selectedFrame === null ? null : selectedFrame();
     const pass = state.selectedPass === null ? null : passFor(state.selectedPass);
-    const event = state.focusScope === 'draw' || pass?.frameDebugStep ? state.events[state.selectedEvent] : null;
-    const drawSnapshots = postDrawSnapshots(pass, event);
-    const postDraw = drawSnapshots.find(item => item.imageFile) || drawSnapshots[0] || null;
-    const snapshot = postDraw || list(pass?.snapshots).find(item => item.imageFile) || list(pass?.snapshots)[0];
-    const file = snapshot ? snapshot.imageFile : frame ? frame.imageFile : state.report?.frameImage;
-    state.frameChoice = { file, snapshot, frame, pass,
-      label: postDraw ? `Draw ${pass.frameDebugStep.drawOrdinal}/${pass.frameDebugStep.totalDraws} · 命令 #${event.commandIndex} 后输出` :
-        snapshot ? describePass(pass) : frame ? `第 ${frame.frameOrdinal} 帧画布` : '捕获保存时画布',
-      format: snapshot?.format || frame?.format || null,
-      source: postDraw ? '单 Draw 物理 Pass 结束 GPU 读回' :
-        snapshot ? 'Pass 结束 GPU 读回' : frame ? frame.imageSource || '帧画布' : '捕获最终画布',
-      width: snapshot?.width || frame?.width || null,
-      height: snapshot?.height || frame?.height || null };
-    el('frame-note').textContent = postDraw ?
-      `真实 Draw #${event.commandIndex} 后输出：第 ${snapshot.frameOrdinal} 帧、逻辑 Pass「${pass.frameDebugStep.logicalLabel}」的第 ${pass.frameDebugStep.drawOrdinal}/${pass.frameDebugStep.totalDraws} 个 Draw；物理 Pass #${snapshot.passIndex} 结束读回，来源 ${snapshot.source}。${snapshot.imageFile ? '' : snapshot.rawFile ? 'PNG 缺失；画布尝试按可见区域读取原始 RT。' : 'PNG 和原始 RT 均缺失。'}` :
-      snapshot ? `这是 Pass #${snapshot.passIndex} 结束后的真实 GPU 读回（命令 #${snapshot.afterCommandIndex}）。${event && eventKind(String(event.method || '')) === 'draw' ? '该 Pass 未逐 Draw 拆分，不能将此图认作选中 Draw 后的画面。' : ''}` :
-        frame ? `帧边界按 queue.submit 推断。${frame.imageSource ? `图像来源：${frame.imageSource}。` : ''}${pass ? `该 Pass 没有独立读回${pass.outputUnavailableReason ? `：${pass.outputUnavailableReason}` : ''}；这里显示整帧画布。` : ''}` :
-          `这里显示捕获保存时的最终画布状态；多帧时不代表每一帧。${pass?.outputUnavailableReason ? `该 Pass 输出未读回：${pass.outputUnavailableReason}。` : ''}`;
+    state.outputChoices = outputChoicesFor(pass);
+    if (!state.outputChoices.some(item => item.key === state.selectedOutputKey)) {
+      state.selectedOutputKey = (state.outputChoices.find(item => item.snapshot?.imageFile || item.snapshot?.rawFile) ||
+        state.outputChoices[0])?.key ?? null;
+    }
+    const outputs = el('output-choices');
+    clear(outputs);
+    if (state.outputChoices.length) {
+      const select = make('select');
+      select.setAttribute('aria-label', '选择所选 Pass 的输出渲染目标');
+      for (const item of state.outputChoices) {
+        const available = !!(item.snapshot?.imageFile || item.snapshot?.rawFile);
+        const option = make('option', `${item.label}${available ? '' : ' · 未读回'}`);
+        option.value = item.key;
+        option.title = available ? item.snapshot?.source || 'Pass 结束 GPU 读回' : item.unavailableReason;
+        select.appendChild(option);
+      }
+      select.value = state.selectedOutputKey;
+      select.addEventListener('change', () => {
+        state.selectedOutputKey = select.value;
+        renderFrame();
+        renderPreviewMode();
+      });
+      outputs.appendChild(select);
+    }
+    const selected = state.outputChoices.find(item => item.key === state.selectedOutputKey);
+    const snapshot = selected?.snapshot || null;
+    const postDraw = snapshot?.captureMoment === 'post-draw';
+    const file = pass ? snapshot?.imageFile || null : frame ? frame.imageFile : state.report?.frameImage;
+    const unavailableReason = pass && !snapshot?.imageFile && !snapshot?.rawFile ?
+      `Pass #${pass.index}${selected ? ` 的 ${selected.role}` : ''} 输出不可查看：${selected?.unavailableReason ||
+        '没有可识别的输出目标或 GPU 读回'}` : null;
+    state.frameChoice = { file, snapshot, frame, pass, unavailableReason,
+      label: pass ? selected?.label || describePass(pass) : frame ? `第 ${frame.frameOrdinal} 帧画布` : '捕获保存时画布',
+      format: snapshot?.sourceFormat || snapshot?.format || selected?.target?.format ||
+        (pass ? null : frame?.format) || null,
+      source: snapshot?.source || (postDraw ? '单 Draw 物理 Pass 结束 GPU 读回' :
+        pass ? 'Pass 结束 GPU 读回' : frame ? frame.imageSource || '帧画布' : '捕获最终画布'),
+      width: snapshot?.width || (pass ? null : frame?.width) || null,
+      height: snapshot?.height || (pass ? null : frame?.height) || null };
+    el('frame-note').textContent = unavailableReason || (snapshot ?
+      `${selected.label}：${postDraw ? `真实 Draw #${snapshot.drawCommandIndex} 后` : `真实 Pass #${snapshot.passIndex} 结束后`}的 GPU 读回${snapshot.afterCommandIndex != null ? `（命令 #${snapshot.afterCommandIndex}）` : ''}；来源 ${snapshot.source || '捕获 sidecar'}。${snapshot.imageFile ? '' : 'PNG 缺失；画布使用原始 RT。'}${postDraw && pass?.frameDebugStep ?
+        `逻辑 Pass「${pass.frameDebugStep.logicalLabel}」的第 ${pass.frameDebugStep.drawOrdinal}/${pass.frameDebugStep.totalDraws} 个 Draw。` :
+        !postDraw && state.focusScope === 'draw' ? '这是 Pass 结束状态，不能认作所选 Draw 后状态。' : ''}` :
+      frame ? `帧边界按 queue.submit 推断。${frame.imageSource ? `图像来源：${frame.imageSource}。` : ''}` :
+        '这里显示捕获保存时的最终画布状态；多帧时不代表每一帧。');
     if (hasRawFloat(snapshot)) el('frame-note').textContent +=
       '浮点预览从原始值先应用曝光、再色调映射；PNG 仅供导出。';
   }
@@ -1940,8 +2211,11 @@
       button.setAttribute('aria-pressed', String(active));
     }
     el('preview-texture-button').disabled = !state.textureChoices.length;
+    el('output-choices').hidden = texture || mesh || !state.outputChoices.length;
     el('texture-scope').hidden = !texture;
     el('texture-choices').hidden = !texture;
+    el('texture-count').textContent = texture ? `${state.textureChoices.length} 张纹理` :
+      `${state.outputChoices.length} 个输出`;
     el('texture-controls').hidden = mesh;
     el('mesh-controls').hidden = !mesh;
     el('mesh-preview').hidden = !mesh;
@@ -1974,6 +2248,10 @@
       id: selected.id,
     } : state.frameChoice;
     const url = assetUrl(choice?.file);
+    const unavailable = el('output-unavailable');
+    unavailable.hidden = texture || mesh || !!url || !!assetUrl(choice?.snapshot?.rawFile) ||
+      !choice?.unavailableReason;
+    unavailable.textContent = unavailable.hidden ? '' : choice.unavailableReason;
     const save = el('texture-save');
     const saveRaw = el('texture-save-raw');
     save.hidden = !url;

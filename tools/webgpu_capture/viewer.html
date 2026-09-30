@@ -72,7 +72,7 @@
     .list-footer { display:flex; justify-content:space-between; align-items:center; flex:none; gap:5px; min-height:25px; padding:3px 7px; border-top:1px solid var(--line); color:var(--muted); font-size:10px; }
     .list-footer .plain-button { min-height:19px; padding:0 5px; }
     #pass-list,#event-list { display:none !important; }
-    .frame-main { --preview-height:72%; display:grid; grid-template-rows:minmax(320px,var(--preview-height)) 5px minmax(150px,1fr); min-width:0; min-height:0; }
+    .frame-main { --preview-height:60%; display:grid; grid-template-rows:minmax(320px,var(--preview-height)) 5px minmax(150px,1fr); min-width:0; min-height:0; }
     .frame-main.preview-maximized { grid-template-rows:minmax(0,1fr); }
     .frame-main.preview-maximized > #preview-splitter,.frame-main.preview-maximized > .inspector-pane { display:none; }
     .splitter { z-index:2; background:#12191f; touch-action:none; }
@@ -84,6 +84,8 @@
     .preview-source-row { display:flex; align-items:center; gap:6px; min-height:29px; padding:3px 7px; border-bottom:1px solid var(--line); }
     #texture-scope { flex:none; max-width:155px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .texture-choices { display:flex; flex:1; min-width:0; }
+    .output-choices { display:flex; flex:1; min-width:0; }
+    .output-choices select { width:100%; max-width:none; }
     .preview-source-row .plain-button.active { border-color:var(--accent); background:#315777; }
     .inspector-controls { display:flex; align-items:center; gap:5px; min-height:30px; overflow:auto hidden; padding:3px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
     .inspector-controls label { flex:none; color:var(--muted); font-size:10px; }
@@ -93,6 +95,7 @@
     #texture-save,#buffer-save { display:inline-flex; align-items:center; text-decoration:none; }
     .preview-stage { position:relative; display:block; flex:1 1 auto; min-height:0; overflow:hidden; background:#11171d; }
     #surface-mount { position:absolute; inset:0; width:100%; height:100%; min-height:0; }
+    .output-unavailable { position:absolute; inset:0; display:grid; place-items:center; padding:20px; background:#1a1a1a; color:#d5c7a2; text-align:center; font-size:12px; }
     .preview-notes { display:flex; align-items:center; gap:10px; min-height:23px; max-height:42px; overflow:auto; padding:3px 8px; border-top:1px solid var(--line); color:var(--muted); font-size:10px; }
     .pixel-readout { display:flex; flex:0 0 24px; align-items:center; gap:8px; height:24px; min-height:0; padding:3px 8px; border-top:1px solid var(--line); background:#1d252d; color:#d7e8f5; font:11px/1.2 Consolas,monospace; white-space:nowrap; overflow:hidden; }
     .pixel-readout strong { color:#8ec9ef; font-weight:600; }
@@ -246,7 +249,7 @@
     input,select { border-color:#505050; background:#242424; }
     .plain-button,.tab { border-color:#505050; background:#333; }
     .frame-workspace { --tree-width:35%; grid-template-columns:minmax(300px,var(--tree-width)) 5px minmax(0,1fr); }
-    .frame-main { --preview-height:72%; grid-template-rows:minmax(320px,var(--preview-height)) 5px minmax(150px,1fr); }
+    .frame-main { --preview-height:60%; grid-template-rows:minmax(320px,var(--preview-height)) 5px minmax(150px,1fr); }
     .events-pane,.preview-pane,.inspector-pane,.gpu-chart-pane,.gpu-table-pane { background:var(--surface); }
     .pane-head { min-height:27px; padding:3px 9px; border-bottom-color:#414141; background:#303030; }
     .event-controls { gap:3px; padding:5px 7px; border-bottom-color:#444; }
@@ -316,12 +319,12 @@
     .binding-table th { background:#343434; }
     .flow-node { border-color:#555; background:#303943; }
     @media (max-width:1350px) {
-      .tree-pass-leaf .tree-meta { display:none; }
       .inspector-controls { gap:3px; padding-inline:5px; }
       .preview-source-row { gap:3px; }
       #texture-scope { max-width:85px; }
     }
     @media (max-width:950px) {
+      .tree-pass-leaf .tree-meta { display:none; }
       .frame-workspace { --tree-width:36%; grid-template-columns:minmax(240px,var(--tree-width)) 5px minmax(0,1fr); }
       .preview-source-row,.inspector-controls,.mesh-controls { overflow:auto hidden; }
       .resource-grid { grid-template-columns:1fr; }
@@ -397,6 +400,7 @@
             <button id="preview-frame-button" class="plain-button active" type="button" aria-pressed="true">输出</button>
             <button id="preview-texture-button" class="plain-button" type="button" aria-pressed="false">纹理</button>
             <button id="preview-mesh-button" class="plain-button" type="button" aria-pressed="false">Mesh Preview</button>
+            <div id="output-choices" class="output-choices" aria-label="所选 Pass 的输出渲染目标"></div>
             <span id="texture-scope" class="muted small"></span>
             <div id="texture-choices" class="texture-choices" aria-label="绑定纹理及渲染目标"></div>
           </div>
@@ -409,7 +413,7 @@
           </div>
           <div id="mesh-controls" class="mesh-controls" hidden><label for="mesh-position-location">位置属性</label><select id="mesh-position-location" aria-label="选择位置属性 shaderLocation"></select><span id="mesh-summary" class="small muted"></span></div>
         </div>
-        <div class="preview-stage"><div id="surface-mount"></div></div>
+        <div class="preview-stage"><div id="surface-mount"></div><div id="output-unavailable" class="output-unavailable" role="status" hidden></div></div>
         <div id="mesh-preview" class="mesh-preview" hidden><p class="mesh-space-note">pre-VS 顶点输入空间：线框来自 Draw 前顶点与索引字节；不代表 Vertex Shader 输出或屏幕画面。</p><div id="mesh-detail"></div></div>
         <div id="pixel-readout" class="pixel-readout" aria-live="polite"><strong>像素</strong><span id="pixel-value">点击画面查看坐标和 RGBA 值；Ctrl+滚轮缩放，滚轮平移，拖动平移。</span></div>
         <details class="preview-evidence"><summary><strong>读回依据</strong><span id="frame-note" class="frame-note">选择 Draw 查看逐步输出；只有通过单 Draw 物理 Pass 校验的读回才标为 Draw 后画面。</span><span id="texture-note" class="inspect-note"></span></summary></details>
