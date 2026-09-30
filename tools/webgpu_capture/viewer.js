@@ -30,7 +30,6 @@
     preferredBufferBinding: null,
     previewMode: 'frame',
     mode: 'frame',
-    inspectorPage: 'detail',
     pipelineStage: 'input',
     meshLocation: null,
     meshSelectionKey: null,
@@ -159,39 +158,10 @@
   const bufferErrors = new Map();
   const surface = window.createGameDraftSurfaceInspector(el('surface-mount'), onPixelPicked);
   function setInspectorPage(page) {
-    state.inspectorPage = page;
-    for (const button of el('inspector-tabs').querySelectorAll('button[data-page]')) {
-      const active = button.dataset.page === page;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', String(active));
-    }
     const target = el(`page-${page}`);
-    if (target?.tagName === 'DETAILS') {
-      for (const section of el('inspector-scroll').querySelectorAll('.inspector-accordion')) {
-        if (section !== target) section.open = false;
-      }
-      target.open = true;
-      target.scrollIntoView({ block: 'nearest' });
-    } else {
-      for (const name of ['detail', 'pipeline', 'inputs', 'buffers', 'resources', 'errors']) {
-        el(`page-${name}`).hidden = name !== page;
-      }
-      el('inspector-scroll').scrollTop = 0;
-    }
-  }
-  for (const section of el('inspector-scroll').querySelectorAll('.inspector-accordion')) {
-    section.addEventListener('toggle', () => {
-      if (!section.open) return;
-      state.inspectorPage = section.dataset.page;
-      for (const button of el('inspector-tabs').querySelectorAll('button[data-page]')) {
-        const active = button.dataset.page === state.inspectorPage;
-        button.classList.toggle('active', active);
-        button.setAttribute('aria-pressed', String(active));
-      }
-      for (const other of el('inspector-scroll').querySelectorAll('.inspector-accordion')) {
-        if (other !== section) other.open = false;
-      }
-    });
+    if (!target) return;
+    target.open = true;
+    target.scrollIntoView({ block: 'start' });
   }
   function setupSplitter(handle, host, cssVariable, orientation) {
     const vertical = orientation === 'vertical';
@@ -235,25 +205,26 @@
     const snapshot = state.activeSurface?.snapshot;
     const at = state.activeSurface?.signature;
     const display = el('pixel-value');
+    const show = value => { display.textContent = value; display.title = value; };
     const formatNative = native => `${marker} · RT ${native.format} 通道值 (${native.values.map(value =>
       Number.isFinite(value) ? Number(value.toPrecision(7)) : String(value)).join(', ')})${native.raw8 ?
       ` · 原始字节 ${native.raw8.join(', ')}` : ''} · ${png}`;
     if (pixel.nativeRtBytes) {
-      display.textContent = pixel.native ? formatNative(pixel.native) :
-        `${marker} · ${pixel.reason || '原始 RT 像素不可读'}`;
+      show(pixel.native ? formatNative(pixel.native) :
+        `${marker} · ${pixel.reason || '原始 RT 像素不可读'}`);
       return;
     }
-    display.textContent = `${marker} · ${png} · 读取原始 RT…`;
+    show(`${marker} · ${png} · 读取原始 RT…`);
     if (!snapshot?.rawFile) {
-      display.textContent = `${marker} · ${png} · ${snapshot ? '此捕获无原始 RT sidecar' : '仅 PNG 显示值'}`;
+      show(`${marker} · ${png} · ${snapshot ? '此捕获无原始 RT sidecar' : '仅 PNG 显示值'}`);
       return;
     }
     surface.readNativePixel(pixel.x, pixel.y).then(native => {
       if (state.activeSurface?.signature !== at || surface.getState().pixel?.x !== pixel.x ||
           surface.getState().pixel?.y !== pixel.y) return;
-      display.textContent = native ? formatNative(native) : `${marker} · ${png} · 原始 RT 格式不可读`;
+      show(native ? formatNative(native) : `${marker} · ${png} · 原始 RT 格式不可读`);
     }, error => {
-      if (state.activeSurface?.signature === at) display.textContent = `${marker} · ${png} · 原始 RT 读取失败：${error.message}`;
+      if (state.activeSurface?.signature === at) show(`${marker} · ${png} · 原始 RT 读取失败：${error.message}`);
     });
   }
 
@@ -354,6 +325,10 @@
       if (eventMatches(state.events[i], query, kind)) matches.push(i);
     }
     state.navigationIndices = matches;
+    const selectedPosition = matches.indexOf(state.selectedEvent);
+    if (selectedPosition >= state.eventLimit) {
+      state.eventLimit = Math.ceil((selectedPosition + 1) / PAGE_SIZE) * PAGE_SIZE;
+    }
     const total = state.events.filter(item => eventMatches(item, '', kind)).length;
     el('event-count').textContent = `${matches.length} / ${total}`;
     const holder = el('event-tree');
@@ -378,9 +353,9 @@
         button.dataset.eventIndex = String(index);
         button.classList.toggle('active', state.selectedEvent === index);
         button.setAttribute('aria-selected', String(state.selectedEvent === index));
-        button.appendChild(make('span', `#${printable(event.commandIndex ?? index)}  ${printable(event.method)}`, 'tree-label'));
+        button.appendChild(make('span', printable(event.method), 'tree-label'));
         const pipeline = event.pipelineLabel || event.pipelineId;
-        if (pipeline) button.appendChild(make('span', String(pipeline), 'tree-meta'));
+        button.appendChild(make('span', `${pipeline ? `${pipeline} · ` : ''}#${printable(event.commandIndex ?? index)}`, 'tree-meta'));
         button.addEventListener('click', () => selectEvent(index));
         target.appendChild(button);
       }
@@ -402,13 +377,11 @@
       const passIds = new Set(passes.map(pass => String(pass.index)));
       const ungrouped = inFrame.filter(index => state.events[index]?.passIndex == null ||
         !passIds.has(String(state.events[index].passIndex)));
-      const nodes = passes.filter(pass => (byPass.get(String(pass.index)) || []).length || !query)
+      const nodes = passes.filter(pass => (byPass.get(String(pass.index)) || []).length)
         .map(pass => ({ type: 'pass', value: pass, order: Number(pass.beginCommand) || 0 }));
-      nodes.sort((a, b) => a.order - b.order);
-      let categoryContainer = null;
-      let categoryKey = null;
-      let categoryCount = null;
-      let categoryLength = 0;
+      for (const index of ungrouped) nodes.push({ type: 'event', value: index,
+        order: Number(state.events[index]?.commandIndex) || 0 });
+      nodes.sort((a, b) => a.order - b.order || (a.type === 'pass' ? -1 : 1));
       let batchContainer = null;
       let batchGroup = null;
       let batchSubject = null;
@@ -417,38 +390,27 @@
       let stepContainer = null;
       let stepGroupKey = null;
       let stepOrdinal = 0;
+      let previousCategoryKey = null;
       for (const node of nodes) {
+        if (node.type === 'event') {
+          batchContainer = null;
+          stepContainer = null;
+          previousCategoryKey = null;
+          appendEvents(holder, [node.value]);
+          continue;
+        }
         const pass = node.value;
         const category = passCategory(pass);
-        if (category.key !== categoryKey) {
-          categoryKey = category.key;
-          categoryLength = 0;
+        if (category.key !== previousCategoryKey) {
           batchContainer = null;
-          batchSubject = null;
           stepContainer = null;
           stepGroupKey = null;
-          const categoryGroup = make('details', undefined, 'tree-category');
-          categoryGroup.open = state.expandedCategories.has(category.key) || !!query;
-          const summary = make('summary', undefined, 'tree-category-head');
-          summary.title = category.label;
-          summary.appendChild(make('span', category.label, 'tree-label'));
-          categoryCount = make('span', '', 'tree-meta');
-          summary.appendChild(categoryCount);
-          categoryGroup.appendChild(summary);
-          categoryContainer = make('div', undefined, 'tree-category-children');
-          categoryGroup.appendChild(categoryContainer);
-          categoryGroup.addEventListener('toggle', () => {
-            if (categoryGroup.open) state.expandedCategories.add(category.key);
-            else state.expandedCategories.delete(category.key);
-          });
-          holder.appendChild(categoryGroup);
+          previousCategoryKey = category.key;
         }
-        categoryLength++;
-        categoryCount.textContent = `${categoryLength} Pass`;
-        let passContainer = categoryContainer;
+        let passContainer = holder;
         if (category.key === 'filter' || category.key === 'mask') {
           const segments = (pass.frameDebugStep?.logicalLabel || pass.label || '').split(' / ');
-          const subject = (segments[1] || category.label).replace(/gaussian-blur-(horizontal|vertical)-kernel-\d+/g, 'gaussian-blur');
+          const subject = `${category.label} · ${(segments[1] || pass.label || '未命名').replace(/gaussian-blur-(horizontal|vertical)-kernel-\d+/g, 'gaussian-blur')}`;
           const begins = (!pass.frameDebugStep || pass.frameDebugStep.drawOrdinal === 1) &&
             (String(segments[2] || '').startsWith('input') || String(segments[2] || '').startsWith('raster'));
           if (!batchContainer || begins || subject !== batchSubject) {
@@ -472,11 +434,11 @@
               if (currentBatchGroup.open) state.expandedBatches.add(batchKey);
               else state.expandedBatches.delete(batchKey);
             });
-            categoryContainer.appendChild(batchGroup);
+            holder.appendChild(batchGroup);
           }
           batchLength++;
           batchCount.textContent = `${batchLength} Pass`;
-          if (Number(state.selectedPass) === Number(pass.index)) batchGroup.open = true;
+          if (state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index)) batchGroup.open = true;
           passContainer = batchContainer;
         }
         const step = pass.frameDebugStep;
@@ -501,7 +463,7 @@
             passContainer.appendChild(group);
           }
           stepOrdinal = step.drawOrdinal;
-          if (Number(state.selectedPass) === Number(pass.index)) stepContainer.parentElement.open = true;
+          if (state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index)) stepContainer.parentElement.open = true;
           passContainer = stepContainer;
         } else {
           stepContainer = null;
@@ -523,17 +485,18 @@
             const label = treePassLabel(pass, passContainer === batchContainer && !!batchContainer);
             const ordinalLabel = step?.totalDraws > 1 ? ` · ${step.drawOrdinal}/${step.totalDraws}` : '';
             head.title = `${describePass(pass)}\n#${printable(drawEvent.commandIndex ?? eventIndex)} ${printable(drawEvent.method)}${drawEvent.pipelineLabel ? `\n${drawEvent.pipelineLabel}` : ''}`;
-            head.appendChild(make('span', `#${printable(drawEvent.commandIndex ?? eventIndex)} ${printable(drawEvent.method)} · ${label}${ordinalLabel}`, 'tree-label'));
+            head.appendChild(make('span', `${label}${ordinalLabel}`, 'tree-label'));
             const gpuMs = pass.gpuTiming?.source === 'webgpu-timestamp-query' && finite(pass.gpuTiming.durationMs) ?
               compactGpuMs(pass.gpuTiming.durationMs) : '';
-            head.appendChild(make('span', `P${pass.index}${gpuMs ? ` · ${gpuMs}` : ''}`, 'tree-meta'));
+            head.appendChild(make('span', `#${printable(drawEvent.commandIndex ?? eventIndex)} · P${pass.index}${gpuMs ? ` · ${gpuMs}` : ''}`, 'tree-meta'));
             head.addEventListener('click', () => selectEvent(eventIndex));
             passContainer.appendChild(head);
             continue;
           }
         }
         const group = make('details', undefined, 'tree-pass');
-        group.open = state.expandedPasses.has(key);
+        group.open = state.expandedPasses.has(key) ||
+          (state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index));
         const head = make('summary', undefined, 'tree-pass-head');
         head.title = describePass(pass);
         head.appendChild(make('span', step?.totalDraws > 1 ? `Draw ${step.drawOrdinal}/${step.totalDraws}` :
@@ -557,18 +520,6 @@
         appendEvents(children, byPass.get(key) || []);
         group.appendChild(children);
         passContainer.appendChild(group);
-      }
-      if (ungrouped.length) {
-        const loose = make('details', undefined, 'tree-category');
-        loose.open = !!query;
-        const summary = make('summary', undefined, 'tree-category-head');
-        summary.appendChild(make('span', '帧级命令 · 不属于 Pass', 'tree-label'));
-        summary.appendChild(make('span', `${ungrouped.length} 条`, 'tree-meta'));
-        loose.appendChild(summary);
-        const children = make('div', undefined, 'tree-category-children');
-        appendEvents(children, ungrouped);
-        loose.appendChild(children);
-        holder.appendChild(loose);
       }
     }
     holder.scrollTop = previousScroll;
@@ -721,6 +672,20 @@
       addDetailRow(grid, '调用参数', list(event.args).join(', ') || '—');
       addDetailRow(grid, '管线', event.pipelineId == null ? '未绑定' : `#${event.pipelineId} ${event.pipelineLabel || ''}`);
     }
+    const scopeDraws = state.focusScope === 'pass' && pass ? state.events.filter(item =>
+      Number(item?.passIndex) === Number(pass.index) &&
+      ['draw', 'dispatch'].includes(eventKind(String(item?.method || '')))) : event ? [event] : [];
+    const bound = scopeDraws.flatMap(draw => list(draw.bindGroups).flatMap(group => list(group.resources)));
+    const textureCount = new Set(bound.filter(item => item?.resource?.textureId != null)
+      .map(item => `${item.resource.textureId}:${item.resource.id}`)).size;
+    const bufferCount = new Set(bound.filter(item => item?.resource?.type === 'Buffer')
+      .map(item => item.resource.id)).size;
+    const targetCount = list(pass?.targets || event?.targets).length;
+    holder.appendChild(make('p',
+      `${targetCount} 个输出附件 · ${textureCount} 个绑定纹理视图 · ${bufferCount} 个绑定 Buffer` +
+      (state.focusScope === 'pass' ? ` · ${scopeDraws.length} 个 Draw / Dispatch` : '') +
+      '。这些是命令绑定状态，不能证明 Shader 实际读取了每个槽位。',
+      'muted small'));
     const pipeline = resourceArray('pipelines').find(item => String(item.id) === String(event?.pipelineId));
     if (pipeline) {
       const entryPoints = [pipeline.descriptor?.vertex?.entryPoint, pipeline.descriptor?.fragment?.entryPoint,
@@ -1099,8 +1064,8 @@
       Number(item?.passIndex) === Number(pass.index) && ['draw', 'dispatch'].includes(eventKind(String(item?.method || '')))) :
       focused ? [focused] : [];
     if (!pass && !draws.length) { holder.appendChild(make('p', '选择 Pass 或 Draw 查看绑定。', 'empty')); return; }
-    holder.appendChild(make('p', state.focusScope === 'pass' ? `汇总这个 Pass 的 ${draws.length} 个 Draw / Dispatch；同一槽位有多个值时分别列出。` :
-      `命令 #${focused?.commandIndex} 的绑定状态。`, 'muted small'));
+    holder.appendChild(make('p', state.focusScope === 'pass' ? `汇总这个 Pass 的 ${draws.length} 个 Draw / Dispatch；展开资源可查每个绑定槽位。` :
+      `命令 #${focused?.commandIndex} 的绑定状态；绑定不等于 Shader 实际采样或读取。`, 'muted small'));
     holder.appendChild(make('h3', '输出附件', 'section-caption'));
     const targets = list(pass?.targets || focused?.targets);
     if (!targets.length) holder.appendChild(make('p', '没有已记录的输出附件。', 'muted'));
@@ -1134,54 +1099,76 @@
         const name = names.get(`${group.slot}:${entry.binding}`);
         const id = resource.textureId ?? resource.id;
         const kind = resource.textureId != null ? 'Texture' : resource.type || 'Unknown';
-        const key = `${group.slot}:${entry.binding}:${kind}:${id}:${resource.offset ?? ''}:${resource.size ?? ''}`;
-        if (!rows.has(key)) rows.set(key, { group: group.slot, binding: entry.binding, name,
-          resource, id, kind, draws: [] });
-        rows.get(key).draws.push(draw.commandIndex);
+        const key = `${kind}:${id}:${resource.type === 'TextureView' ? resource.id : ''}:${resource.offset ?? ''}:${resource.size ?? ''}`;
+        if (!rows.has(key)) rows.set(key, { resource, id, kind, bindings: new Map(), draws: new Set() });
+        const row = rows.get(key);
+        row.draws.add(draw.commandIndex);
+        const bindingKey = `${group.slot}:${entry.binding}:${name?.name || ''}:${JSON.stringify(list(group.dynamicOffsets))}`;
+        if (!row.bindings.has(bindingKey)) row.bindings.set(bindingKey,
+          { group: group.slot, binding: entry.binding, name, draws: new Set(),
+            dynamicOffsets: list(group.dynamicOffsets),
+            range: resource.type === 'Buffer' ?
+              `base ${resource.offset ?? 0}, size ${resource.size ?? '—'} B` : '—' });
+        row.bindings.get(bindingKey).draws.add(draw.commandIndex);
       }
     }
     if (!rows.size) holder.appendChild(make('p', '未记录 Bind Group 输入。', 'muted'));
     else {
-      const node = make('table', undefined, 'binding-table');
-      node.innerHTML = '<thead><tr><th>Group / Binding</th><th>WGSL 名称 / 类型</th><th>资源</th><th>Draw</th><th>查看</th></tr></thead>';
-      const body = make('tbody');
       for (const row of rows.values()) {
-        const tr = make('tr');
-        tr.appendChild(make('td', `${row.group} / ${row.binding}`));
-        tr.appendChild(make('td', row.name ? `${row.name.name} · ${row.name.type}` : 'WGSL 名称未记录'));
-        tr.appendChild(make('td', `${row.kind} #${row.id} ${row.resource.label || ''}${row.kind === 'Buffer' ?
-          ` · offset ${row.resource.offset ?? 0}, size ${row.resource.size ?? '—'} B` : ''}`));
-        tr.appendChild(make('td', [...new Set(row.draws)].map(id => `#${id}`).join(', ')));
-        const cell = make('td');
+        const group = make('details', undefined, 'binding-resource');
+        const summary = make('summary');
+        summary.appendChild(make('span', `${row.kind} #${row.id} ${row.resource.label || ''}`));
+        summary.appendChild(make('span', `${row.bindings.size} 个槽位 · ${row.draws.size} Draw`, 'binding-sub'));
+        group.appendChild(summary);
+        const slotTable = make('table', undefined, 'binding-table');
+        const head = make('thead');
+        const headers = make('tr');
+        for (const label of ['Group / Binding', 'WGSL 名称 / 类型', '绑定范围 / Group 动态偏移', 'Draw']) {
+          headers.appendChild(make('th', label));
+        }
+        head.appendChild(headers);
+        slotTable.appendChild(head);
+        const body = make('tbody');
+        for (const binding of row.bindings.values()) {
+          const tr = make('tr');
+          tr.appendChild(make('td', `${binding.group} / ${binding.binding}`));
+          tr.appendChild(make('td', binding.name ? `${binding.name.name} · ${binding.name.type}` : 'WGSL 名称未记录'));
+          tr.appendChild(make('td', `${binding.range}${binding.dynamicOffsets.length ?
+            ` · Group [${binding.dynamicOffsets.join(', ')}]（未解成此槽有效偏移）` : ''}`));
+          tr.appendChild(make('td', [...binding.draws].map(id => `#${id}`).join(', ')));
+          body.appendChild(tr);
+        }
+        slotTable.appendChild(body);
+        group.appendChild(slotTable);
+        if (row.kind === 'Buffer') group.appendChild(make('p',
+          `绑定范围：offset ${row.resource.offset ?? 0}，size ${row.resource.size ?? '—'} B。`, 'binding-sub'));
         if (row.kind === 'Texture') {
           const button = make('button', '预览纹理');
           button.type = 'button';
           button.addEventListener('click', () => previewTexture(row.id,
             row.resource.type === 'TextureView' ? row.resource.id : null, true));
-          cell.appendChild(button);
+          group.appendChild(button);
         } else if (row.kind === 'Buffer') {
           const button = make('button', '查看字节');
           button.type = 'button';
           button.addEventListener('click', () => {
+            const first = row.bindings.values().next().value;
             const matching = draws.find(draw => list(draw.bindGroups).some(group =>
-              Number(group.slot) === Number(row.group) && list(group.resources).some(entry =>
-                Number(entry.binding) === Number(row.binding) &&
+              Number(group.slot) === Number(first.group) && list(group.resources).some(entry =>
+                Number(entry.binding) === Number(first.binding) &&
                 String(entry?.resource?.id) === String(row.id))));
             if (!matching) { selectResource('buffers', resourceIndexById('buffers', row.id)); return; }
             state.selectedEvent = state.events.indexOf(matching);
             state.focusScope = 'draw';
             state.selectedBufferPayloadId = null;
-            state.preferredBufferBinding = { groupSlot: row.group, binding: row.binding, bufferId: row.id };
+            state.preferredBufferBinding = { groupSlot: first.group, binding: first.binding, bufferId: row.id };
             renderBufferInspector();
             setInspectorPage('buffers');
           });
-          cell.appendChild(button);
+          group.appendChild(button);
         }
-        tr.appendChild(cell);
-        body.appendChild(tr);
+        holder.appendChild(group);
       }
-      node.appendChild(body);
-      holder.appendChild(node);
     }
   }
 
@@ -1264,18 +1251,27 @@
     const options = [];
     const seen = new Map();
     const inputEvent = draws.length === 1 ? draws[0] : null;
-    const add = (id, role, label, snapshot, evidenceOverride, viewId = null, mipLevel = null) => {
+    const add = (id, role, label, snapshot, evidenceOverride, viewId = null, mipLevel = null,
+      binding = null) => {
       if (id == null) return;
       const texture = resourceArray('textures').find(item => String(item.id) === String(id));
       if (!texture) return;
       const key = `${role}:${id}:${viewId ?? ''}:${mipLevel ?? ''}`;
       const existing = seen.get(key);
+      const recordBinding = option => {
+        if (!binding) return;
+        const identity = `${binding.group}:${binding.slot}:${binding.draw}`;
+        if (!option.bindings.some(item => `${item.group}:${item.slot}:${item.draw}` === identity)) {
+          option.bindings.push(binding);
+        }
+      };
       if (existing) {
         if (role === '绑定输入' && label && !existing.bindingNames.includes(label)) {
           existing.bindingNames.push(label);
           existing.label = existing.bindingNames.length === 1 ? label :
             `${existing.bindingNames[0]} +${existing.bindingNames.length - 1} 个绑定`;
         }
+        recordBinding(existing);
         return;
       }
       let evidence = snapshot?.captureMoment === 'pre-draw' ? 'pre-draw' :
@@ -1284,6 +1280,11 @@
           evidenceOverride || (snapshot ? 'this-pass' : 'capture-final');
       let file = snapshot ? snapshot.imageFile : texture.imageFile;
       if ((role === '深度' || role === '模板') && !snapshot) file = null;
+      if (role === '绑定输入' && !inputEvent) {
+        snapshot = null;
+        file = null;
+        evidence = 'pass-aggregate';
+      }
       if (role === '绑定输入' && pass && evidence !== 'pre-draw' && evidence !== 'input-unavailable') {
         const viewReason = inputViewUnavailableReason(texture, viewId);
         const writes = state.textureWrites.get(String(id)) || [];
@@ -1309,11 +1310,13 @@
       }
       const option = { key, id, role, viewId, label: label || texture.label || `纹理 #${id}`,
         bindingNames: role === '绑定输入' && label ? [label] : [], texture, snapshot,
+        bindings: [],
         file, evidence, mipLevel, unavailableReason: evidence === 'input-unavailable' ||
           evidence === 'aspect-unavailable' ? snapshot?.reason || snapshot?.rawReason ||
             snapshot?.imageReason : evidenceOverride };
       options.push(option);
       seen.set(key, option);
+      recordBinding(option);
     };
     for (const draw of draws) {
       for (const group of list(draw.bindGroups)) for (const entry of list(group?.resources)) {
@@ -1326,8 +1329,12 @@
         if (recorded.length) {
           for (const snapshot of recorded) add(textureId, '绑定输入',
             snapshot.bindingName || entry.resource.label || `纹理 #${textureId}`,
-            snapshot, undefined, viewId, snapshot.mipLevel ?? 0);
-        } else add(textureId, '绑定输入', entry.resource.label, null, undefined, viewId);
+            snapshot, undefined, viewId, snapshot.mipLevel ?? 0,
+            { group: group.slot, slot: entry.binding, draw: draw.commandIndex,
+              name: snapshot.bindingName || entry.resource.label || '' });
+        } else add(textureId, '绑定输入', entry.resource.label, null, undefined, viewId, null,
+          { group: group.slot, slot: entry.binding, draw: draw.commandIndex,
+            name: entry.resource.label || '' });
       }
     }
     for (const target of list(pass?.targets || event?.targets)) {
@@ -1403,11 +1410,6 @@
       });
       holder.appendChild(select);
     }
-    const inputFailures = list(pass?.inputSnapshots).filter(item => item?.captureMoment === 'unavailable');
-    if (inputFailures.length) holder.appendChild(make('p',
-      `${inputFailures.length} 个 Draw 输入不可用：${inputFailures.slice(0, 3)
-        .map(item => `${item.bindingName || '未知绑定'}：${item.reason || '无法读取'}`).join('；')}${inputFailures.length > 3 ? '；…' : ''}`,
-      'inspect-note'));
     const selected = options.find(item => item.key === state.selectedTextureKey);
     el('texture-note').textContent = !selected ? '选择 Pass 或 Draw 后检查绑定纹理。' :
       !selected.file && !selected.snapshot?.rawFile ?
@@ -1938,8 +1940,8 @@
       button.setAttribute('aria-pressed', String(active));
     }
     el('preview-texture-button').disabled = !state.textureChoices.length;
-    el('texture-scope').hidden = mesh;
-    el('texture-choices').hidden = mesh;
+    el('texture-scope').hidden = !texture;
+    el('texture-choices').hidden = !texture;
     el('texture-controls').hidden = mesh;
     el('mesh-controls').hidden = !mesh;
     el('mesh-preview').hidden = !mesh;
@@ -1999,7 +2001,9 @@
     if (state.activeSurface?.signature !== signature || state.activeSurface?.snapshot !== choice?.snapshot) {
       const priorZoom = surface.getState();
       state.activeSurface = { url: url || rawUrl, signature, snapshot: choice?.snapshot || null };
-      el('pixel-value').textContent = '点击画面查看坐标和原始通道值；Ctrl+滚轮缩放，滚轮平移，拖动平移。';
+      const pixelTip = '点击画面查看坐标和原始通道值；Ctrl+滚轮缩放，滚轮平移，拖动平移。';
+      el('pixel-value').textContent = pixelTip;
+      el('pixel-value').title = pixelTip;
       surface.setSource(url || rawUrl ? { url, rawUrl, label: choice.label, format: choice.format,
         rawFormat: choice?.snapshot?.rawFormat, aspect: choice?.snapshot?.aspect,
         rawBytesPerRow: choice?.snapshot?.rawBytesPerRow,
@@ -2190,9 +2194,14 @@
   el('preview-frame-button').addEventListener('click', () => { state.previewMode = 'frame'; renderPreviewMode(); });
   el('preview-texture-button').addEventListener('click', () => { state.previewMode = 'texture'; renderPreviewMode(); });
   el('preview-mesh-button').addEventListener('click', () => { state.previewMode = 'mesh'; renderPreviewMode(); });
-  for (const button of el('inspector-tabs').querySelectorAll('button[data-page]')) {
-    button.addEventListener('click', () => setInspectorPage(button.dataset.page));
-  }
+  el('preview-maximize')?.addEventListener('click', () => {
+    const host = document.querySelector('.frame-main');
+    const maximized = host.classList.toggle('preview-maximized');
+    const button = el('preview-maximize');
+    button.textContent = maximized ? '还原' : '放大输出';
+    button.setAttribute('aria-pressed', String(maximized));
+    button.title = maximized ? '还原输出预览和事件信息' : '最大化输出预览';
+  });
   setupSplitter(el('hierarchy-splitter'), el('frame-workspace'), '--tree-width', 'vertical');
   setupSplitter(el('preview-splitter'), document.querySelector('.frame-main'), '--preview-height', 'horizontal');
   el('frame-select').addEventListener('change', () => {
@@ -2229,16 +2238,23 @@
     if (state.selectedEvent !== null) el('event-tree').querySelector(`[data-event-index="${state.selectedEvent}"]`)?.scrollIntoView({ block: 'center' });
   });
   el('clear-pass').addEventListener('click', () => {
-    state.selectedPass = null;
-    state.focusScope = 'draw';
+    el('event-search').value = '';
+    el('event-kind').value = 'visual';
+    state.frameFilter = null;
+    renderFrameSelector();
     state.eventLimit = PAGE_SIZE;
     renderPasses();
     renderEvents();
-    renderEventDetail();
-    renderTextureInspector();
-    renderBufferInspector();
-    renderFrame();
-    renderPreviewMode();
+    if (state.navigationIndices.length) selectEvent(state.navigationIndices[0], true);
+    else {
+      state.selectedPass = null;
+      state.selectedEvent = null;
+      renderEventDetail();
+      renderTextureInspector();
+      renderBufferInspector();
+      renderFrame();
+      renderPreviewMode();
+    }
     if (state.mode === 'gpu') renderGpu();
   });
   el('event-more').addEventListener('click', () => { state.eventLimit += PAGE_SIZE; renderEvents(); });

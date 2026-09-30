@@ -1,5 +1,5 @@
 // Reusable PNG/native-RT surface inspector for the frame viewer.
-// A raw-only viewport fetches bounded byte ranges and never decodes a full RT image.
+// Raw viewports fetch byte ranges; file:// viewers use one capped local read.
 (function () {
   'use strict';
 
@@ -102,6 +102,23 @@
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 ||
         end >= reader.length || length <= 0 || length > MAX_RAW_RANGE_BYTES) {
       throw new RangeError('原始 RT 读取范围无效');
+    }
+    // A double-clicked offline viewer uses file://, whose response ignores HTTP
+    // Range. Keep one bounded copy per source so pixel inspection still works.
+    if (reader.url.startsWith('file:')) {
+      if (reader.length > 64 * 1024 * 1024) {
+        throw new Error('离线原始 RT 超过 64 MiB，请从游戏内打开分析器按范围读取');
+      }
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      reader.offlineBytes ||= fetch(reader.url).then(async response => {
+        if (!response.ok) throw new Error(`离线原始 RT 读取失败：HTTP ${response.status}`);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (bytes.byteLength !== reader.length) throw new Error('离线原始 RT 文件长度不匹配');
+        return bytes;
+      });
+      const bytes = await reader.offlineBytes;
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      return bytes.slice(start, end + 1);
     }
     const response = await fetch(reader.url, { headers: { Range: `bytes=${start}-${end}` }, signal });
     const range = response.headers.get('content-range');

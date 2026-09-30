@@ -72,7 +72,9 @@
     .list-footer { display:flex; justify-content:space-between; align-items:center; flex:none; gap:5px; min-height:25px; padding:3px 7px; border-top:1px solid var(--line); color:var(--muted); font-size:10px; }
     .list-footer .plain-button { min-height:19px; padding:0 5px; }
     #pass-list,#event-list { display:none !important; }
-    .frame-main { --preview-height:57%; display:grid; grid-template-rows:minmax(180px,var(--preview-height)) 5px minmax(160px,1fr); min-width:0; min-height:0; }
+    .frame-main { --preview-height:72%; display:grid; grid-template-rows:minmax(320px,var(--preview-height)) 5px minmax(150px,1fr); min-width:0; min-height:0; }
+    .frame-main.preview-maximized { grid-template-rows:minmax(0,1fr); }
+    .frame-main.preview-maximized > #preview-splitter,.frame-main.preview-maximized > .inspector-pane { display:none; }
     .splitter { z-index:2; background:#12191f; touch-action:none; }
     .splitter:hover,.splitter:focus-visible { background:#5a95bd; outline:none; }
     .splitter.vertical { cursor:ew-resize; }
@@ -92,8 +94,9 @@
     .preview-stage { position:relative; display:block; flex:1 1 auto; min-height:0; overflow:hidden; background:#11171d; }
     #surface-mount { position:absolute; inset:0; width:100%; height:100%; min-height:0; }
     .preview-notes { display:flex; align-items:center; gap:10px; min-height:23px; max-height:42px; overflow:auto; padding:3px 8px; border-top:1px solid var(--line); color:var(--muted); font-size:10px; }
-    .pixel-readout { display:flex; align-items:center; gap:8px; min-height:25px; padding:3px 8px; border-top:1px solid var(--line); background:#1d252d; color:#d7e8f5; font:11px/1.2 Consolas,monospace; white-space:nowrap; overflow:auto hidden; }
+    .pixel-readout { display:flex; flex:0 0 24px; align-items:center; gap:8px; height:24px; min-height:0; padding:3px 8px; border-top:1px solid var(--line); background:#1d252d; color:#d7e8f5; font:11px/1.2 Consolas,monospace; white-space:nowrap; overflow:hidden; }
     .pixel-readout strong { color:#8ec9ef; font-weight:600; }
+    .pixel-readout span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
     .frame-note,.inspect-note { overflow-wrap:anywhere; }
     .empty { color:#a0adba; padding:10px; }
     #inspector-scroll { flex:1 1 auto; min-height:0; overflow:auto; scrollbar-color:#657684 #232b33; }
@@ -147,10 +150,6 @@
     .resource-jumps { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
     .error-item { margin-bottom:5px; padding:6px; border-left:2px solid var(--danger); background:#3c2c35; overflow-wrap:anywhere; }
     .inline-link { border:0; padding:0; background:none; color:var(--accent); text-decoration:underline; }
-    .inspector-tabs { display:flex; flex:none; gap:0; overflow:auto hidden; border-bottom:1px solid var(--line); background:#303740; scrollbar-width:thin; }
-    .inspector-tabs button { flex:none; min-height:28px; padding:3px 12px; border:0; border-right:1px solid #46525e; border-bottom:2px solid transparent; background:none; color:#b8c5d0; }
-    .inspector-tabs button:hover { color:white; background:#3d4854; }
-    .inspector-tabs button.active { border-bottom-color:#7fc5f7; background:#283c4e; color:white; }
     .inspector-page { padding:9px 11px; }
     .flow { display:grid; grid-template-columns:repeat(5,minmax(90px,1fr)); gap:5px; margin-bottom:9px; }
     .flow-node { min-height:52px; padding:6px; border:1px solid #526275; background:#263541; color:#d9e6ef; text-align:left; }
@@ -164,6 +163,20 @@
     .binding-table tbody tr:hover { background:#31404d; }
     .binding-table button { border:0; padding:0; background:none; color:#8bc9f7; text-align:left; text-decoration:underline; }
     .binding-sub { color:#95a9b8; font-size:10px; }
+    .binding-resource { border-bottom:1px solid var(--line); }
+    .binding-resource>summary { display:flex; align-items:center; gap:8px; min-height:29px; padding:4px 7px; cursor:pointer; list-style:none; }
+    .binding-resource>summary::-webkit-details-marker { display:none; }
+    .binding-resource>summary::before { content:'▸'; flex:none; color:var(--muted); }
+    .binding-resource[open]>summary::before { content:'▾'; }
+    .binding-resource>summary>span:first-of-type { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .binding-resource>summary>.binding-sub { flex:none; margin-left:auto; white-space:nowrap; }
+    .binding-resource>.binding-table { width:100%; table-layout:fixed; }
+    .binding-resource>.binding-table th:nth-child(1) { width:17%; }
+    .binding-resource>.binding-table th:nth-child(2) { width:25%; }
+    .binding-resource>.binding-table th:nth-child(3) { width:43%; }
+    .binding-resource>.binding-table th:nth-child(4) { width:15%; }
+    .binding-resource>.binding-sub { margin-left:18px; }
+    .binding-resource>button { margin:6px 18px; }
     .tree-category { margin:0; }
     .tree-category-head { list-style:none; display:flex; align-items:center; gap:5px; min-height:24px; padding:2px 7px; background:#39434e; color:#e8f0f5; cursor:pointer; font-weight:650; }
     .tree-category-head::-webkit-details-marker { display:none; }
@@ -232,25 +245,28 @@
     body:has(#gpu-workspace:not([hidden])) .event-toolbar #event-position { display:none; }
     input,select { border-color:#505050; background:#242424; }
     .plain-button,.tab { border-color:#505050; background:#333; }
-    .frame-workspace { --tree-width:32%; grid-template-columns:minmax(300px,var(--tree-width)) 5px minmax(0,1fr); }
-    .frame-main { --preview-height:55%; grid-template-rows:minmax(260px,var(--preview-height)) 5px minmax(260px,1fr); }
+    .frame-workspace { --tree-width:35%; grid-template-columns:minmax(300px,var(--tree-width)) 5px minmax(0,1fr); }
+    .frame-main { --preview-height:72%; grid-template-rows:minmax(320px,var(--preview-height)) 5px minmax(150px,1fr); }
     .events-pane,.preview-pane,.inspector-pane,.gpu-chart-pane,.gpu-table-pane { background:var(--surface); }
     .pane-head { min-height:27px; padding:3px 9px; border-bottom-color:#414141; background:#303030; }
     .event-controls { gap:3px; padding:5px 7px; border-bottom-color:#444; }
-    .event-controls .control-row:last-child { min-height:22px; }
+    #clear-pass { min-height:24px; padding-inline:6px; font-size:10px; }
     .event-tree { scrollbar-color:#666 #292929; }
     .tree-frame { background:#343434; border-bottom-color:#292929; }
     .tree-category-head { background:#383838; }
     .tree-batch-head { background:#303030; }
     .tree-category-head,.tree-batch-head { overflow:hidden; white-space:nowrap; }
     .tree-pass-head { background:#2d2d2d; }
-    .tree-category-children,.tree-batch-children,.tree-children { padding-left:7px; }
+    .tree-category-children,.tree-batch-children,.tree-children { padding-left:4px; }
     .tree-pass-leaf::before { content:'·'; }
     .tree-pass-leaf .tree-meta { margin-left:6px; }
     .tree-frame:hover,.tree-category-head:hover,.tree-batch-head:hover,.tree-pass-head:hover,.tree-event:hover { background:#424242; }
     .tree-pass-head.active,.tree-event.active,.tree-event[aria-selected=true],.list-button.active { background:var(--selection); }
     .list-footer { background:#292929; }
     .preview-pane { border-bottom-color:#151515; }
+    .frame-main.preview-maximized .preview-pane { border-bottom:0; }
+    .preview-head-actions { display:flex; align-items:center; gap:10px; min-width:0; margin-left:auto; }
+    #preview-maximize { min-height:21px; padding:1px 7px; font-size:10px; }
     .preview-toolbar { display:flex; flex-direction:column; align-items:stretch; overflow:hidden; border-bottom:1px solid var(--line); background:#303030; }
     .preview-source-row { flex:none; width:100%; min-width:0; min-height:31px; gap:5px; padding:3px 8px; border:0; border-bottom:1px solid #454545; }
     .preview-source-row .plain-button { padding:2px 6px; }
@@ -264,7 +280,7 @@
     #texture-zoom { width:78px; margin-right:auto; }
     .inspector-controls .plain-button { min-height:23px; padding:2px 6px; }
     .preview-stage { background:#1a1a1a; }
-    .pixel-readout { min-height:23px; padding:3px 8px; border-color:#414141; background:#252525; }
+    .pixel-readout { border-color:#414141; background:#252525; }
     .preview-evidence { flex:none; min-height:22px; border-top:1px solid #404040; background:#2d2d2d; }
     .preview-evidence>summary { display:flex; align-items:center; gap:9px; min-height:22px; padding:3px 8px; color:#bdbdbd; cursor:pointer; list-style:none; font-size:10px; }
     .preview-evidence>summary::-webkit-details-marker { display:none; }
@@ -365,18 +381,17 @@
           <option value="bind">绑定</option>
           <option value="copy">复制</option>
           <option value="other">其他</option>
-        </select></div>
-        <div class="control-row"><button id="clear-pass" class="plain-button" type="button">全部 Pass</button><span id="event-list-status" class="small muted"></span></div>
+        </select><button id="clear-pass" class="plain-button" type="button" title="清除 Pass 筛选">清除筛选</button></div>
       </div>
       <div id="event-tree" class="event-tree" role="tree" aria-label="帧、Pass、Draw 事件树"></div>
-      <div class="list-footer"><span>选择事件查看右侧画面与状态</span><button id="event-more" class="plain-button" type="button" hidden>显示更多</button></div>
+      <div class="list-footer"><span id="event-list-status" class="small muted"></span><button id="event-more" class="plain-button" type="button" hidden>显示更多</button></div>
       <div id="pass-list" hidden></div>
       <div id="event-list" hidden></div>
     </aside>
     <div id="hierarchy-splitter" class="splitter vertical" role="separator" aria-label="调整事件层级宽度" aria-orientation="vertical" tabindex="0"></div>
     <div class="frame-main">
       <section class="preview-pane" aria-labelledby="frame-title">
-        <div class="pane-head"><h2 id="frame-title">Render Target</h2><div class="preview-head-meta"><span id="frame-size"></span><span id="texture-count"></span></div></div>
+        <div class="pane-head"><h2 id="frame-title">Render Target</h2><div class="preview-head-actions"><div class="preview-head-meta"><span id="frame-size"></span><span id="texture-count"></span></div><button id="preview-maximize" class="plain-button" type="button" aria-pressed="false" title="放大输出画面">放大输出</button></div></div>
         <div class="preview-toolbar">
           <div class="preview-source-row">
             <button id="preview-frame-button" class="plain-button active" type="button" aria-pressed="true">输出</button>
@@ -402,11 +417,10 @@
       <div id="preview-splitter" class="splitter horizontal" role="separator" aria-label="调整输出预览高度" aria-orientation="horizontal" tabindex="0"></div>
       <section class="inspector-pane" aria-labelledby="detail-title">
         <div class="pane-head inspector-head"><h2 id="detail-title">事件信息</h2><span id="detail-index" class="muted small"></span></div>
-        <nav id="inspector-tabs" class="inspector-tabs" aria-label="事件检查器"><button type="button" data-page="detail" class="active">详情</button><button type="button" data-page="pipeline">管线</button><button type="button" data-page="inputs">输入 / 输出</button><button type="button" data-page="buffers">Buffers</button><button type="button" data-page="resources">资源</button><button type="button" data-page="errors">错误</button></nav>
         <div id="inspector-scroll">
           <details id="page-detail" class="inspector-accordion" data-page="detail" open><summary>Details</summary><div class="inspector-page"><div id="event-detail"></div></div></details>
-          <details id="page-inputs" class="inspector-accordion" data-page="inputs"><summary>Textures / 输入与输出</summary><div class="inspector-page"><div id="binding-detail"></div></div></details>
-          <details id="page-pipeline" class="inspector-accordion" data-page="pipeline"><summary>Pipeline / 着色器</summary><div class="inspector-page"><div id="pipeline-detail"></div></div></details>
+          <details id="page-inputs" class="inspector-accordion" data-page="inputs" open><summary>Textures / 输入与输出</summary><div class="inspector-page"><div id="binding-detail"></div></div></details>
+          <details id="page-pipeline" class="inspector-accordion" data-page="pipeline" open><summary>Pipeline / 着色器</summary><div class="inspector-page"><div id="pipeline-detail"></div></div></details>
           <details id="page-buffers" class="inspector-accordion" data-page="buffers"><summary>Buffers / 常量</summary><div class="inspector-page"><h3 class="section-caption">Draw Buffer 内容 <span id="buffer-count" class="small muted"></span></h3>
             <div class="panel-body">
               <select id="buffer-select" class="buffer-select" aria-label="选择 Draw Buffer"></select>
