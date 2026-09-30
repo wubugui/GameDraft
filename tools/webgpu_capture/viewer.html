@@ -255,8 +255,8 @@
     body:has(#gpu-workspace:not([hidden])) .event-toolbar #event-position { display:none; }
     input,select { border-color:#505050; background:#242424; }
     .plain-button,.tab { border-color:#505050; background:#333; }
-    .frame-workspace { --tree-width:32%; grid-template-columns:minmax(300px,var(--tree-width)) 5px minmax(0,1fr); }
-    .frame-main { --preview-height:68%; grid-template-rows:minmax(300px,var(--preview-height)) 5px minmax(150px,1fr); }
+    .frame-workspace { --tree-width:30%; grid-template-columns:minmax(260px,var(--tree-width)) 5px minmax(0,1fr); }
+    .frame-main { --preview-height:58%; grid-template-rows:minmax(300px,var(--preview-height)) 5px minmax(150px,1fr); }
     .events-pane,.preview-pane,.inspector-pane,.gpu-chart-pane,.gpu-table-pane { background:var(--surface); }
     .pane-head { min-height:27px; padding:3px 9px; border-bottom-color:#414141; background:#303030; }
     .event-controls { gap:3px; padding:5px 7px; border-bottom-color:#444; }
@@ -319,6 +319,7 @@
     .inspector-accordion[open]>summary::before { content:'▾'; }
     .inspector-accordion>summary:hover { background:#414141; }
     .inspector-accordion[open]>summary { border-left:3px solid #76b7df; padding-left:7px; background:#3b444b; color:#f0f6fa; }
+    #inspector-scroll>.inspector-accordion[open]>summary { position:sticky; top:0; z-index:3; }
     .inspector-accordion[open] { background:#292d30; }
     .pixel-timeline-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:8px; }
     .pixel-timeline-head strong { color:#c9e6f7; }
@@ -363,7 +364,7 @@
     }
     @media (max-width:950px) {
       .tree-pass-leaf .tree-meta { display:none; }
-      .frame-workspace { --tree-width:35%; grid-template-columns:minmax(240px,var(--tree-width)) 5px minmax(0,1fr); }
+      .frame-workspace { --tree-width:30%; grid-template-columns:minmax(240px,var(--tree-width)) 5px minmax(0,1fr); }
       .preview-source-row,.inspector-controls,.mesh-controls { overflow:auto hidden; }
       .resource-grid { grid-template-columns:1fr; }
       .binding-texture-preview { grid-template-columns:72px minmax(0,1fr); }

@@ -245,11 +245,54 @@
     el('pixel-timeline-status').textContent = '';
     empty(el('pixel-timeline'), message);
   }
+  // The RHI readback copies mip 0, array layer 0. A texture ID alone does not
+  // identify the attachment subresource: different Views can address other mips/layers.
+  function pixelTimelineSubresource(pass, attachment, snapshot, aspect) {
+    if (!pass || !attachment || !snapshot) return { reason: 'Pass 附件或读回记录缺失，子资源身份未知' };
+    const color = aspect === null;
+    const textureId = color ? attachment.outputTextureId ?? attachment.textureId : attachment.textureId;
+    const matchingTargets = list(pass.targets).filter(item =>
+      item.kind === (color ? 'color' : 'depth-stencil') &&
+      String(color ? item.outputTextureId ?? item.textureId : item.textureId) === String(textureId));
+    if (textureId == null || matchingTargets.length !== 1 || matchingTargets[0] !== attachment) {
+      return { reason: '同一纹理有多个输出附件或目标未记录，无法确定读回来自哪个 View' };
+    }
+    if (String(snapshot.textureId) !== String(textureId) ||
+        Number(snapshot.passIndex) !== Number(pass.index) ||
+        Number(snapshot.frameOrdinal) !== Number(pass.frameOrdinal) ||
+        (snapshot.aspect || null) !== aspect) {
+      return { reason: '读回记录与 Pass 附件身份不一致' };
+    }
+    const viewId = color && attachment.resolveTextureId != null ?
+      attachment.resolveViewId : attachment.viewId;
+    const view = viewId == null ? null : state.textureViews.get(String(viewId));
+    if (!view || String(view.textureId) !== String(textureId) ||
+        (snapshot.viewId != null && String(snapshot.viewId) !== String(viewId))) {
+      return { reason: '输出 View 身份缺失或与读回记录不一致' };
+    }
+    const descriptor = view.descriptor;
+    if (!descriptor || ![descriptor.baseMipLevel, descriptor.mipLevelCount,
+      descriptor.baseArrayLayer, descriptor.arrayLayerCount].every(Number.isSafeInteger)) {
+      return { reason: 'View 的 mip / layer 范围未完整记录，子资源身份未知' };
+    }
+    if (descriptor.baseMipLevel !== 0 || descriptor.mipLevelCount !== 1 ||
+        descriptor.baseArrayLayer !== 0 || descriptor.arrayLayerCount !== 1 ||
+        (snapshot.mipLevel != null && snapshot.mipLevel !== 0) ||
+        (snapshot.arrayLayer != null && snapshot.arrayLayer !== 0)) {
+      return { reason: 'View 指向多个子资源或非 mip 0 / layer 0，与 GPU 原始读回范围不符' };
+    }
+    if (aspect && !['all', `${aspect}-only`].includes(descriptor.aspect)) {
+      return { reason: 'View 的 depth / stencil aspect 与读回不符或未记录' };
+    }
+    return { viewId, key: `${textureId}:${aspect || 'color'}:0:0:${snapshot.sampleIndex ?? 0}` };
+  }
   function pixelTimelineTarget() {
     if (state.previewMode !== 'frame') return null;
     const choice = state.outputChoices.find(item => item.key === state.selectedOutputKey);
     const snapshot = choice?.snapshot;
     if (!choice || !snapshot) return null;
+    const subresource = pixelTimelineSubresource(passFor(state.selectedPass),
+      choice.target, snapshot, snapshot.aspect || null);
     return {
       textureId: snapshot.textureId,
       frameOrdinal: Number(snapshot.frameOrdinal),
@@ -259,24 +302,35 @@
       height: snapshot.height,
       sampleIndex: snapshot.sampleIndex ?? 0,
       role: choice.role,
+      viewId: subresource.viewId ?? null,
+      subresourceKey: subresource.key ?? null,
+      identityReason: subresource.reason ?? null,
     };
   }
   function pixelTimelineEntries(target) {
     const entries = [];
     for (const pass of list(state.report?.passes)) {
       if (Number(pass.frameOrdinal) !== target.frameOrdinal) continue;
-      const attached = list(pass.targets).some(item => target.aspect ?
+      const attached = list(pass.targets).filter(item => target.aspect ?
         item.kind === 'depth-stencil' && String(item.textureId) === String(target.textureId) :
         item.kind === 'color' && String(item.outputTextureId ?? item.textureId) === String(target.textureId));
-      if (!attached) continue;
+      if (!attached.length) continue;
       const snapshots = target.aspect ? list(pass.aspectSnapshots) : list(pass.snapshots);
-      const snapshot = snapshots.find(item => String(item.textureId) === String(target.textureId) &&
+      const matches = snapshots.filter(item => String(item.textureId) === String(target.textureId) &&
         (item.aspect || null) === target.aspect && Number(item.sampleIndex ?? 0) === Number(target.sampleIndex));
-      let gap = !snapshot?.rawFile ? snapshot?.rawReason || snapshot?.reason ||
-        pass.outputUnavailableReason || '此 Pass 没有原始 RT 读回' : null;
+      const snapshot = matches.length === 1 ? matches[0] : null;
+      const subresource = attached.length === 1 && snapshot ?
+        pixelTimelineSubresource(pass, attached[0], snapshot, target.aspect) : null;
+      let gap = attached.length !== 1 ? '同一纹理有多个输出附件，无法确定读回 View' :
+        matches.length > 1 ? '同一 Pass 有多个读回记录，无法确定子资源' :
+          !snapshot ? '此 Pass 没有对应子资源的读回记录' :
+          subresource?.reason || (subresource?.key !== target.subresourceKey ?
+            '此 Pass 使用了同一纹理的其他 View / 子资源' : null);
+      if (!gap && !snapshot?.rawFile) gap = snapshot?.rawReason || snapshot?.reason ||
+        pass.outputUnavailableReason || '此 Pass 没有原始 RT 读回';
       if (!gap && (snapshot.rawFormat !== target.format || snapshot.width !== target.width ||
           snapshot.height !== target.height)) gap = '格式或尺寸与所选输出不同';
-      entries.push({ pass, snapshot, gap,
+      entries.push({ pass, snapshot, subresource, gap,
         commandIndex: Number(snapshot?.afterCommandIndex ?? pass.endCommand),
         drawCommandIndex: snapshot?.captureMoment === 'post-draw' ? snapshot.drawCommandIndex : null });
     }
@@ -314,6 +368,10 @@
       empty(holder, '所选输出只有 PNG 或无读回，不能生成原始像素观测轨迹。');
       return;
     }
+    if (target.identityReason || !target.subresourceKey) {
+      empty(holder, `所选输出的子资源身份无法证明：${target.identityReason || 'View 未记录'}；不合并同一 Texture 的其他读回。`);
+      return;
+    }
     const entries = pixelTimelineEntries(target);
     if (!entries.length) {
       empty(holder, '这一帧没有该输出纹理的 Pass 记录。');
@@ -326,7 +384,7 @@
     state.pixelTimeline = trace;
     clear(holder);
     const heading = make('div', undefined, 'pixel-timeline-head');
-    heading.appendChild(make('strong', `${target.role} · Texture #${target.textureId} · 第 ${target.frameOrdinal} 帧 · (${pixel.x}, ${pixel.y})`));
+    heading.appendChild(make('strong', `${target.role} · Texture #${target.textureId} / View #${target.viewId} · mip 0 / 层 0 · 第 ${target.frameOrdinal} 帧 · (${pixel.x}, ${pixel.y})`));
     const exportButton = make('button', '导出观测 JSON', 'plain-button');
     exportButton.type = 'button';
     exportButton.disabled = true;
@@ -414,6 +472,7 @@
         entry.changeCell.textContent = comparison;
         trace.observations.push({ passIndex: entry.pass.index, passLabel: entry.pass.label,
           commandIndex: entry.commandIndex, drawCommandIndex: entry.drawCommandIndex,
+          viewId: entry.subresource?.viewId ?? null,
           rawFile: entry.snapshot?.rawFile ?? null, rawSha256: entry.snapshot?.rawSha256 ?? null,
           captureMoment: entry.snapshot?.captureMoment ?? null,
           values: sample?.values ?? null, rawBytes: sample?.rawBytes ?? null, format: sample?.format ?? null,
@@ -423,7 +482,8 @@
       exportButton.disabled = false;
       exportButton.addEventListener('click', () => {
         const data = { kind: 'observed-rt-pixel-timeline', frameOrdinal: target.frameOrdinal,
-          textureId: target.textureId, aspect: target.aspect, sampleIndex: target.sampleIndex,
+          textureId: target.textureId, viewId: target.viewId, mipLevel: 0, arrayLayer: 0,
+          aspect: target.aspect, sampleIndex: target.sampleIndex,
           x: pixel.x, y: pixel.y, limitations: 'Only observed pass-end RT bytes; changes do not prove fragment coverage or shader output.',
           observations: trace.observations };
         const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
@@ -901,6 +961,7 @@
   function selectEvent(index, scrollToSelected = false) {
     const event = state.events[index];
     if (!event) return;
+    const changed = state.focusScope !== 'draw' || state.selectedEvent !== index;
     const navigationPosition = state.navigationIndices.indexOf(index);
     if (navigationPosition >= state.eventLimit) state.eventLimit = Math.ceil((navigationPosition + 1) / PAGE_SIZE) * PAGE_SIZE;
     state.selectedEvent = index;
@@ -922,12 +983,14 @@
     renderBufferInspector();
     renderFrame();
     renderPreviewMode();
+    if (changed) el('inspector-scroll').scrollTop = 0;
     if (scrollToSelected) el('event-tree').querySelector(`[data-event-index="${index}"]`)?.scrollIntoView({ block: 'center' });
   }
 
   function selectPass(index, options = {}) {
     const pass = passFor(index);
     if (!pass) return;
+    const changed = state.focusScope !== 'pass' || state.selectedPass !== Number(index);
     state.selectedPass = Number(index);
     state.focusScope = 'pass';
     if (pass.frameOrdinal !== null && pass.frameOrdinal !== undefined) {
@@ -947,6 +1010,7 @@
     renderBufferInspector();
     renderFrame();
     renderPreviewMode();
+    if (changed) el('inspector-scroll').scrollTop = 0;
     if (!options.keepTreeScroll) el('event-tree').querySelector(`[data-event-index="${firstDraw}"]`)?.scrollIntoView({ block: 'center' });
   }
 
@@ -2111,15 +2175,21 @@
           item.evidence === 'later-write' ? '最终状态已变化' :
           item.file ? '捕获最终' : '无图像';
         const binding = item.role === '绑定输入' ? item.bindings[0] : null;
-        const bindingLabel = binding ? `G${binding.group}/B${binding.slot} · Draw #${binding.draw} · ` : '';
-        const option = make('option', `${item.role} · ${bindingLabel}#${item.id} ${item.label} [${evidence}${binding ? ` · mip ${item.mipLevel ?? '—'} / 层 ${item.arrayLayer ?? '—'}` : ''}]`);
-        if (item.bindingNames.length > 1) option.title = `共享此纹理的绑定：${item.bindingNames.join('、')}`;
+        const bindingLabel = binding ? `输入 G${binding.group}/B${binding.slot} · ${item.label} #${item.id} · Draw #${binding.draw}` : '';
+        const inputEvidence = item.evidence === 'pre-draw' ? '实拍' : evidence;
+        const option = make('option', binding ?
+          `${bindingLabel} [${inputEvidence} mip${item.mipLevel ?? '—'}/层${item.arrayLayer ?? '—'}]` :
+          `${item.role} · #${item.id} ${item.label} [${evidence}]`);
+        option.title = binding ? `${item.role} · G${binding.group}/B${binding.slot} · Draw #${binding.draw} · Texture #${item.id} ${item.label} · ${evidence} · mip ${item.mipLevel ?? '—'} / 层 ${item.arrayLayer ?? '—'}` : option.textContent;
+        if (item.bindingNames.length > 1) option.title += ` · 共享此纹理的绑定：${item.bindingNames.join('、')}`;
         option.value = item.key;
         select.appendChild(option);
       }
       select.value = state.selectedTextureKey;
+      select.title = select.selectedOptions[0]?.title || '';
       select.addEventListener('change', () => {
         state.selectedTextureKey = select.value;
+        select.title = select.selectedOptions[0]?.title || '';
         state.previewMode = 'texture';
         renderTextureInspector();
         renderPreviewMode();
@@ -2728,9 +2798,10 @@
       height: snapshot?.height || (pass ? null : frame?.height) || null };
     if (state.pixelTimeline) {
       const trace = state.pixelTimeline;
-      if (!snapshot?.rawFile || Number(snapshot.frameOrdinal) !== trace.frameOrdinal ||
-          String(snapshot.textureId) !== String(trace.textureId) ||
-          (snapshot.aspect || null) !== trace.aspect || Number(snapshot.sampleIndex ?? 0) !== Number(trace.sampleIndex)) {
+      const target = pixelTimelineTarget();
+      if (!snapshot?.rawFile || !target?.subresourceKey ||
+          target.frameOrdinal !== trace.frameOrdinal ||
+          target.subresourceKey !== trace.subresourceKey) {
         clearPixelTimeline();
       } else highlightPixelTimeline();
     }
