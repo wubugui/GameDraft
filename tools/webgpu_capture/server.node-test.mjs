@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile, mkdtemp, realpath, rm, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, realpath, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
@@ -49,6 +49,130 @@ test('stores a checked capture outside the worktree for its exact game bootId', 
     assert.equal(manifest.payloadCount, 1);
   } finally {
     broker.close();
+    if (oldOutput === undefined) delete process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
+    else process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = oldOutput;
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
+test('reopens a completed capture after broker restart and reuses its verified analysis', async () => {
+  const external = await mkdtemp(join(tmpdir(), 'gamedraft-webgpu-history-'));
+  const oldOutput = process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
+  process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = external;
+  const first = createWebGpuCaptureController(resolve('.'));
+  let second;
+  try {
+    first.register({ targetBootId: 'history-game', captureReady: true });
+    const pending = await first.request({ frames: 1 });
+    const capture = sampleCapture();
+    const completed = await first.upload({ jobId: pending.id, targetBootId: 'history-game',
+      actualFrames: 1, contentLength: capture.length, stream: Readable.from([capture]) });
+    const initialReport = await first.viewerFile({ jobId: pending.id, file: 'report.json' });
+    const initialAnalysisDir = resolve(initialReport, '..');
+    first.close();
+    second = createWebGpuCaptureController(resolve('.'));
+    const listed = await second.history({ limit: 10 });
+    assert.equal(listed.length, 1);
+    assert.deepEqual(listed[0].id, pending.id);
+    assert.equal(listed[0].actualFrames, 1);
+    assert.equal(listed[0].detailedFrameIndex, 1);
+    assert.equal(listed[0].bytes, capture.length);
+    assert.equal(listed[0].captureFile, completed.captureFile);
+    const reopened = await second.viewerFile({ jobId: pending.id, file: 'report.json' });
+    assert.equal(resolve(reopened, '..'), initialAnalysisDir);
+    assert.equal(resolve(await second.viewerFile({ jobId: pending.id, file: 'viewer.html' }), '..'),
+      initialAnalysisDir);
+    await assert.rejects(second.viewerFile({ jobId: pending.id, file: '../manifest.json' }),
+      /not available|invalid path/);
+    const analyses = (await readdir(completed.outputDir)).filter(name => name.startsWith('analysis-'));
+    assert.equal(analyses.length, 1);
+    const manifestFile = join(completed.outputDir, 'manifest.json');
+    const tampered = JSON.parse(await readFile(manifestFile, 'utf8'));
+    tampered.sha256 = '0'.repeat(64);
+    await writeFile(manifestFile, JSON.stringify(tampered));
+    assert.deepEqual(await second.history({ limit: 10 }), []);
+    await assert.rejects(second.viewerFile({ jobId: pending.id }), /not found/);
+  } finally {
+    first.close();
+    second?.close();
+    if (oldOutput === undefined) delete process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
+    else process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = oldOutput;
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
+test('history skips forged manifests, changed capture hashes and paths outside the fixed job directory', async () => {
+  const external = await mkdtemp(join(tmpdir(), 'gamedraft-webgpu-history-reject-'));
+  const oldOutput = process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
+  process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = external;
+  const creator = createWebGpuCaptureController(resolve('.'));
+  let reader;
+  try {
+    creator.register({ targetBootId: 'history-reject', captureReady: true });
+    const saved = [];
+    for (let index = 0; index < 3; index++) {
+      const pending = await creator.request({ frames: 2 });
+      saved.push(await creator.upload({ jobId: pending.id, targetBootId: 'history-reject',
+        actualFrames: 1, contentLength: sampleCapture().length,
+        stream: Readable.from([sampleCapture()]) }));
+    }
+    creator.close();
+    const forged = join(saved[0].outputDir, 'manifest.json');
+    const forgedDoc = JSON.parse(await readFile(forged, 'utf8'));
+    forgedDoc.jobId = 'f'.repeat(32);
+    await writeFile(forged, JSON.stringify(forgedDoc));
+    const wrongPath = join(saved[1].outputDir, 'manifest.json');
+    const wrongDoc = JSON.parse(await readFile(wrongPath, 'utf8'));
+    wrongDoc.captureFile = join(external, 'capture.wgpuc');
+    await writeFile(wrongPath, JSON.stringify(wrongDoc));
+    await writeFile(saved[2].captureFile, Buffer.from('tampered capture'));
+    reader = createWebGpuCaptureController(resolve('.'));
+    assert.deepEqual(await reader.history({ limit: 10 }), []);
+    for (const job of saved) {
+      await assert.rejects(reader.viewerFile({ jobId: job.id }), /not found/);
+    }
+    await assert.rejects(reader.viewerFile({ jobId: '../' }), /invalid capture job id/);
+  } finally {
+    creator.close();
+    reader?.close();
+    if (oldOutput === undefined) delete process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
+    else process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = oldOutput;
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
+test('history limits recent entries and accepts a legacy manifest without detailedFrameIndex', async () => {
+  const external = await mkdtemp(join(tmpdir(), 'gamedraft-webgpu-legacy-history-'));
+  const oldOutput = process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
+  process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = external;
+  const creator = createWebGpuCaptureController(resolve('.'));
+  let reader;
+  try {
+    creator.register({ targetBootId: 'legacy-history', captureReady: true });
+    const saved = [];
+    for (let index = 0; index < 2; index++) {
+      const pending = await creator.request({ frames: 1 });
+      saved.push(await creator.upload({ jobId: pending.id, targetBootId: 'legacy-history',
+        actualFrames: 1, contentLength: sampleCapture().length,
+        stream: Readable.from([sampleCapture()]) }));
+    }
+    creator.close();
+    const manifestFile = join(saved[0].outputDir, 'manifest.json');
+    const legacy = JSON.parse(await readFile(manifestFile, 'utf8'));
+    delete legacy.detailedFrameIndex;
+    delete legacy.createdAt;
+    await writeFile(manifestFile, JSON.stringify(legacy));
+    reader = createWebGpuCaptureController(resolve('.'));
+    const all = await reader.history({ limit: 2 });
+    assert.equal(all.length, 2);
+    assert.equal(all[0].id, saved[1].id);
+    assert.equal(all[1].id, saved[0].id);
+    assert.equal(all[1].detailedFrameIndex, 1);
+    assert.deepEqual((await reader.history({ limit: 1 })).map(item => item.id), [saved[1].id]);
+    await assert.rejects(reader.history({ limit: 101 }), /limit must be/);
+  } finally {
+    creator.close();
+    reader?.close();
     if (oldOutput === undefined) delete process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
     else process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = oldOutput;
     await rm(external, { recursive: true, force: true });
@@ -542,8 +666,12 @@ test('exports exact pre-Draw shader, vertex and index Buffer ranges with evidenc
     assert.deepEqual(analyzed.passes[0].bufferSnapshots.map(item => item.bufferId), [3, 4, 5]);
     assert.equal(analyzed.passes[0].bufferSnapshots[2].rangeScope, 'draw-indices');
     assert.equal(analyzed.passes[0].bufferSnapshots[2].copiedOffset, 4);
-    assert.ok(await broker.viewerFile({ jobId: job.id,
-      file: analyzed.passes[0].bufferSnapshots[2].rawFile }));
+    const exportedRawName = analyzed.passes[0].bufferSnapshots[2].rawFile;
+    const exportedRaw = await broker.viewerFile({ jobId: job.id, file: exportedRawName });
+    assert.ok(exportedRaw);
+    await writeFile(exportedRaw, Buffer.alloc(9, 99));
+    await assert.rejects(broker.viewerFile({ jobId: job.id, file: exportedRawName }),
+      /integrity index/);
 
     const copied = join(completed.outputDir, sidecars.bufferSnapshots[2].rawFile);
     await writeFile(copied, Buffer.alloc(8, 99));
@@ -563,6 +691,139 @@ test('exports exact pre-Draw shader, vertex and index Buffer ranges with evidenc
       analyzed.frames, analyzed.passes, analyzed.events, analyzed.resources);
     assert.equal(badSlot.bufferSnapshots[0].captureMoment, 'unavailable');
     assert.match(badSlot.bufferSnapshots[0].reason, /slot/);
+  } finally {
+    broker.close();
+    if (oldOutput === undefined) delete process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
+    else process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = oldOutput;
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
+test('multi-frame deep diagnostics attach only to the selected frame despite repeated Pass labels', async () => {
+  const external = await mkdtemp(join(tmpdir(), 'gamedraft-selected-frame-'));
+  const oldOutput = process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
+  process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = external;
+  const broker = createWebGpuCaptureController(resolve('.'));
+  try {
+    const label = 'scene / frame-debug draw 1/1';
+    const objects = [
+      { id: 1, type: 'Texture', width: 1, height: 1, format: 'rgba8unorm' },
+      { id: 2, type: 'TextureView', texture: { __id: 1 } },
+      { id: 3, type: 'Texture', width: 1, height: 1, format: 'rgba8unorm' },
+      { id: 4, type: 'TextureView', texture: { __id: 3 } },
+      { id: 5, type: 'Buffer', size: 16 },
+      { id: 6, type: 'BindGroup', descriptor: { entries: [
+        { binding: 0, resource: { __id: 4 } },
+        { binding: 1, resource: { buffer: { __id: 5 }, offset: 0, size: 16 } },
+      ] } },
+    ];
+    const commands = Array.from({ length: 2 }, () => [
+      { method: 'beginRenderPass', args: [{ label,
+        colorAttachments: [{ view: { __id: 2 }, loadOp: 'load', storeOp: 'store' }] }] },
+      { method: 'setBindGroup', args: [0, { __id: 6 }] },
+      { method: 'draw', args: [3] }, { method: 'end' }, { method: 'submit' },
+    ]).flat();
+    const metadata = Buffer.from(JSON.stringify({ schemaVersion: 1, objects, commands,
+      payloadTable: [] }));
+    const header = Buffer.from(`WGPUCAP 1 ${metadata.length}\n`);
+    const capture = Buffer.concat([header, metadata,
+      Buffer.alloc((8 - ((header.length + metadata.length) % 8)) % 8)]);
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlMysAAAAAASUVORK5CYII=', 'base64');
+    const rawInput = Buffer.alloc(256, 7);
+    const rawBuffer = Buffer.alloc(16, 9);
+    broker.register({ targetBootId: 'game-selected', captureReady: true });
+    await assert.rejects(broker.request({ targetBootId: 'game-selected', frames: 2,
+      detailedFrameIndex: 3 }), /detailedFrameIndex/);
+    const job = await broker.request({ targetBootId: 'game-selected', frames: 2,
+      detailedFrameIndex: 2 });
+    assert.equal(job.detailedFrameIndex, 2);
+    assert.equal(broker.poll({ targetBootId: 'game-selected' }).detailedFrameIndex, 2);
+    const base = { jobId: job.id, targetBootId: 'game-selected' };
+    for (const frameIndex of [1, 2]) {
+      await broker.uploadFrameImage({ ...base, frameIndex,
+        contentLength: png.length, stream: Readable.from([png]) });
+    }
+    const passUpload = { ...base, passOrdinal: 0, colorIndex: 0,
+      contentLength: png.length, stream: Readable.from([png]) };
+    await assert.rejects(broker.uploadPassImage({ ...passUpload, frameIndex: 1 }),
+      /selected detailedFrameIndex/);
+    await assert.rejects(broker.uploadPassImage(passUpload), /selected detailedFrameIndex/);
+    await broker.uploadPassImage({ ...passUpload, frameIndex: 2 });
+    await assert.rejects(broker.uploadPassImage({ ...passUpload, frameIndex: 2 }),
+      /already uploaded/);
+    const inputUpload = { ...base, inputOrdinal: 0, format: 'rgba8unorm',
+      width: 1, height: 1, bytesPerRow: 256, contentLength: 256,
+      stream: Readable.from([rawInput]) };
+    await assert.rejects(broker.uploadInputRaw({ ...inputUpload, frameIndex: 1 }),
+      /selected detailedFrameIndex/);
+    await broker.uploadInputRaw({ ...inputUpload, frameIndex: 2 });
+    await assert.rejects(broker.uploadBufferRaw({ ...base, frameIndex: 1,
+      bufferOrdinal: 0, contentLength: 16, stream: Readable.from([rawBuffer]) }),
+    /selected detailedFrameIndex/);
+    await broker.uploadBufferRaw({ ...base, frameIndex: 2,
+      bufferOrdinal: 0, contentLength: 16, stream: Readable.from([rawBuffer]) });
+    const detail = { ...base, frameIndex: 2, passes: [{ passOrdinal: 0, colorIndex: 0,
+      label, targetLabel: 'screen', width: 1, height: 1, format: 'rgba8unorm' }],
+    inputs: [{ inputOrdinal: 0, passOrdinal: 0, bindingName: 'uInput',
+      groupSlot: 0, binding: 0, textureId: 3, viewId: 4, mipLevel: 0, arrayLayer: 0,
+      width: 1, height: 1, format: 'rgba8unorm', rawBytesPerRow: 256, rawByteLength: 256 }],
+    buffers: [{ bufferOrdinal: 0, passOrdinal: 0, role: 'uniform', bindingName: 'uGlobals',
+      groupSlot: 0, binding: 1, bufferId: 5, bufferLabel: 'globals', totalSize: 16,
+      offset: 0, size: 16, copiedOffset: 0, copiedSize: 16,
+      rangeScope: 'binding', rawByteLength: 16 }],
+    gpuPasses: [{ ordinal: 0, kind: 'render', label, durationMs: 1.25 }],
+    gpuProfilerStatus: { state: 'enabled' } };
+    assert.throws(() => broker.diagnostics({ ...detail, frameIndex: 1 }),
+      /selected detailedFrameIndex/);
+    broker.diagnostics(detail);
+    await assert.rejects(broker.upload({ ...base, actualFrames: 1,
+      contentLength: capture.length, stream: Readable.from([capture]) }),
+    /does not include the selected detailedFrameIndex/);
+    const completed = await broker.upload({ ...base, actualFrames: 2,
+      contentLength: capture.length, stream: Readable.from([capture]) });
+    assert.equal(completed.state, 'completed');
+    const sidecarsPath = join(completed.outputDir, 'sidecars.json');
+    const sidecars = JSON.parse(await readFile(sidecarsPath, 'utf8'));
+    assert.equal(sidecars.detailedFrameIndex, 2);
+    assert.equal(sidecars.diagnosticFrameOrdinal, 2);
+    assert.deepEqual(sidecars.frames.map(item => [item.frameIndex, item.frameOrdinal]),
+      [[1, 1], [2, 2]]);
+    assert.deepEqual(sidecars.passSnapshots.map(item => item.frameOrdinal), [2]);
+    assert.deepEqual(sidecars.inputSnapshots.map(item => item.frameOrdinal), [2]);
+    assert.deepEqual(sidecars.bufferSnapshots.map(item => item.frameOrdinal), [2]);
+    assert.deepEqual(sidecars.gpuTimings.map(item => item.frameOrdinal), [2]);
+    const report = JSON.parse(await readFile(await broker.viewerFile({
+      jobId: job.id, file: 'report.json' }), 'utf8'));
+    assert.equal(report.passes[0].inputSnapshots, undefined);
+    assert.equal(report.passes[0].bufferSnapshots, undefined);
+    assert.equal(report.passes[1].inputSnapshots?.[0]?.captureMoment, 'pre-draw');
+    assert.equal(report.passes[1].bufferSnapshots?.[0]?.captureMoment, 'pre-draw');
+    assert.equal(report.passes[1].snapshots?.[0]?.captureMoment, 'post-draw');
+    assert.ok(report.frames[0].imageFile);
+    assert.ok(report.frames[1].imageFile);
+
+    sidecars.inputSnapshots[0].frameOrdinal = 1;
+    await writeFile(sidecarsPath, JSON.stringify(sidecars));
+    const badFrameDir = join(external, 'bad-frame');
+    await mkdir(badFrameDir);
+    const badFrame = await attachFrameSidecars(completed.captureFile, badFrameDir,
+      report.frames, report.passes, report.events, report.resources);
+    assert.equal(badFrame.inputSnapshots.length, 0);
+    assert.equal(badFrame.passSnapshots.length, 0);
+    assert.match(badFrame.errors[0].reason, /selected Inspector frame/);
+
+    sidecars.inputSnapshots[0].frameOrdinal = 2;
+    await writeFile(sidecarsPath, JSON.stringify(sidecars));
+    const passFile = join(completed.outputDir, sidecars.passSnapshots[0].file);
+    const changedPng = Buffer.from(png);
+    changedPng[changedPng.length - 1] ^= 1;
+    await writeFile(passFile, changedPng);
+    const badHashDir = join(external, 'bad-pass-hash');
+    await mkdir(badHashDir);
+    const badHash = await attachFrameSidecars(completed.captureFile, badHashDir,
+      report.frames, report.passes, report.events, report.resources);
+    assert.equal(badHash.passSnapshots.length, 0);
+    assert.ok(badHash.errors.some(item => /PNG SHA-256 differs/.test(item.reason)));
   } finally {
     broker.close();
     if (oldOutput === undefined) delete process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;

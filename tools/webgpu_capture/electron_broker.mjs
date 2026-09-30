@@ -88,6 +88,9 @@ async function handleRequest(request, controller) {
     let result;
     if (request.method === 'GET') {
       if (action === 'targets') result = controller.list();
+      else if (action === 'history') result = await controller.history({
+        limit: qs.has('limit') ? Number(qs.get('limit')) : undefined,
+      });
       else if (action === 'poll') result = controller.poll({ targetBootId: qs.get('targetBootId') || '' });
       else if (action === 'status') result = controller.status({
         jobId: qs.get('jobId') || '', targetBootId: qs.get('targetBootId') || '',
@@ -106,37 +109,43 @@ async function handleRequest(request, controller) {
         jobId: qs.get('jobId') || '', targetBootId: qs.get('targetBootId') || '',
         stream: request.body, contentLength: lengthHeader(request),
       };
+      const diagnosticFrameIndex = qs.has('frameIndex') ? Number(qs.get('frameIndex')) : undefined;
       if (action === 'frame-image') result = await controller.uploadFrameImage({
         ...common, frameIndex: Number(qs.get('frameIndex')),
       });
       else if (action === 'pass-image') result = await controller.uploadPassImage({
-        ...common, frameIndex: Number(qs.get('frameIndex')),
+        ...common, frameIndex: diagnosticFrameIndex,
         passOrdinal: Number(qs.get('passOrdinal')), colorIndex: Number(qs.get('colorIndex')),
       });
       else if (action === 'pass-raw') result = await controller.uploadPassRaw({
-        ...common, frameIndex: Number(qs.get('frameIndex')),
+        ...common, frameIndex: diagnosticFrameIndex,
         passOrdinal: Number(qs.get('passOrdinal')), colorIndex: Number(qs.get('colorIndex')),
         format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
         bytesPerRow: Number(qs.get('bytesPerRow')),
       });
       else if (action === 'input-image') result = await controller.uploadInputImage({
-        ...common, inputOrdinal: Number(qs.get('inputOrdinal') ?? NaN),
+        ...common, frameIndex: diagnosticFrameIndex,
+        inputOrdinal: Number(qs.get('inputOrdinal') ?? NaN),
       });
       else if (action === 'input-raw') result = await controller.uploadInputRaw({
-        ...common, inputOrdinal: Number(qs.get('inputOrdinal') ?? NaN),
+        ...common, frameIndex: diagnosticFrameIndex,
+        inputOrdinal: Number(qs.get('inputOrdinal') ?? NaN),
         format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
         bytesPerRow: Number(qs.get('bytesPerRow')),
       });
       else if (action === 'aspect-image') result = await controller.uploadAspectImage({
-        ...common, aspectOrdinal: Number(qs.get('aspectOrdinal') ?? NaN),
+        ...common, frameIndex: diagnosticFrameIndex,
+        aspectOrdinal: Number(qs.get('aspectOrdinal') ?? NaN),
       });
       else if (action === 'aspect-raw') result = await controller.uploadAspectRaw({
-        ...common, aspectOrdinal: Number(qs.get('aspectOrdinal') ?? NaN),
+        ...common, frameIndex: diagnosticFrameIndex,
+        aspectOrdinal: Number(qs.get('aspectOrdinal') ?? NaN),
         format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
         bytesPerRow: Number(qs.get('bytesPerRow')),
       });
       else if (action === 'buffer-raw') result = await controller.uploadBufferRaw({
-        ...common, bufferOrdinal: Number(qs.get('bufferOrdinal') ?? NaN),
+        ...common, frameIndex: diagnosticFrameIndex,
+        bufferOrdinal: Number(qs.get('bufferOrdinal') ?? NaN),
       });
       else result = await controller.upload({ ...common, actualFrames: Number(qs.get('actualFrames')) });
     } else return json({ error: 'method not allowed' }, 405);

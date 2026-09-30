@@ -11,7 +11,8 @@ const TERMINAL = new Set(['completed', 'failed', 'stopped']);
 
 function parseArgs(argv) {
   const args = { command: argv[0] || 'help' };
-  const valued = new Set(['base', 'boot-id', 'job', 'frames', 'timeout', 'capture', 'output', 'payloads']);
+  const valued = new Set(['base', 'boot-id', 'job', 'frames', 'detail-frame',
+    'timeout', 'capture', 'output', 'payloads', 'limit']);
   const flags = new Set(['wait', 'metadata']);
   for (let index = 1; index < argv.length; index++) {
     const token = argv[index];
@@ -102,7 +103,8 @@ function payloadSelection(value) {
 function usage() {
   return `Usage: node tools/webgpu_capture/cli.mjs <command> [options]
   targets [--base http://127.0.0.1:5216]
-  capture [--frames 1..120] [--boot-id ID] [--wait] [--timeout 1..300] [--base URL]
+  history [--limit 1..100] [--base URL]
+  capture [--frames 1..120] [--detail-frame 1..frames] [--boot-id ID] [--wait] [--timeout 1..300] [--base URL]
   status --boot-id ID [--job ID] [--base URL]
   stop --job ID --boot-id ID [--base URL]
   analyze --capture FILE.wgpuc [--output OUTSIDE_PROJECT_DIR] [--metadata] [--payloads ID,ID|all]
@@ -117,10 +119,17 @@ async function main() {
     case 'targets':
       print(await api(base, 'GET', { action: 'targets' }));
       break;
+    case 'history':
+      print(await api(base, 'GET', {
+        action: 'history', limit: intOption(args.limit ?? '20', 'limit', 1, 100),
+      }));
+      break;
     case 'capture': {
       const frames = intOption(args.frames ?? '1', 'frames', 1, 120);
+      const detailedFrameIndex = intOption(args['detail-frame'] ?? '1', 'detail-frame', 1, frames);
       const job = await api(base, 'POST', {}, {
-        action: 'request', frames, targetBootId: args['boot-id'] || undefined,
+        action: 'request', frames, detailedFrameIndex,
+        targetBootId: args['boot-id'] || undefined,
       });
       const result = args.wait ? await waitFor(base, job, intOption(args.timeout ?? '180', 'timeout', 1, 300)) : job;
       print(result);

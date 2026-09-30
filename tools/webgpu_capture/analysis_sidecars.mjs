@@ -123,6 +123,22 @@ export function verifiedInputBinding(pass, events, resources, item) {
     bindingAmbiguous: true, bindingCandidates: candidates } : null;
 }
 
+/** A logical capture frame must have one unambiguous Inspector command range. */
+export function inspectorCaptureFrames(frames, passes, actualFrames) {
+  if (!Number.isInteger(actualFrames) || actualFrames < 1) return [];
+  const displayFrames = frames.filter(frame => frame.frameTextureId != null &&
+    passes.some(pass => pass.frameOrdinal === frame.frameOrdinal &&
+      pass.targets?.some(target => target.outputTextureId === frame.frameTextureId)));
+  if (displayFrames.length) return displayFrames.length === actualFrames ? displayFrames : [];
+  // Offscreen-only captures have no getCurrentTexture command. Fall back only
+  // when every requested frame has an independently bounded render or submit.
+  const rendered = frames.filter(frame => passes.some(pass =>
+    pass.frameOrdinal === frame.frameOrdinal && pass.type === 'render'));
+  if (rendered.length) return rendered.length === actualFrames ? rendered : [];
+  const submitted = frames.filter(frame => Number.isInteger(frame.submitCommandIndex));
+  return submitted.length === actualFrames ? submitted : [];
+}
+
 /** Only an Inspector Draw with the same native Buffer and slot can own these bytes. */
 export function verifiedDrawBufferBinding(pass, events, resources, item) {
   const drawCommandIndex = pass?.frameDebugStep?.drawCommandIndex;
@@ -319,8 +335,40 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
   const passUnavailable = [];
   let attached = 0;
   let manifest = null;
+  let captureFrames = [];
   try { manifest = await readSidecarManifest(sourceDir); }
   catch (error) { errors.push({ file: 'sidecars.json', reason: error.message }); }
+
+  // New multi-frame sidecars carry both the user-selected capture index and
+  // the independently parsed Inspector frame ordinal. Reject the entire deep
+  // section if either side changes, even when adjacent frames reuse labels.
+  if (manifest?.detailedFrameIndex !== undefined) {
+    try {
+      const deepItems = [
+        ...manifest.passSnapshots, ...(manifest.passUnavailable ?? []),
+        ...(manifest.inputSnapshots ?? []), ...(manifest.aspectSnapshots ?? []),
+        ...(manifest.bufferSnapshots ?? []), ...manifest.gpuTimings,
+      ];
+      if (!Number.isInteger(manifest.actualFrames) || manifest.actualFrames < 1 ||
+          manifest.actualFrames > 120 || !Number.isInteger(manifest.detailedFrameIndex) ||
+          manifest.detailedFrameIndex < 1 || manifest.detailedFrameIndex > manifest.actualFrames) {
+        throw new Error('sidecar selected frame index is invalid');
+      }
+      captureFrames = inspectorCaptureFrames(frames, passes, manifest.actualFrames);
+      if (deepItems.length) {
+        const selected = captureFrames[manifest.detailedFrameIndex - 1];
+        if (!selected ||
+            manifest.diagnosticFrameOrdinal !== selected.frameOrdinal ||
+            deepItems.some(item => item?.frameOrdinal !== selected.frameOrdinal)) {
+          throw new Error('sidecar deep diagnostics do not belong to the selected Inspector frame');
+        }
+      }
+    } catch (error) {
+      errors.push({ file: 'sidecars.json', reason: error.message });
+      manifest = { ...manifest, passSnapshots: [], passUnavailable: [], inputSnapshots: [],
+        aspectSnapshots: [], bufferSnapshots: [], gpuTimings: [] };
+    }
+  }
 
   // Legacy canvas readbacks predate sidecars.json and are still real per-frame
   // readbacks. Manifest entries take precedence for the same ordinal.
@@ -334,8 +382,15 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
   for (const item of frameEntries) {
     try {
       const frame = frameRecord(item, frames);
+      if (manifest?.detailedFrameIndex !== undefined &&
+          (!Number.isInteger(item.frameIndex) ||
+            captureFrames[item.frameIndex - 1]?.frameOrdinal !== frame.frameOrdinal ||
+            typeof item.sha256 !== 'string')) {
+        throw new Error('canvas image does not belong to its recorded capture frame');
+      }
       const relativeFile = `frames/${frame.frameOrdinal}.png`;
-      const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile, item.width, item.height);
+      const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile,
+        item.width, item.height, item.sha256 ?? null);
       frame.imageFile = relativeFile;
       frame.imageSource = `game canvas readback sidecar ${item.file}`;
       frame.imageEvidence = item.source;
@@ -375,7 +430,11 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
       if (item.file) {
         try {
           const relativeFile = `pass-snapshots/frame-${item.frameOrdinal}-pass-${item.passIndex}-texture-${item.textureId}.png`;
-          const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile, item.width, item.height);
+          if (manifest.detailedFrameIndex !== undefined && !item.imageSha256) {
+            throw new Error('pass PNG SHA-256 is missing');
+          }
+          const dest = await copySidecar(sourceDir, outputDir, item.file, relativeFile,
+            item.width, item.height, item.imageSha256 ?? null);
           snapshot.imageFile = relativeFile;
           exports.push(dest);
         } catch (error) {

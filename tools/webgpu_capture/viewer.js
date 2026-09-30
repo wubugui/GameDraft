@@ -32,6 +32,8 @@
     mode: 'frame',
     inspectorPage: 'detail',
     pipelineStage: 'input',
+    meshLocation: null,
+    meshSelectionKey: null,
     focusScope: 'draw',
     activeSurface: null,
     navigationIndices: [],
@@ -600,7 +602,7 @@
     }
     state.selectedTextureKey = null;
     state.selectedBufferPayloadId = null;
-    state.previewMode = 'frame';
+    if (state.previewMode !== 'mesh') state.previewMode = 'frame';
     renderPasses();
     renderEvents();
     renderEventDetail();
@@ -627,7 +629,7 @@
     state.expandedCategories.add(passCategory(pass).key);
     state.selectedTextureKey = null;
     state.selectedBufferPayloadId = null;
-    state.previewMode = 'frame';
+    if (state.previewMode !== 'mesh') state.previewMode = 'frame';
     renderPasses();
     renderEvents();
     renderEventDetail();
@@ -727,10 +729,14 @@
     }
     holder.appendChild(grid);
     const jumps = make('div', undefined, 'resource-jumps');
-    for (const [page, label] of [['pipeline', '检查管线'], ['inputs', '检查输入 / 输出'], ['buffers', '检查 Buffer']]) {
+    for (const [page, label] of [['pipeline', '检查管线'], ['mesh', 'Mesh Preview'],
+      ['inputs', '检查输入 / 输出'], ['buffers', '检查 Buffer']]) {
       const button = make('button', label, 'plain-button');
       button.type = 'button';
-      button.addEventListener('click', () => setInspectorPage(page));
+      button.addEventListener('click', () => {
+        if (page === 'mesh') { state.previewMode = 'mesh'; renderPreviewMode(); }
+        else setInspectorPage(page);
+      });
       jumps.appendChild(button);
     }
     holder.appendChild(jumps);
@@ -860,6 +866,218 @@
     const source = make('details', undefined, 'data-section');
     source.append(make('summary', '查看 WGSL 源码'), make('pre', shader.code));
     holder.appendChild(source);
+  }
+
+  const meshByteCache = new Map();
+  let meshRenderTicket = 0;
+  async function meshSnapshotBytes(snapshot) {
+    if (!snapshot?.rawFile || !Number.isSafeInteger(snapshot.rawByteLength) ||
+        snapshot.rawByteLength < 1 ||
+        snapshot.rawByteLength > window.GameDraftMeshInspector.MAX_SNAPSHOT_BYTES) {
+      throw new Error('Draw 前 Buffer 文件缺失或超过单文件 16 MiB 上限');
+    }
+    const url = assetUrl(snapshot.rawFile);
+    if (!url) throw new Error('Buffer 文件路径无效');
+    const key = snapshot.rawFile + ':' + snapshot.rawSha256;
+    if (!meshByteCache.has(key)) {
+      const pending = (async () => {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Buffer 文件 HTTP ${response.status}`);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (bytes.length !== snapshot.rawByteLength) throw new Error('Buffer 文件长度与报告不符');
+        if (snapshot.rawSha256 && typeof crypto !== 'undefined' && crypto.subtle) {
+          const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+          const hex = [...hash].map(value => value.toString(16).padStart(2, '0')).join('');
+          if (hex !== snapshot.rawSha256) throw new Error('Buffer 文件 SHA-256 与报告不符');
+        }
+        return bytes;
+      })();
+      meshByteCache.set(key, pending);
+      while (meshByteCache.size > 4) meshByteCache.delete(meshByteCache.keys().next().value);
+    }
+    try { return await meshByteCache.get(key); }
+    catch (error) { meshByteCache.delete(key); throw error; }
+  }
+
+  function meshNumber(value) {
+    return Number.isFinite(value) ? String(Number(value.toPrecision(7))) : String(value);
+  }
+
+  function paintMesh(canvas, result, selectedOrder = null) {
+    canvas.width = 960;
+    canvas.height = 420;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    const width = canvas.width, height = canvas.height, pad = 38;
+    context.fillStyle = '#151b22';
+    context.fillRect(0, 0, width, height);
+    const spanX = Math.max(1e-9, result.bounds.maxX - result.bounds.minX);
+    const spanY = Math.max(1e-9, result.bounds.maxY - result.bounds.minY);
+    const scale = Math.min((width - 2 * pad) / spanX, (height - 2 * pad) / spanY);
+    const originX = (width - spanX * scale) / 2;
+    const originY = (height - spanY * scale) / 2;
+    const point = value => ({
+      x: originX + (value.x - result.bounds.minX) * scale,
+      y: height - originY - (value.y - result.bounds.minY) * scale,
+    });
+    context.strokeStyle = '#293642';
+    context.lineWidth = 1;
+    for (let grid = 0; grid <= 4; grid++) {
+      const x = pad + (width - pad * 2) * grid / 4;
+      const y = pad + (height - pad * 2) * grid / 4;
+      context.beginPath(); context.moveTo(x, pad); context.lineTo(x, height - pad); context.stroke();
+      context.beginPath(); context.moveTo(pad, y); context.lineTo(width - pad, y); context.stroke();
+    }
+    const total = result.primitives.length;
+    for (let index = 0; index < total; index++) {
+      const primitive = result.primitives[index];
+      const first = result.points[primitive.corners[0]];
+      if (!first) continue;
+      context.beginPath();
+      const start = point(first);
+      context.moveTo(start.x, start.y);
+      for (const corner of primitive.corners.slice(1)) {
+        const vertex = result.points[corner];
+        if (!vertex) continue;
+        const pos = point(vertex);
+        context.lineTo(pos.x, pos.y);
+      }
+      if (primitive.kind === 'triangle') context.closePath();
+      const progress = total <= 1 ? 0 : index / (total - 1);
+      context.strokeStyle = `hsl(${206 - progress * 172} 82% 65% / .62)`;
+      context.lineWidth = 1.2;
+      context.stroke();
+    }
+    const first = result.points.find(Boolean);
+    const last = result.points.findLast(Boolean);
+    for (const [vertex, color] of [[first, '#70c6ff'], [last, '#ffd177']]) {
+      if (!vertex) continue;
+      const pos = point(vertex);
+      context.fillStyle = color;
+      context.beginPath(); context.arc(pos.x, pos.y, 4, 0, Math.PI * 2); context.fill();
+    }
+    if (selectedOrder !== null && result.points[selectedOrder]) {
+      const selected = point(result.points[selectedOrder]);
+      context.strokeStyle = '#fff'; context.lineWidth = 2;
+      context.beginPath(); context.arc(selected.x, selected.y, 8, 0, Math.PI * 2); context.stroke();
+    }
+    context.fillStyle = '#aec0d0';
+    context.font = '12px Consolas, monospace';
+    context.fillText(`${meshNumber(result.bounds.minX)}, ${meshNumber(result.bounds.minY)}`, 8, height - 8);
+    context.fillText(`${meshNumber(result.bounds.maxX)}, ${meshNumber(result.bounds.maxY)}`, width - 210, 18);
+    context.fillText('Y ↑ · 蓝 → 橙：绘制顺序', 8, 18);
+  }
+
+  function showMeshResult(result, loadErrors) {
+    const holder = el('mesh-detail');
+    clear(holder);
+    if (result.status !== 'ok') {
+      holder.appendChild(make('p', `不可预览：${result.reason}${loadErrors.length ? `；${loadErrors[0]}` : ''}`, 'empty'));
+      el('mesh-summary').textContent = '';
+      return;
+    }
+    el('mesh-summary').textContent = `${result.topology} · ${result.count} ${result.indexed ? '索引' : '顶点'} · ${result.primitives.length} 个图元`;
+    const note = make('p', `位置 location ${result.position.shaderLocation} · Slot ${result.position.slot} · ${result.position.format} · 输入字节偏移 ${result.position.offset} · ${result.instanceCount} 实例；只显示一份顶点输入，实例变换和 Shader 运算未执行。`, 'muted small');
+    holder.appendChild(note);
+    const canvas = make('canvas', undefined, 'mesh-canvas');
+    canvas.setAttribute('aria-label', '所选位置属性的顶点输入线框；蓝色先绘，橙色后绘');
+    holder.appendChild(canvas);
+    paintMesh(canvas, result);
+    const data = make('details', undefined, 'mesh-data');
+    data.appendChild(make('summary', `顶点表 ${result.rows.length} / ${result.count} · 展开查看属性`));
+    const status = make('p', '点击行在线框上定位顶点。横纵坐标是原始属性值；线框按范围适配，不代表最终像素坐标。', 'muted small');
+    data.appendChild(status);
+    const wrap = make('div', undefined, 'mesh-table-scroll');
+    const grid = make('table', undefined, 'binding-table');
+    const head = make('thead');
+    const header = make('tr');
+    const names = ['顺序', '原索引', '顶点索引', 'Buffer 字节', 'X', 'Y',
+      ...result.attributes.map(item => `loc ${item.shaderLocation} (${item.format})`)];
+    for (const name of names) header.appendChild(make('th', name));
+    head.appendChild(header); grid.appendChild(head);
+    const body = make('tbody');
+    for (const row of result.rows) {
+      const tr = make('tr');
+      const values = row.restart ? [row.order, 'strip 重启', '—', '—', '—', '—',
+        ...result.attributes.map(() => '—')] :
+        [row.order, row.sourceIndex ?? '—', row.vertexIndex, row.byteOffset,
+          meshNumber(row.x), meshNumber(row.y),
+          ...row.values.map(value => value ? value.map(meshNumber).join(', ') : '不可用')];
+      for (const value of values) tr.appendChild(make('td', value));
+      if (!row.restart) {
+        tr.tabIndex = 0;
+        const select = () => paintMesh(canvas, result, row.order);
+        tr.addEventListener('click', select);
+        tr.addEventListener('keydown', event => {
+          if (event.key === 'Enter') { event.preventDefault(); select(); }
+        });
+      }
+      body.appendChild(tr);
+    }
+    grid.appendChild(body); wrap.appendChild(grid); data.appendChild(wrap); holder.appendChild(data);
+  }
+
+  async function renderMeshInspector() {
+    const ticket = ++meshRenderTicket;
+    if (state.previewMode !== 'mesh') return;
+    const holder = el('mesh-detail');
+    const select = el('mesh-position-location');
+    clear(holder); clear(select);
+    select.disabled = true;
+    el('mesh-summary').textContent = '';
+    const event = state.focusScope === 'draw' ? state.events[state.selectedEvent] : null;
+    if (!event || eventKind(String(event.method || '')) !== 'draw') {
+      holder.appendChild(make('p', '选择一个 Draw 查看顶点输入。', 'empty'));
+      return;
+    }
+    const pass = passFor(event.passIndex);
+    const pipeline = pipelineForEvent(event);
+    const inspector = window.GameDraftMeshInspector;
+    if (!inspector) { holder.appendChild(make('p', '顶点输入解码器未加载。', 'empty')); return; }
+    const candidates = inspector.positionAttributes(event, pipeline);
+    for (const candidate of candidates) {
+      const option = make('option', `location ${candidate.shaderLocation} · Slot ${candidate.slot} · ${candidate.format} @${candidate.offset}`);
+      option.value = String(candidate.shaderLocation);
+      select.appendChild(option);
+    }
+    const eventKey = `${event.frameOrdinal}:${event.passIndex}:${event.commandIndex}`;
+    if (state.meshSelectionKey !== eventKey ||
+        !candidates.some(item => item.shaderLocation === state.meshLocation)) {
+      state.meshSelectionKey = eventKey;
+      state.meshLocation = inspector.recommendedLocation(candidates);
+    }
+    select.disabled = !candidates.length;
+    if (state.meshLocation !== null) select.value = String(state.meshLocation);
+    if (!candidates.length || !pass?.bufferSnapshots?.length) {
+      showMeshResult(inspector.decodeDraw({ event, pipeline, pass,
+        positionLocation: state.meshLocation, bytesByOrdinal: new Map() }), []);
+      return;
+    }
+    holder.appendChild(make('p', '读取 Draw 前顶点与索引字节…', 'muted small'));
+    const snapshots = list(pass.bufferSnapshots).filter(item =>
+      item.captureMoment === 'pre-draw' && ['vertex', 'index'].includes(item.role));
+    const required = snapshots.filter(item => item.role === 'index' ||
+      item.vertexSlot === candidates.find(candidate => candidate.shaderLocation === state.meshLocation)?.slot);
+    const extra = snapshots.filter(item => !required.includes(item));
+    const chosen = [...required];
+    let budget = required.reduce((sum, item) => sum + (item.rawByteLength || 0), 0);
+    for (const item of extra) {
+      if (budget + (item.rawByteLength || 0) > 32 * 1024 * 1024) continue;
+      chosen.push(item); budget += item.rawByteLength || 0;
+    }
+    const bytesByOrdinal = new Map();
+    const loadErrors = [];
+    await Promise.all(chosen.map(async snapshot => {
+      try { bytesByOrdinal.set(snapshot.bufferOrdinal, await meshSnapshotBytes(snapshot)); }
+      catch (error) { loadErrors.push(`${snapshot.role} Slot ${snapshot.vertexSlot ?? '索引'}：${error.message || String(error)}`); }
+    }));
+    if (ticket !== meshRenderTicket || state.previewMode !== 'mesh') return;
+    try {
+      showMeshResult(inspector.decodeDraw({ event, pipeline, pass,
+        positionLocation: state.meshLocation, bytesByOrdinal }), loadErrors);
+    } catch (error) {
+      empty(holder, `顶点输入解码失败：${error.message || String(error)}`);
+    }
   }
 
   function shaderBindingNames(pipeline) {
@@ -1144,7 +1362,13 @@
     clear(holder);
     if (!options.length) holder.appendChild(make('p', pass ? '这个 Pass 没有可识别的纹理资源。' : '尚未选择绘制事件。', 'muted small'));
     if (!options.some(item => item.key === state.selectedTextureKey)) {
-      state.selectedTextureKey = (options.find(item => item.snapshot) || options.find(item => item.file) || options[0])?.key ?? null;
+      const area = item => (item.snapshot?.width || item.texture?.width || 0) *
+        (item.snapshot?.height || item.texture?.height || 0);
+      const capturedInputs = options.filter(item => item.evidence === 'pre-draw' &&
+        (item.file || item.snapshot?.rawFile));
+      const preferred = capturedInputs.sort((a, b) => area(b) - area(a))[0];
+      state.selectedTextureKey = (preferred || options.find(item => item.snapshot) ||
+        options.find(item => item.file) || options[0])?.key ?? null;
     }
     if (options.length) {
       const select = make('select');
@@ -1706,15 +1930,31 @@
 
   function renderPreviewMode() {
     const texture = state.previewMode === 'texture';
+    const mesh = state.previewMode === 'mesh';
+    for (const [id, active] of [['preview-frame-button', !texture && !mesh],
+      ['preview-texture-button', texture], ['preview-mesh-button', mesh]]) {
+      const button = el(id);
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+    el('preview-texture-button').disabled = !state.textureChoices.length;
+    el('texture-scope').hidden = mesh;
+    el('texture-choices').hidden = mesh;
+    el('texture-controls').hidden = mesh;
+    el('mesh-controls').hidden = !mesh;
+    el('mesh-preview').hidden = !mesh;
+    el('surface-mount').parentElement.hidden = mesh;
+    el('pixel-readout').hidden = mesh;
+    document.querySelector('.preview-evidence').hidden = mesh;
+    document.querySelector('.preview-head-meta').hidden = mesh;
+    el('frame-title').textContent = mesh ? 'Mesh Preview' : 'Render Target';
+    if (mesh) {
+      renderMeshInspector();
+      return;
+    }
+    ++meshRenderTicket;
     el('frame-note').hidden = texture;
     el('texture-note').hidden = !texture;
-    const frameButton = el('preview-frame-button');
-    const textureButton = el('preview-texture-button');
-    frameButton.classList.toggle('active', !texture);
-    textureButton.classList.toggle('active', texture);
-    frameButton.setAttribute('aria-pressed', String(!texture));
-    textureButton.setAttribute('aria-pressed', String(texture));
-    textureButton.disabled = !state.textureChoices.length;
     const selected = state.textureChoices.find(item => item.key === state.selectedTextureKey);
     const choice = texture ? selected && {
       file: selected.file, snapshot: selected.snapshot,
@@ -1808,9 +2048,11 @@
     clear(rows);
     const note = el('gpu-note');
     const hasDrawSteps = measured.some(pass => pass.frameDebugStep);
-    if (note) note.textContent = `${frame ? `第 ${frame.frameOrdinal} 帧` : '捕获'} · GPU Pass 实测时间戳；未测项留空。` +
-      (hasDrawSteps ? '逐 Draw 阶段计的是单 Draw 物理 Pass（含 Pass 开销），没有独立的 Draw 指令计时。' :
-        '没有逐 Draw GPU 时间和历史曲线。');
+    if (note) note.textContent = !measured.length ?
+      `${frame ? `第 ${frame.frameOrdinal} 帧` : '捕获'}没有可用的 GPU Pass 时间戳；未测项显示 —。` :
+      `${frame ? `第 ${frame.frameOrdinal} 帧` : '捕获'} · GPU Pass 实测时间戳；未测项留空。` +
+        (hasDrawSteps ? '逐 Draw 阶段计的是单 Draw 物理 Pass（含 Pass 开销），没有独立的 Draw 指令计时。' :
+          '没有逐 Draw GPU 时间和历史曲线。');
     if (!measured.length) {
       bars.appendChild(make('p', '此帧没有可用的 GPU Pass 时间戳。', 'empty'));
     }
@@ -1947,6 +2189,7 @@
   el('mode-gpu').addEventListener('click', () => { state.mode = 'gpu'; renderMode(); });
   el('preview-frame-button').addEventListener('click', () => { state.previewMode = 'frame'; renderPreviewMode(); });
   el('preview-texture-button').addEventListener('click', () => { state.previewMode = 'texture'; renderPreviewMode(); });
+  el('preview-mesh-button').addEventListener('click', () => { state.previewMode = 'mesh'; renderPreviewMode(); });
   for (const button of el('inspector-tabs').querySelectorAll('button[data-page]')) {
     button.addEventListener('click', () => setInspectorPage(button.dataset.page));
   }
@@ -1977,7 +2220,7 @@
     renderEventDetail();
     state.selectedTextureKey = null;
     state.selectedBufferPayloadId = null;
-    state.previewMode = 'frame';
+    if (state.previewMode !== 'mesh') state.previewMode = 'frame';
     renderTextureInspector();
     renderBufferInspector();
     renderFrame();
@@ -2020,6 +2263,10 @@
   el('buffer-select').addEventListener('change', () => {
     state.selectedBufferPayloadId = el('buffer-select').value;
     renderBufferInspector();
+  });
+  el('mesh-position-location').addEventListener('change', () => {
+    state.meshLocation = Number(el('mesh-position-location').value);
+    renderMeshInspector();
   });
   el('buffer-offset').addEventListener('change', renderBufferInspector);
   el('buffer-load-full').addEventListener('click', () => {

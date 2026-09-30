@@ -3,6 +3,7 @@ import { WebGpuCaptureClient, type WebGpuCaptureJob } from './webgpuCaptureClien
 
 const job = (state: WebGpuCaptureJob['state'], frames = 2): WebGpuCaptureJob => ({
   id: 'job-1', targetBootId: 'boot-1', state, requestedFrames: frames,
+  detailedFrameIndex: 1,
   actualFrames: state === 'completed' ? frames : 0,
   bytes: 0, sha256: null, outputDir: null, captureFile: null, error: null,
   createdAt: '2026-09-29T00:00:00Z', updatedAt: '2026-09-29T00:00:00Z',
@@ -27,6 +28,37 @@ afterEach(() => {
 });
 
 describe('WebGPU 真帧抓取', () => {
+  it('把连续抓帧中指定的详细分析帧交给服务端，并拒绝越界帧', async () => {
+    installBrowser({ beginFrameCapture() {}, endFrameCapture() {},
+      saveCaptureData: async () => ({ metadata: {}, payloads: [] }),
+      captureStreamToBlob: () => new Blob(['unused']) });
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', vi.fn((_input: string, init: RequestInit) => {
+      const url = new URL(_input, location.href);
+      if (init.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        if (body.action === 'register') return response({ captureReady: true });
+        if (body.action === 'request') {
+          requests.push(body);
+          return response({ ...job('pending', 3), detailedFrameIndex: 2 });
+        }
+      }
+      if (url.searchParams.get('action') === 'poll' || url.searchParams.get('action') === 'status') {
+        return response(null);
+      }
+      throw new Error(`unexpected ${url}`);
+    }));
+    const client = new WebGpuCaptureClient({
+      bootId: 'boot-1', sceneId: () => 'dev_room', isGpuReady: () => true,
+      setFrameHook: () => {}, onChange: () => {},
+    });
+    await (client as unknown as { tick(): Promise<void> }).tick();
+    await client.request(3, 2);
+    expect(requests).toEqual([expect.objectContaining({ frames: 3, detailedFrameIndex: 2 })]);
+    await expect(client.request(3, 4)).rejects.toThrow('详细分析帧');
+    client.dispose();
+  });
+
   it('只包住指定的两个显示帧，合成一个 .wgpuc 后上传且不触发浏览器下载', async () => {
     const order: string[] = [];
     const stream = { metadata: {}, payloads: [] };

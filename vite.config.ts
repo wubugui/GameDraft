@@ -114,6 +114,9 @@ function webgpuCaptureApi(): Plugin {
           let result: unknown;
           if (req.method === 'GET') {
             if (action === 'targets') result = controller.list();
+            else if (action === 'history') result = await controller.history({
+              limit: qs.has('limit') ? Number(qs.get('limit')) : undefined,
+            });
             else if (action === 'poll') result = controller.poll({ targetBootId: qs.get('targetBootId') ?? '' });
             else if (action === 'status') result = controller.status({
               jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
@@ -133,7 +136,10 @@ function webgpuCaptureApi(): Plugin {
               targetBootId: body.targetBootId, url: body.url, sceneId: body.sceneId,
               captureReady: body.captureReady, reason: body.reason,
             });
-            else if (body.action === 'request') result = await controller.request({ targetBootId: body.targetBootId, frames: body.frames });
+            else if (body.action === 'request') result = await controller.request({
+              targetBootId: body.targetBootId, frames: body.frames,
+              detailedFrameIndex: body.detailedFrameIndex,
+            });
             else if (body.action === 'fail') result = controller.fail({ jobId: body.jobId, targetBootId: body.targetBootId, error: body.error });
             else if (body.action === 'stop') result = controller.stop({ jobId: body.jobId, targetBootId: body.targetBootId });
             else if (body.action === 'diagnostics') result = controller.diagnostics(body);
@@ -164,11 +170,13 @@ function webgpuCaptureApi(): Plugin {
             } else if (action === 'input-image') {
               result = await controller.uploadInputImage({
                 jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: qs.has('frameIndex') ? Number(qs.get('frameIndex')) : undefined,
                 inputOrdinal: Number(qs.get('inputOrdinal') ?? NaN), stream: req, contentLength,
               });
             } else if (action === 'input-raw') {
               result = await controller.uploadInputRaw({
                 jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: qs.has('frameIndex') ? Number(qs.get('frameIndex')) : undefined,
                 inputOrdinal: Number(qs.get('inputOrdinal') ?? NaN),
                 format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
                 bytesPerRow: Number(qs.get('bytesPerRow')), stream: req, contentLength,
@@ -176,11 +184,13 @@ function webgpuCaptureApi(): Plugin {
             } else if (action === 'aspect-image') {
               result = await controller.uploadAspectImage({
                 jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: qs.has('frameIndex') ? Number(qs.get('frameIndex')) : undefined,
                 aspectOrdinal: Number(qs.get('aspectOrdinal') ?? NaN), stream: req, contentLength,
               });
             } else if (action === 'aspect-raw') {
               result = await controller.uploadAspectRaw({
                 jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: qs.has('frameIndex') ? Number(qs.get('frameIndex')) : undefined,
                 aspectOrdinal: Number(qs.get('aspectOrdinal') ?? NaN),
                 format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
                 bytesPerRow: Number(qs.get('bytesPerRow')), stream: req, contentLength,
@@ -188,6 +198,7 @@ function webgpuCaptureApi(): Plugin {
             } else if (action === 'buffer-raw') {
               result = await controller.uploadBufferRaw({
                 jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: qs.has('frameIndex') ? Number(qs.get('frameIndex')) : undefined,
                 bufferOrdinal: Number(qs.get('bufferOrdinal') ?? NaN),
                 stream: req, contentLength,
               });

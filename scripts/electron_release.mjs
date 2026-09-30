@@ -200,6 +200,7 @@ function devCaptureFiles(stageApp) {
     'electron_broker.mjs', 'server.mjs', 'viewer_range.mjs', 'cli.mjs', 'analyze.mjs',
     'analysis_report.mjs', 'analysis_png.mjs', 'analysis_sidecars.mjs',
     'viewer.html', 'viewer.js', 'viewer_surface.js', 'viewer_surface.css', 'viewer_uniforms.js',
+    'viewer_mesh.js',
   ]) copyTree(join(source, name), join(target, name));
   for (const name of ['webgpu_inspector.js', 'LICENSE', 'SOURCE.txt']) {
     copyTree(join(source, 'vendor', name), join(target, 'vendor', name));

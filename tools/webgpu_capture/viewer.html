@@ -118,6 +118,22 @@
     .buffer-table th,.buffer-table td { padding:3px 6px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
     .buffer-table th { position:sticky; top:0; background:#303740; }
     #buffer-hex { max-height:180px; }
+    .mesh-controls { display:flex; align-items:center; gap:8px; min-width:0; min-height:31px; padding:3px 8px; border-top:1px solid var(--line); }
+    .mesh-controls label,.mesh-controls select { flex:none; }
+    .mesh-controls select { width:clamp(170px,22vw,270px); max-width:40%; }
+    #mesh-summary { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mesh-preview { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; overflow:hidden; background:#1a1a1a; }
+    .mesh-space-note { flex:none; padding:5px 9px; border-bottom:1px solid var(--line); color:#e1c98f; font-size:10px; }
+    #mesh-detail { display:flex; flex:1 1 auto; flex-direction:column; gap:3px; min-height:0; padding:6px 8px; overflow:hidden; }
+    #mesh-detail>.small { flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mesh-canvas { display:block; flex:1 1 0; width:100%; min-height:76px; border:1px solid var(--line); background:#161b20; object-fit:contain; }
+    .mesh-data { flex:none; max-height:48%; overflow:hidden; border:1px solid var(--line); background:#242424; }
+    .mesh-data>summary { min-height:24px; padding:3px 7px; cursor:pointer; }
+    .mesh-data[open] { display:flex; flex-direction:column; }
+    .mesh-data>.small { flex:none; padding:3px 7px; }
+    .mesh-table-scroll { flex:1 1 auto; min-height:54px; overflow:auto; border-top:1px solid var(--line); }
+    .mesh-table-scroll .binding-table th,.mesh-table-scroll .binding-table td { white-space:nowrap; font:11px/1.35 Consolas,monospace; }
+    .mesh-table-scroll .binding-table tbody tr { cursor:pointer; }
     .resource-tabs { display:flex; flex-wrap:wrap; gap:3px; padding-bottom:6px; }
     .tab { padding:2px 7px; }
     .tab.active { border-color:var(--accent); background:#315777; }
@@ -210,7 +226,10 @@
     .event-toolbar #event-range { flex:1 1 auto; width:auto; min-width:100px; margin:0 8px; }
     .event-toolbar #event-position { min-width:70px; color:#d2d2d2; }
     .event-toolbar .nav-button { width:27px; min-height:24px; }
-    body:has(#gpu-workspace:not([hidden])) .event-toolbar { display:none; }
+    body:has(#gpu-workspace:not([hidden])) .event-toolbar #event-prev,
+    body:has(#gpu-workspace:not([hidden])) .event-toolbar #event-next,
+    body:has(#gpu-workspace:not([hidden])) .event-toolbar #event-range,
+    body:has(#gpu-workspace:not([hidden])) .event-toolbar #event-position { display:none; }
     input,select { border-color:#505050; background:#242424; }
     .plain-button,.tab { border-color:#505050; background:#333; }
     .frame-workspace { --tree-width:32%; grid-template-columns:minmax(300px,var(--tree-width)) 5px minmax(0,1fr); }
@@ -288,7 +307,7 @@
     }
     @media (max-width:950px) {
       .frame-workspace { --tree-width:36%; grid-template-columns:minmax(240px,var(--tree-width)) 5px minmax(0,1fr); }
-      .preview-source-row,.inspector-controls { overflow:auto hidden; }
+      .preview-source-row,.inspector-controls,.mesh-controls { overflow:auto hidden; }
       .resource-grid { grid-template-columns:1fr; }
     }
     @media (max-width:620px) {
@@ -362,18 +381,21 @@
           <div class="preview-source-row">
             <button id="preview-frame-button" class="plain-button active" type="button" aria-pressed="true">输出</button>
             <button id="preview-texture-button" class="plain-button" type="button" aria-pressed="false">纹理</button>
+            <button id="preview-mesh-button" class="plain-button" type="button" aria-pressed="false">Mesh Preview</button>
             <span id="texture-scope" class="muted small"></span>
             <div id="texture-choices" class="texture-choices" aria-label="绑定纹理及渲染目标"></div>
           </div>
-          <div class="inspector-controls">
+          <div id="texture-controls" class="inspector-controls">
             <label for="texture-channel">通道</label><select id="texture-channel"><option value="rgba">RGBA</option><option value="red">R</option><option value="green">G</option><option value="blue">B</option><option value="alpha">A</option></select>
             <label for="texture-exposure">曝光</label><input id="texture-exposure" type="range" min="-4" max="4" step="0.25" value="0"><span id="texture-exposure-value" class="small">0 EV</span>
             <label for="texture-zoom">缩放</label><select id="texture-zoom"><option value="fit">适合</option><option value="25">25%</option><option value="50">50%</option><option value="100">100%</option><option value="200">200%</option><option value="400">400%</option></select>
             <a id="texture-save" class="plain-button" download hidden>PNG</a>
             <a id="texture-save-raw" class="plain-button" download hidden>原始 RT</a>
           </div>
+          <div id="mesh-controls" class="mesh-controls" hidden><label for="mesh-position-location">位置属性</label><select id="mesh-position-location" aria-label="选择位置属性 shaderLocation"></select><span id="mesh-summary" class="small muted"></span></div>
         </div>
         <div class="preview-stage"><div id="surface-mount"></div></div>
+        <div id="mesh-preview" class="mesh-preview" hidden><p class="mesh-space-note">pre-VS 顶点输入空间：线框来自 Draw 前顶点与索引字节；不代表 Vertex Shader 输出或屏幕画面。</p><div id="mesh-detail"></div></div>
         <div id="pixel-readout" class="pixel-readout" aria-live="polite"><strong>像素</strong><span id="pixel-value">点击画面查看坐标和 RGBA 值；Ctrl+滚轮缩放，滚轮平移，拖动平移。</span></div>
         <details class="preview-evidence"><summary><strong>读回依据</strong><span id="frame-note" class="frame-note">选择 Draw 查看逐步输出；只有通过单 Draw 物理 Pass 校验的读回才标为 Draw 后画面。</span><span id="texture-note" class="inspect-note"></span></summary></details>
       </section>
@@ -438,7 +460,7 @@
         script.onerror = function () { document.getElementById('fatal').textContent = '无法加载 ' + name + '。请检查分析输出目录或开发服务器。'; };
         document.body.appendChild(script);
       }
-      load('viewer_surface.js', function () { load('viewer_uniforms.js', function () { load('viewer.js'); }); });
+      load('viewer_surface.js', function () { load('viewer_uniforms.js', function () { load('viewer_mesh.js', function () { load('viewer.js'); }); }); });
     }());
   </script>
 </body>

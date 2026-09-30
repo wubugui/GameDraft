@@ -17,6 +17,7 @@ export interface WebGpuCaptureJob {
   targetBootId: string;
   state: 'pending' | 'capturing' | 'uploading' | 'completed' | 'failed' | 'stopped';
   requestedFrames: number;
+  detailedFrameIndex: number;
   actualFrames: number;
   bytes: number;
   sha256: string | null;
@@ -25,6 +26,18 @@ export interface WebGpuCaptureJob {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WebGpuCaptureHistoryItem {
+  id: string;
+  state: 'completed';
+  requestedFrames: number;
+  detailedFrameIndex: number;
+  actualFrames: number;
+  bytes: number;
+  sha256: string;
+  createdAt: string;
+  captureFile: string;
 }
 
 interface CaptureStream {
@@ -66,9 +79,11 @@ function currentInspector(): Inspector | null {
     typeof value.captureStreamToBlob === 'function' ? value as Inspector : null;
 }
 
-async function api<T>(method: 'GET' | 'POST' | 'PUT', query: Record<string, string>, body?: object | Blob): Promise<T> {
+async function api<T>(method: 'GET' | 'POST' | 'PUT', query: Record<string, string>,
+  body?: object | Blob, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), method === 'PUT' ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
+  const timeout = window.setTimeout(() => controller.abort(),
+    method === 'PUT' ? UPLOAD_TIMEOUT_MS : timeoutMs);
   try {
     const url = `${API}?${new URLSearchParams(query)}`;
     const response = await fetch(url, {
@@ -118,7 +133,8 @@ export class WebGpuCaptureClient {
   private stoppedJobIds = new Set<string>();
   private finishedLocallyJobId: string | null = null;
   private frameImages: FrameImageBatch | null = null;
-  private frameDiagnostics: { jobId: string; capture: ReturnType<typeof captureFrameDiagnostics>;
+  private frameDiagnostics: { jobId: string; frameIndex: number;
+    capture: ReturnType<typeof captureFrameDiagnostics>;
     result: Promise<CapturedFrameDiagnostics> | null } | null = null;
 
   constructor(options: {
@@ -144,6 +160,12 @@ export class WebGpuCaptureClient {
       job: this.latestJob, framesCaptured: this.framesCaptured, error: this.serviceError };
   }
 
+  async history(limit = 20): Promise<WebGpuCaptureHistoryItem[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('历史抓帧数量必须是 1–100');
+    return api<WebGpuCaptureHistoryItem[]>('GET',
+      { action: 'history', limit: String(limit) }, undefined, 30_000);
+  }
+
   start(): void {
     if (this.timer !== null || this.disposed) return;
     void this.tick();
@@ -167,12 +189,17 @@ export class WebGpuCaptureClient {
     }
   }
 
-  async request(frames: number): Promise<WebGpuCaptureJob> {
+  async request(frames: number, detailedFrameIndex = 1): Promise<WebGpuCaptureJob> {
     if (this.disposed) throw new Error('抓帧控制器已销毁');
     if (!Number.isInteger(frames) || frames < 1 || frames > 120) throw new Error('帧数必须为 1–120 的整数');
+    if (!Number.isInteger(detailedFrameIndex) || detailedFrameIndex < 1 || detailedFrameIndex > frames) {
+      throw new Error(`详细分析帧必须是 1–${frames} 的整数`);
+    }
     if (this.capturePoisoned) throw new Error('Inspector 捕获缓存无法清空，请刷新游戏页面后重试');
     if (!this.registeredReady) throw new Error('当前游戏未就绪，无法抓取 WebGPU 帧');
-    const job = await api<WebGpuCaptureJob>('POST', {}, { action: 'request', targetBootId: this.bootId, frames });
+    const job = await api<WebGpuCaptureJob>('POST', {}, {
+      action: 'request', targetBootId: this.bootId, frames, detailedFrameIndex,
+    });
     if (!this.disposed) {
       this.finishedLocallyJobId = null;
       this.latestJob = job;
@@ -272,13 +299,14 @@ export class WebGpuCaptureClient {
       finally { if (job) void this.fail(job, 'WebGPU Inspector 在抓帧期间不可用'); }
       return;
     }
+    const frameIndex = this.framesCaptured + 1;
     let diagnostic: ReturnType<typeof captureFrameDiagnostics> | null = null;
-    if (job.requestedFrames === 1) {
+    if (frameIndex === (job.detailedFrameIndex ?? 1)) {
       const rhi = this.getRhi?.();
       if (rhi) {
         try {
           diagnostic = captureFrameDiagnostics(rhi);
-          this.frameDiagnostics = { jobId: job.id, capture: diagnostic, result: null };
+          this.frameDiagnostics = { jobId: job.id, frameIndex, capture: diagnostic, result: null };
         } catch (error) {
           console.warn('Frame Debugger pass readback unavailable', error);
         }
@@ -312,11 +340,11 @@ export class WebGpuCaptureClient {
       throw renderError;
     }
     if (!rendered || !ended || this.activeJob?.id !== job.id) return;
-    if (diagnostic && this.frameDiagnostics?.jobId === job.id) {
+    if (diagnostic && this.frameDiagnostics?.jobId === job.id &&
+        this.frameDiagnostics.frameIndex === frameIndex) {
       this.frameDiagnostics.result = diagnostic.finish();
       void this.frameDiagnostics.result.catch(() => {});
     }
-    const frameIndex = this.framesCaptured + 1;
     const images = this.frameImages;
     if (this.readFramePixels) {
       if (!images || images.jobId !== job.id) {
@@ -440,7 +468,7 @@ export class WebGpuCaptureClient {
       const blob = inspector.captureStreamToBlob(stream);
       if (!(blob instanceof Blob) || blob.size === 0) throw new Error('WebGPU Inspector 生成了空抓帧文件');
       if (images) await images.uploads;
-      if (job.requestedFrames === 1) await this.exportDiagnostics(job);
+      await this.exportDiagnostics(job);
       if (!this.isCurrentJob(job) || images?.cancelled) return;
       const result = await api<WebGpuCaptureJob>('PUT', {
         jobId: job.id, targetBootId: this.bootId, actualFrames: String(actualFrames),
@@ -459,7 +487,9 @@ export class WebGpuCaptureClient {
 
   private async exportDiagnostics(job: WebGpuCaptureJob): Promise<void> {
     const batch = this.frameDiagnostics;
-    const diagnostics: CapturedFrameDiagnostics = batch?.jobId === job.id && batch.result ? await batch.result : {
+    const detailFrameIndex = job.detailedFrameIndex ?? 1;
+    const diagnostics: CapturedFrameDiagnostics = batch?.jobId === job.id &&
+      batch.frameIndex === detailFrameIndex && batch.result ? await batch.result : {
       passes: [], inputs: [], aspects: [], buffers: [], gpuPasses: [], gpuProfilerStatus: {
         state: 'unsupported' as const, reason: 'RHI 逐 pass 诊断钩子不可用',
       },
@@ -500,7 +530,7 @@ export class WebGpuCaptureClient {
             }
             await api('PUT', {
               action: 'pass-image', jobId: job.id, targetBootId: this.bootId,
-              frameIndex: '1', passOrdinal: String(item.passOrdinal), colorIndex: String(item.colorIndex),
+              frameIndex: String(detailFrameIndex), passOrdinal: String(item.passOrdinal), colorIndex: String(item.colorIndex),
             }, png);
             pngBytes += png.size;
           } catch (error) { reason = `Pass PNG 导出失败：${String(error)}`.slice(0, 500); }
@@ -513,7 +543,7 @@ export class WebGpuCaptureClient {
             item.rawPixels = undefined;
             await api('PUT', {
               action: 'pass-raw', jobId: job.id, targetBootId: this.bootId,
-              frameIndex: '1', passOrdinal: String(item.passOrdinal), colorIndex: String(item.colorIndex),
+              frameIndex: String(detailFrameIndex), passOrdinal: String(item.passOrdinal), colorIndex: String(item.colorIndex),
               format: item.format, width: String(item.width), height: String(item.height),
               bytesPerRow: String(item.rawBytesPerRow),
             }, raw);
@@ -545,7 +575,7 @@ export class WebGpuCaptureClient {
               }
               await api('PUT', {
                 action: 'input-image', jobId: job.id, targetBootId: this.bootId,
-                frameIndex: '1', inputOrdinal: String(inputOrdinal),
+                frameIndex: String(detailFrameIndex), inputOrdinal: String(inputOrdinal),
               }, png);
               pngBytes += png.size;
             } else reason = `输入纹理 ${item.format} 没有可导出的 PNG 预览`;
@@ -559,7 +589,7 @@ export class WebGpuCaptureClient {
             item.rawPixels = undefined;
             await api('PUT', {
               action: 'input-raw', jobId: job.id, targetBootId: this.bootId,
-              frameIndex: '1', inputOrdinal: String(inputOrdinal),
+              frameIndex: String(detailFrameIndex), inputOrdinal: String(inputOrdinal),
               format: item.format, width: String(item.width), height: String(item.height),
               bytesPerRow: String(item.rawBytesPerRow),
             }, raw);
@@ -593,7 +623,7 @@ export class WebGpuCaptureClient {
             }
             await api('PUT', {
               action: 'aspect-image', jobId: job.id, targetBootId: this.bootId,
-              frameIndex: '1', aspectOrdinal: String(aspectOrdinal),
+              frameIndex: String(detailFrameIndex), aspectOrdinal: String(aspectOrdinal),
             }, png);
             pngBytes += png.size;
           } catch (error) { reason = `深度/模板 PNG 导出失败：${String(error)}`.slice(0, 500); }
@@ -606,7 +636,7 @@ export class WebGpuCaptureClient {
             item.rawPixels = undefined;
             await api('PUT', {
               action: 'aspect-raw', jobId: job.id, targetBootId: this.bootId,
-              frameIndex: '1', aspectOrdinal: String(aspectOrdinal),
+              frameIndex: String(detailFrameIndex), aspectOrdinal: String(aspectOrdinal),
               format: item.rawFormat, width: String(item.width), height: String(item.height),
               bytesPerRow: String(item.rawBytesPerRow),
             }, raw);
@@ -636,7 +666,7 @@ export class WebGpuCaptureClient {
             item.rawBytes = undefined;
             await api('PUT', {
               action: 'buffer-raw', jobId: job.id, targetBootId: this.bootId,
-              frameIndex: '1', bufferOrdinal: String(bufferOrdinal),
+              frameIndex: String(detailFrameIndex), bufferOrdinal: String(bufferOrdinal),
             }, raw);
             rawByteLength = raw.size;
           } catch (error) { rawReason = `Draw 前 Buffer 导出失败：${String(error)}`.slice(0, 500); }
@@ -659,7 +689,7 @@ export class WebGpuCaptureClient {
       }
       if (!this.isCurrentJob(job)) return;
       await api('POST', {}, { action: 'diagnostics', jobId: job.id, targetBootId: this.bootId,
-        passes, inputs, aspects, buffers, gpuPasses: diagnostics.gpuPasses,
+        frameIndex: detailFrameIndex, passes, inputs, aspects, buffers, gpuPasses: diagnostics.gpuPasses,
         gpuProfilerStatus: diagnostics.gpuProfilerStatus,
         ...(diagnostics.warning ? { warning: diagnostics.warning } : {}) });
     } finally {

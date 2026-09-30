@@ -28,7 +28,7 @@ import type {
 } from '../systems/objectExamine/types';
 import { OBJECT_EXAMINE_BACKGROUND_PRESETS } from '../systems/objectExamine/types';
 import type { SceneLightingDef } from '../data/types';
-import { WebGpuCaptureClient } from '../dev/webgpuCaptureClient';
+import { WebGpuCaptureClient, type WebGpuCaptureHistoryItem } from '../dev/webgpuCaptureClient';
 
 /** F2 气味指示器调试：驱动味种 + 实时调烟形参数（只影响显示，不写盘/不动存档）。 */
 export interface SmellDebugController {
@@ -300,9 +300,16 @@ export class DebugTools {
   private webgpuUiError = '';
   private webgpuBusy = false;
   private webgpuBurstFrames = 8;
-  private webgpuViews = new Set<{ root: HTMLElement; status: HTMLElement; input: HTMLInputElement;
+  private webgpuDetailedFrame = 1;
+  private webgpuHistory: WebGpuCaptureHistoryItem[] = [];
+  private webgpuHistoryLoading = false;
+  private webgpuHistoryError = '';
+  private webgpuViews = new Set<{ root: HTMLElement; attached: boolean; status: HTMLElement; input: HTMLInputElement;
+    detailInput: HTMLInputElement;
     single: HTMLButtonElement; burst: HTMLButtonElement; stop: HTMLButtonElement;
-    view: HTMLButtonElement }>();
+    view: HTMLButtonElement; historySelect: HTMLSelectElement;
+    historyOpen: HTMLButtonElement; historyRefresh: HTMLButtonElement;
+    historyStatus: HTMLElement }>();
 
   constructor(deps: DebugToolsDeps) {
     this.deps = deps;
@@ -2105,7 +2112,8 @@ export class DebugTools {
     this.paintWebGpuViews();
     try {
       if (action === 'stop') await client.stop();
-      else await client.request(action === 'single' ? 1 : this.webgpuBurstFrames);
+      else await client.request(action === 'single' ? 1 : this.webgpuBurstFrames,
+        action === 'single' ? 1 : this.webgpuDetailedFrame);
     } catch (error) {
       this.webgpuUiError = String(error);
       this.deps.debugPanelUI.log(`WebGPU 抓帧：${this.webgpuUiError}`);
@@ -2115,9 +2123,56 @@ export class DebugTools {
     }
   }
 
-  private paintWebGpuView(view: { root: HTMLElement; status: HTMLElement; input: HTMLInputElement;
+  private async refreshWebGpuHistory(): Promise<void> {
+    if (this.webgpuHistoryLoading || !this.webgpuCapture) return;
+    this.webgpuHistoryLoading = true;
+    this.webgpuHistoryError = '';
+    this.paintWebGpuViews();
+    try {
+      const items = await this.webgpuCapture.history(20);
+      this.webgpuHistory = items.filter(item => /^[0-9a-f]{32}$/.test(item.id) &&
+        item.state === 'completed' && Number.isInteger(item.actualFrames) && item.actualFrames > 0);
+    } catch (error) {
+      this.webgpuHistoryError = String(error);
+    } finally {
+      this.webgpuHistoryLoading = false;
+      this.paintWebGpuViews();
+    }
+  }
+
+  private paintWebGpuHistoryView(view: {
+    historySelect: HTMLSelectElement; historyOpen: HTMLButtonElement;
+    historyRefresh: HTMLButtonElement; historyStatus: HTMLElement;
+  }): void {
+    const selected = view.historySelect.value;
+    const ids = this.webgpuHistory.map(item => item.id).join(',');
+    if (view.historySelect.dataset.ids !== ids) {
+      view.historySelect.replaceChildren();
+      for (const item of this.webgpuHistory) {
+        const option = document.createElement('option');
+        option.value = item.id;
+        const date = new Date(item.createdAt);
+        const when = Number.isNaN(date.getTime()) ? item.createdAt : date.toLocaleString();
+        option.textContent = `${when} · ${item.actualFrames} 帧 · 详析第 ${item.detailedFrameIndex ?? 1} 帧 · ${item.id.slice(0, 8)}`;
+        view.historySelect.appendChild(option);
+      }
+      view.historySelect.dataset.ids = ids;
+      if (this.webgpuHistory.some(item => item.id === selected)) view.historySelect.value = selected;
+    }
+    view.historySelect.disabled = !this.webgpuHistory.length;
+    view.historyOpen.disabled = !this.webgpuHistory.length;
+    view.historyRefresh.disabled = this.webgpuHistoryLoading;
+    view.historyStatus.textContent = this.webgpuHistoryLoading ? '正在读取历史抓帧…' :
+      this.webgpuHistoryError ? `历史抓帧读取失败：${this.webgpuHistoryError}` :
+        `${this.webgpuHistory.length} 个可复开的抓帧`;
+  }
+
+  private paintWebGpuView(view: { root: HTMLElement; attached: boolean; status: HTMLElement; input: HTMLInputElement;
+    detailInput: HTMLInputElement;
     single: HTMLButtonElement; burst: HTMLButtonElement; stop: HTMLButtonElement;
-    view: HTMLButtonElement }): void {
+    view: HTMLButtonElement; historySelect: HTMLSelectElement;
+    historyOpen: HTMLButtonElement; historyRefresh: HTMLButtonElement;
+    historyStatus: HTMLElement }): void {
     const current = this.webgpuCapture?.status;
     const job = current?.job;
     const names: Record<NonNullable<typeof job>['state'], string> = {
@@ -2128,12 +2183,13 @@ export class DebugTools {
     const gpuTimer = this.deps.renderer.rhi?.gpuProfiler?.status();
     lines.push(`GPU Pass 计时：${!gpuTimer || gpuTimer.state === 'unsupported'
       ? `不可用（${gpuTimer?.state === 'unsupported' ? gpuTimer.reason : 'RHI 未就绪'}）`
-      : gpuTimer.state === 'enabled' ? '已启用' : '可用，单帧抓取时启用'}`);
+      : gpuTimer.state === 'enabled' ? '已启用' : '可用，抓取详细分析帧时启用'}`);
     if (job) {
       lines.push(`任务：${job.id} · ${names[job.state]}`);
       const progress = job.state === 'capturing' || job.state === 'uploading'
         ? current?.framesCaptured ?? 0 : job.actualFrames;
       lines.push(`进度：${progress} / ${job.requestedFrames} 帧${job.state === 'stopped' && current?.framesCaptured ? '（本地采集未保存）' : ''}`);
+      lines.push(`逐 Pass 详细分析：第 ${job.detailedFrameIndex ?? 1} 帧`);
       if (job.captureFile) lines.push(`项目外文件：${job.captureFile}`);
       else if (job.outputDir) lines.push(`项目外目录：${job.outputDir}`);
       if (job.error) lines.push(`失败原因：${job.error}`);
@@ -2142,16 +2198,22 @@ export class DebugTools {
     if (this.webgpuUiError) lines.push(`操作失败：${this.webgpuUiError}`);
     view.status.textContent = lines.join('\n');
     if (document.activeElement !== view.input) view.input.value = String(this.webgpuBurstFrames);
+    view.detailInput.max = String(this.webgpuBurstFrames);
+    if (document.activeElement !== view.detailInput) view.detailInput.value = String(this.webgpuDetailedFrame);
     const active = job && ['pending', 'capturing', 'uploading'].includes(job.state);
     view.single.disabled = this.webgpuBusy || !current?.ready || !!active;
     view.burst.disabled = this.webgpuBusy || !current?.ready || !!active;
     view.stop.disabled = this.webgpuBusy || !active;
     view.view.disabled = job?.state !== 'completed';
+    view.input.disabled = !!active;
+    view.detailInput.disabled = !!active;
+    this.paintWebGpuHistoryView(view);
   }
 
   private paintWebGpuViews(): void {
     for (const view of this.webgpuViews) {
-      if (!view.root.isConnected) {
+      if (view.root.isConnected) view.attached = true;
+      else if (view.attached) {
         this.webgpuViews.delete(view);
         continue;
       }
@@ -2178,10 +2240,28 @@ export class DebugTools {
     input.addEventListener('change', () => {
       const raw = Number(input.value);
       this.webgpuBurstFrames = Number.isFinite(raw) ? Math.min(120, Math.max(2, Math.trunc(raw))) : 8;
+      this.webgpuDetailedFrame = Math.min(this.webgpuDetailedFrame, this.webgpuBurstFrames);
       input.value = String(this.webgpuBurstFrames);
       this.paintWebGpuViews();
     });
     inputLabel.appendChild(input);
+    const detailLabel = document.createElement('label');
+    detailLabel.textContent = '详细分析第几帧：';
+    const detailInput = document.createElement('input');
+    detailInput.type = 'number';
+    detailInput.min = '1';
+    detailInput.max = String(this.webgpuBurstFrames);
+    detailInput.step = '1';
+    detailInput.value = String(this.webgpuDetailedFrame);
+    detailInput.style.width = '5em';
+    detailInput.addEventListener('change', () => {
+      const raw = Number(detailInput.value);
+      this.webgpuDetailedFrame = Number.isFinite(raw) ?
+        Math.min(this.webgpuBurstFrames, Math.max(1, Math.trunc(raw))) : 1;
+      detailInput.value = String(this.webgpuDetailedFrame);
+      this.paintWebGpuViews();
+    });
+    detailLabel.appendChild(detailInput);
     const button = (label: string, action: 'single' | 'burst' | 'stop'): HTMLButtonElement => {
       const el = document.createElement('button');
       el.type = 'button';
@@ -2203,12 +2283,44 @@ export class DebugTools {
       const url = `/__gamedraft-api/webgpu-viewer?jobId=${encodeURIComponent(job.id)}`;
       window.open(url, '_blank', 'noopener');
     });
-    controls.append(single, inputLabel, burst, stop, viewButton);
-    root.append(status, controls);
-    const view = { root, status, input, single, burst, stop, view: viewButton };
+    controls.append(single, inputLabel, detailLabel, burst, stop, viewButton);
+    const historyControls = document.createElement('div');
+    historyControls.className = 'debug-dock__actions';
+    const historySelect = document.createElement('select');
+    historySelect.setAttribute('aria-label', '历史抓帧');
+    historySelect.style.width = '100%';
+    historySelect.style.maxWidth = '100%';
+    historySelect.style.minWidth = '0';
+    historySelect.style.flex = '1 1 100%';
+    historySelect.style.padding = '4px';
+    historySelect.style.background = '#1c2535';
+    historySelect.style.color = '#dce9f8';
+    historySelect.style.border = '1px solid #455670';
+    historySelect.style.borderRadius = '4px';
+    const historyOpen = document.createElement('button');
+    historyOpen.type = 'button';
+    historyOpen.className = 'debug-dock__btn';
+    historyOpen.textContent = '打开历史抓帧';
+    historyOpen.addEventListener('click', () => {
+      const id = historySelect.value;
+      if (!this.webgpuHistory.some(item => item.id === id)) return;
+      window.open(`/__gamedraft-api/webgpu-viewer?jobId=${encodeURIComponent(id)}`,
+        '_blank', 'noopener');
+    });
+    const historyRefresh = document.createElement('button');
+    historyRefresh.type = 'button';
+    historyRefresh.className = 'debug-dock__btn';
+    historyRefresh.textContent = '刷新历史';
+    historyRefresh.addEventListener('click', () => void this.refreshWebGpuHistory());
+    const historyStatus = document.createElement('span');
+    historyControls.append(historySelect, historyOpen, historyRefresh, historyStatus);
+    root.append(status, controls, historyControls);
+    const view = { root, attached: false, status, input, detailInput, single, burst, stop, view: viewButton,
+      historySelect, historyOpen, historyRefresh, historyStatus };
     this.webgpuViews.add(view);
     this.paintWebGpuView(view);
-    return { text: '单帧抓逐 Pass 输出、绑定纹理、Buffer 和 GPU 耗时；连续帧抓画布与命令。', extra: root };
+    void this.refreshWebGpuHistory();
+    return { text: '连续帧逐帧抓画布与命令；指定其中一帧额外抓逐 Pass 输出、绑定纹理、Buffer 和 GPU 耗时。', extra: root };
   }
 
   private setupDebugPanelSections(): void {
