@@ -55,8 +55,17 @@ function attachmentTarget(attachment, kind, slot, byId) {
     textureLabel: texture?.label ?? attachment?.view?.__label ?? '',
     outputTextureLabel: resolveTexture?.label ?? texture?.label ?? '',
     format: view?.descriptor?.format ?? texture?.format ?? null,
-    loadOp: attachment?.loadOp ?? attachment?.depthLoadOp ?? null,
-    storeOp: attachment?.storeOp ?? attachment?.depthStoreOp ?? null,
+    loadOp: kind === 'color' ? attachment?.loadOp ?? null : null,
+    storeOp: kind === 'color' ? attachment?.storeOp ?? null : null,
+    clearValue: kind === 'color' ? attachment?.clearValue ?? null : null,
+    depthLoadOp: kind === 'depth-stencil' ? attachment?.depthLoadOp ?? null : null,
+    depthStoreOp: kind === 'depth-stencil' ? attachment?.depthStoreOp ?? null : null,
+    depthClearValue: kind === 'depth-stencil' ? attachment?.depthClearValue ?? null : null,
+    depthReadOnly: kind === 'depth-stencil' ? attachment?.depthReadOnly ?? null : null,
+    stencilLoadOp: kind === 'depth-stencil' ? attachment?.stencilLoadOp ?? null : null,
+    stencilStoreOp: kind === 'depth-stencil' ? attachment?.stencilStoreOp ?? null : null,
+    stencilClearValue: kind === 'depth-stencil' ? attachment?.stencilClearValue ?? null : null,
+    stencilReadOnly: kind === 'depth-stencil' ? attachment?.stencilReadOnly ?? null : null,
   };
 }
 

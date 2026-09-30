@@ -222,10 +222,10 @@
     .gpu-table tbody tr:hover { background:#354554; }
     .filter-defs { position:absolute; width:0; height:0; overflow:hidden; }
 
-    /* Frame Debugger workspace: event playback above a hierarchy and one Event Information pane. */
+    /* Unity-style work order: scrubber, event hierarchy, large output, then event properties. */
     :root { color:#dedede; background:#202020; --surface:#292929; --line:#404040; --muted:#aaa; --accent:#79bce9; --selection:#325b79; }
     .topbar { position:relative; z-index:5; background:#2b2b2b; border-bottom-color:#151515; }
-    .topbar-main { min-height:34px; gap:14px; padding:3px 9px; }
+    .topbar-main { min-height:31px; gap:12px; padding:2px 9px; }
     .brand { display:flex; align-items:baseline; gap:9px; min-width:0; white-space:nowrap; }
     .brand .eyebrow { color:#a8a8a8; font-size:10px; letter-spacing:0; }
     .brand h1 { font-size:13px; font-weight:650; }
@@ -243,7 +243,7 @@
     .capture-details-body .top-meta { display:flex; flex-wrap:wrap; gap:4px 12px; padding:0; border:0; color:#ccc; white-space:normal; }
     .capture-details-body .top-meta span { overflow:visible; text-overflow:clip; }
     .capture-details-body .timing-note { padding:7px 0 0; color:#e5c184; white-space:normal; }
-    .event-toolbar { display:flex; align-items:center; gap:6px; min-height:34px; padding:3px 9px; border-top:1px solid #414141; background:#333; }
+    .event-toolbar { display:flex; align-items:center; gap:6px; min-height:30px; padding:2px 9px; border-top:1px solid #414141; background:#333; }
     .event-toolbar label { flex:none; }
     .event-toolbar #frame-select { flex:none; width:clamp(130px,15vw,220px); max-width:none; }
     .event-toolbar #event-range { flex:1 1 auto; width:auto; min-width:100px; margin:0 8px; }
@@ -255,19 +255,20 @@
     body:has(#gpu-workspace:not([hidden])) .event-toolbar #event-position { display:none; }
     input,select { border-color:#505050; background:#242424; }
     .plain-button,.tab { border-color:#505050; background:#333; }
-    .frame-workspace { --tree-width:35%; grid-template-columns:minmax(300px,var(--tree-width)) 5px minmax(0,1fr); }
-    .frame-main { --preview-height:60%; grid-template-rows:minmax(320px,var(--preview-height)) 5px minmax(150px,1fr); }
+    .frame-workspace { --tree-width:32%; grid-template-columns:minmax(300px,var(--tree-width)) 5px minmax(0,1fr); }
+    .frame-main { --preview-height:68%; grid-template-rows:minmax(300px,var(--preview-height)) 5px minmax(150px,1fr); }
     .events-pane,.preview-pane,.inspector-pane,.gpu-chart-pane,.gpu-table-pane { background:var(--surface); }
     .pane-head { min-height:27px; padding:3px 9px; border-bottom-color:#414141; background:#303030; }
     .event-controls { gap:3px; padding:5px 7px; border-bottom-color:#444; }
     #clear-pass { min-height:24px; padding-inline:6px; font-size:10px; }
     .event-tree { scrollbar-color:#666 #292929; }
-    .tree-frame { background:#343434; border-bottom-color:#292929; }
-    .tree-category-head { background:#383838; }
-    .tree-batch-head { background:#303030; }
+    .tree-frame { min-height:27px; background:#393939; border-bottom-color:#242424; }
+    .tree-category-head { min-height:27px; border-left:3px solid #6e8291; background:#353b40; }
+    .tree-batch-head { min-height:25px; border-left:2px solid #5983a0; background:#30373c; }
     .tree-category-head,.tree-batch-head { overflow:hidden; white-space:nowrap; }
-    .tree-pass-head { background:#2d2d2d; }
-    .tree-category-children,.tree-batch-children,.tree-children { padding-left:4px; }
+    .tree-pass-head { min-height:24px; background:#2d2d2d; }
+    .tree-category-children,.tree-batch-children,.tree-children { padding-left:8px; }
+    .tree-event { min-height:23px; }
     .tree-pass-leaf::before { content:'·'; }
     .tree-pass-leaf .tree-meta { margin-left:6px; }
     .tree-frame:hover,.tree-category-head:hover,.tree-batch-head:hover,.tree-pass-head:hover,.tree-event:hover { background:#424242; }
@@ -278,12 +279,12 @@
     .preview-head-actions { display:flex; align-items:center; gap:10px; min-width:0; margin-left:auto; }
     #preview-maximize { min-height:21px; padding:1px 7px; font-size:10px; }
     .preview-toolbar { display:flex; flex-direction:column; align-items:stretch; overflow:hidden; border-bottom:1px solid var(--line); background:#303030; }
-    .preview-source-row { flex:none; width:100%; min-width:0; min-height:31px; gap:5px; padding:3px 8px; border:0; border-bottom:1px solid #454545; }
+    .preview-source-row { flex:none; width:100%; min-width:0; min-height:27px; gap:5px; padding:2px 8px; border:0; border-bottom:1px solid #454545; }
     .preview-source-row .plain-button { padding:2px 6px; }
     #texture-scope { max-width:155px; }
     .texture-choices { min-width:120px; }
     .texture-choices select { max-width:none; }
-    .inspector-controls { flex:none; width:100%; min-height:31px; gap:6px; overflow:auto hidden; padding:3px 8px; border:0; }
+    .inspector-controls { flex:none; width:100%; min-height:27px; gap:6px; overflow:auto hidden; padding:2px 8px; border:0; }
     .inspector-controls label { color:#b8b8b8; }
     .inspector-controls select { max-width:86px; }
     #texture-exposure { width:120px; }
@@ -303,13 +304,22 @@
     .preview-evidence>summary [hidden] { display:none; }
     .inspector-head { flex:none; }
     .inspector-head #detail-index { max-width:65%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    #inspector-scroll { background:#292929; scrollbar-color:#666 #292929; }
+    #inspector-scroll { display:flex; flex-direction:column; background:#292929; scrollbar-color:#666 #292929; }
     .inspector-accordion { border-bottom:1px solid #414141; }
-    .inspector-accordion>summary { display:flex; align-items:center; gap:6px; min-height:26px; padding:4px 10px; background:#343434; color:#dedede; cursor:pointer; list-style:none; font-weight:600; }
+    #page-detail { order:1; }
+    #page-inputs { order:2; }
+    #page-pipeline { order:3; }
+    #page-buffers { order:4; }
+    #page-resources { order:5; }
+    #page-pixel-timeline { order:6; }
+    #page-errors { order:7; }
+    .inspector-accordion>summary { display:flex; align-items:center; gap:6px; min-height:23px; padding:2px 10px; background:#343434; color:#d3d3d3; cursor:pointer; list-style:none; font-weight:550; }
     .inspector-accordion>summary::-webkit-details-marker { display:none; }
     .inspector-accordion>summary::before { content:'▸'; flex:none; width:10px; color:#aaa; font-size:10px; }
     .inspector-accordion[open]>summary::before { content:'▾'; }
     .inspector-accordion>summary:hover { background:#414141; }
+    .inspector-accordion[open]>summary { border-left:3px solid #76b7df; padding-left:7px; background:#3b444b; color:#f0f6fa; }
+    .inspector-accordion[open] { background:#292d30; }
     .pixel-timeline-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:8px; }
     .pixel-timeline-head strong { color:#c9e6f7; }
     .pixel-timeline-wrap { max-height:320px; overflow:auto; border:1px solid #454545; }
@@ -321,7 +331,7 @@
     .pixel-timeline-table .pixel-change { color:#e8c67a; }
     .pixel-timeline-table .pixel-gap { color:#d49b91; }
     .pixel-timeline-table .pixel-current { background:#304861; }
-    .inspector-page { padding:5px 10px 10px; }
+    .inspector-page { padding:8px 11px 12px; }
     .detail-grid { grid-template-columns:minmax(115px,150px) minmax(0,1fr); }
     .detail-grid dt,.detail-grid dd { padding:3px 4px; border-bottom-color:#3d3d3d; }
     .resource-jumps { margin-top:8px; }
@@ -336,6 +346,16 @@
     .uniform-table td:last-child { font:11px/1.45 Consolas,monospace; white-space:normal; word-break:break-word; }
     .binding-table th { background:#343434; }
     .flow-node { border-color:#555; background:#303943; }
+    .binding-texture-preview { display:grid; grid-template-columns:80px minmax(0,1fr); align-items:start; gap:9px; min-width:0; margin:6px 0 3px; padding:7px; border:1px solid #4c555c; background:#252c31; }
+    .binding-texture-thumb { display:grid; place-items:center; width:80px; height:80px; overflow:hidden; border:1px solid #5a6770; border-radius:2px; background:repeating-conic-gradient(#343d44 0% 25%,#20282e 0% 50%) 50% / 14px 14px; color:#bdc9d1; font-size:10px; text-align:center; }
+    .binding-entry .binding-texture-thumb { margin:0; }
+    .binding-texture-thumb img { display:block; width:100%; height:100%; object-fit:contain; image-rendering:pixelated; }
+    .binding-texture-meta { display:flex; flex-direction:column; align-items:flex-start; gap:3px; min-width:0; color:#b9c8d1; font-size:11px; overflow-wrap:anywhere; }
+    .binding-texture-meta .binding-texture-status { color:#d6e8f4; font-weight:600; }
+    .binding-texture-meta .inline-link { margin:2px 0 0; }
+    @media (max-height:660px) and (min-width:621px) {
+      .frame-main { grid-template-rows:minmax(235px,var(--preview-height)) 5px minmax(120px,1fr); }
+    }
     @media (max-width:1350px) {
       .inspector-controls { gap:3px; padding-inline:5px; }
       .preview-source-row { gap:3px; }
@@ -343,9 +363,11 @@
     }
     @media (max-width:950px) {
       .tree-pass-leaf .tree-meta { display:none; }
-      .frame-workspace { --tree-width:36%; grid-template-columns:minmax(240px,var(--tree-width)) 5px minmax(0,1fr); }
+      .frame-workspace { --tree-width:35%; grid-template-columns:minmax(240px,var(--tree-width)) 5px minmax(0,1fr); }
       .preview-source-row,.inspector-controls,.mesh-controls { overflow:auto hidden; }
       .resource-grid { grid-template-columns:1fr; }
+      .binding-texture-preview { grid-template-columns:72px minmax(0,1fr); }
+      .binding-texture-thumb { width:72px; height:72px; }
     }
     @media (max-width:620px) {
       body { overflow:auto; }
@@ -438,13 +460,13 @@
       </section>
       <div id="preview-splitter" class="splitter horizontal" role="separator" aria-label="调整输出预览高度" aria-orientation="horizontal" tabindex="0"></div>
       <section class="inspector-pane" aria-labelledby="detail-title">
-        <div class="pane-head inspector-head"><h2 id="detail-title">事件信息</h2><span id="detail-index" class="muted small"></span></div>
+        <div class="pane-head inspector-head"><h2 id="detail-title">Event Information / 事件属性</h2><span id="detail-index" class="muted small"></span></div>
         <div id="inspector-scroll">
-          <details id="page-pixel-timeline" class="inspector-accordion" data-page="pixel-timeline"><summary>Pixel Timeline / 像素观测轨迹 <span id="pixel-timeline-status" class="small muted"></span></summary><div class="inspector-page"><div id="pixel-timeline" class="panel-body"><p class="muted small">选择 Pass 输出并点击像素，查看这一帧真实 RT 读回中的数值轨迹。</p></div></div></details>
-          <details id="page-detail" class="inspector-accordion" data-page="detail" open><summary>Details</summary><div class="inspector-page"><div id="event-detail"></div></div></details>
-          <details id="page-inputs" class="inspector-accordion" data-page="inputs" open><summary>Textures / 输入与输出</summary><div class="inspector-page"><div id="binding-detail"></div></div></details>
-          <details id="page-pipeline" class="inspector-accordion" data-page="pipeline" open><summary>Pipeline / 着色器</summary><div class="inspector-page"><div id="pipeline-detail"></div></div></details>
-          <details id="page-buffers" class="inspector-accordion" data-page="buffers"><summary>Buffers / 常量</summary><div class="inspector-page"><h3 class="section-caption">Draw Buffer 内容 <span id="buffer-count" class="small muted"></span></h3>
+          <details id="page-pixel-timeline" class="inspector-accordion" data-page="pixel-timeline" name="event-info"><summary>Pixel Timeline / 像素轨迹 <span id="pixel-timeline-status" class="small muted"></span></summary><div class="inspector-page"><div id="pixel-timeline" class="panel-body"><p class="muted small">选择 Pass 输出并点击像素，查看这一帧真实 RT 读回中的数值轨迹。</p></div></div></details>
+          <details id="page-detail" class="inspector-accordion" data-page="detail" name="event-info"><summary>Details / 事件详情</summary><div class="inspector-page"><div id="event-detail"></div></div></details>
+          <details id="page-inputs" class="inspector-accordion" data-page="inputs" name="event-info"><summary>Textures / 输入与输出</summary><div class="inspector-page"><div id="binding-detail"></div></div></details>
+          <details id="page-pipeline" class="inspector-accordion" data-page="pipeline" name="event-info"><summary>Pipeline / 管线状态</summary><div class="inspector-page"><div id="pipeline-detail"></div></div></details>
+          <details id="page-buffers" class="inspector-accordion" data-page="buffers" name="event-info"><summary>Buffers / 缓冲区 <span id="buffer-count" class="small muted"></span></summary><div class="inspector-page"><h3 class="section-caption">Draw Buffer 内容</h3>
             <div class="panel-body">
               <select id="buffer-select" class="buffer-select" aria-label="选择 Draw Buffer"></select>
               <p id="buffer-note" class="inspect-note"></p>
@@ -456,13 +478,13 @@
               <div id="buffer-table-wrap" class="buffer-table-wrap" hidden><table id="buffer-table" class="buffer-table"><thead><tr><th>偏移</th><th>4 字节 Hex</th><th>uint32 LE</th><th>float32 LE</th></tr></thead><tbody id="buffer-rows"></tbody></table></div>
             </div>
           </div></details>
-          <details id="page-resources" class="inspector-accordion" data-page="resources"><summary>Resources / 资源</summary><div class="inspector-page"><h3 class="section-caption">资源 <span id="resource-count" class="small muted"></span></h3><div id="resource-panel">
+          <details id="page-resources" class="inspector-accordion" data-page="resources" name="event-info"><summary>Resources / 资源 <span id="resource-count" class="small muted"></span></summary><div class="inspector-page"><h3 class="section-caption">资源</h3><div id="resource-panel">
             <div class="panel-body resource-grid">
               <div><div id="resource-tabs" class="resource-tabs" role="group" aria-label="资源类型"></div><input id="resource-search" type="search" placeholder="搜索 ID、标签或代码" aria-label="搜索资源"><div id="resource-list" class="resource-list" aria-label="资源列表"></div></div>
               <div><h3 id="resource-detail-title" class="small muted">资源详情</h3><div id="resource-detail"></div></div>
             </div>
           </div></div></details>
-          <details id="page-errors" class="inspector-accordion" data-page="errors"><summary>Errors / 验证</summary><div class="inspector-page"><h3 class="section-caption">验证错误 / Sidecar <span id="error-count" class="small muted"></span></h3><div id="errors" class="panel-body"></div></div></details>
+          <details id="page-errors" class="inspector-accordion" data-page="errors" name="event-info"><summary>Errors / 验证 <span id="error-count" class="small muted"></span></summary><div class="inspector-page"><h3 class="section-caption">验证错误 / Sidecar</h3><div id="errors" class="panel-body"></div></div></details>
         </div>
       </section>
     </div>

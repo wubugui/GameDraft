@@ -1184,8 +1184,15 @@
         } else if (resource?.textureId != null) {
           const button = make('button', '查看纹理', 'inline-link');
           button.type = 'button';
-          button.addEventListener('click', () => previewTexture(resource.textureId,
-            resource.type === 'TextureView' ? resource.id : null, true));
+          button.addEventListener('click', () => {
+            const pass = passFor(draw.passIndex);
+            const viewId = resource.type === 'TextureView' ? resource.id : null;
+            const snapshot = inputSnapshotsForBinding(pass, draw, slot, declaration.binding, resource)[0];
+            const binding = { frame: draw.frameOrdinal, pass: draw.passIndex, draw: draw.commandIndex,
+              group: slot, slot: declaration.binding };
+            previewTexture(resource.textureId, viewId, true,
+              inputBindingKey(binding, resource.textureId, viewId, snapshot));
+          });
           action.appendChild(button);
         } else if (resource?.type === 'Sampler' && resourceIndexById('samplers', resource.id) >= 0) {
           const button = make('button', '查看采样状态', 'inline-link');
@@ -1201,16 +1208,178 @@
       holder.appendChild(section);
     }
   }
-  function previewTexture(id, viewId = null, input = false) {
+  function inputSnapshotsForBinding(pass, draw, groupSlot, binding, resource) {
+    if (!pass || !draw || resource?.textureId == null) return [];
+    const viewId = resource.type === 'TextureView' ? resource.id : null;
+    const matchingSlots = list(draw.bindGroups).flatMap(group => list(group.resources).filter(entry =>
+      String(entry?.resource?.textureId) === String(resource.textureId) &&
+      String(entry?.resource?.id) === String(viewId)).map(entry =>
+      ({ groupSlot: group.slot, binding: entry.binding })));
+    return list(pass.inputSnapshots).filter(snapshot => {
+      if (String(snapshot.textureId) !== String(resource.textureId) ||
+          String(snapshot.viewId) !== String(viewId) ||
+          Number(snapshot.frameOrdinal) !== Number(draw.frameOrdinal) ||
+          Number(snapshot.passIndex) !== Number(draw.passIndex)) return false;
+      if (snapshot.captureMoment === 'pre-draw') {
+        if (Number(snapshot.drawCommandIndex) !== Number(draw.commandIndex)) return false;
+      } else if (snapshot.captureMoment === 'unavailable') {
+        if (Number(pass.frameDebugStep?.drawCommandIndex) !== Number(draw.commandIndex)) return false;
+      } else return false;
+      if (snapshot.bindingAmbiguous) return list(snapshot.bindingCandidates).some(candidate =>
+        Number(candidate.groupSlot) === Number(groupSlot) && Number(candidate.binding) === Number(binding));
+      if (snapshot.groupSlot != null && snapshot.binding != null) {
+        return Number(snapshot.groupSlot) === Number(groupSlot) && Number(snapshot.binding) === Number(binding);
+      }
+      return matchingSlots.length === 1 && Number(matchingSlots[0].groupSlot) === Number(groupSlot) &&
+        Number(matchingSlots[0].binding) === Number(binding);
+    }).sort((a, b) => Number(a.mipLevel ?? 0) - Number(b.mipLevel ?? 0) ||
+      Number(a.arrayLayer ?? 0) - Number(b.arrayLayer ?? 0) || Number(a.inputOrdinal ?? 0) - Number(b.inputOrdinal ?? 0));
+  }
+  function inputBindingKey(binding, textureId, viewId, snapshot) {
+    return JSON.stringify(['绑定输入', binding.frame, binding.pass, binding.draw, binding.group,
+      binding.slot, textureId, viewId, snapshot?.mipLevel ?? null, snapshot?.arrayLayer ?? null,
+      snapshot?.inputOrdinal ?? null, snapshot?.imageFile ?? null, snapshot?.rawFile ?? null]);
+  }
+  function previewTexture(id, viewId = null, input = false, identityKey = null) {
     const option = state.textureChoices.find(item => String(item.id) === String(id) &&
       (!input || item.role === '绑定输入') &&
-      (viewId == null || String(item.viewId) === String(viewId)));
+      (viewId == null || String(item.viewId) === String(viewId)) &&
+      (identityKey == null || item.key === identityKey));
     if (option) {
       state.selectedTextureKey = option.key;
       state.previewMode = 'texture';
       renderTextureInspector();
       renderPreviewMode();
-    } else if (resourceIndexById('textures', id) >= 0) selectResource('textures', resourceIndexById('textures', id));
+    } else if (identityKey == null && resourceIndexById('textures', id) >= 0) {
+      selectResource('textures', resourceIndexById('textures', id));
+    }
+  }
+  function inputViewSummary(textureId, viewId, snapshot) {
+    const view = viewId == null ? null : state.textureViews.get(String(viewId));
+    if (!view) return `View #${printable(viewId)} 范围未记录`;
+    const descriptor = view.descriptor || {};
+    const range = (base, count, kind) => {
+      if (!Number.isSafeInteger(base) || base < 0) return `${kind} 范围未记录`;
+      if (!Number.isSafeInteger(count) || count < 1) return `${kind} ${base} 起，数量未记录`;
+      return `${kind} ${base}${count > 1 ? `–${base + count - 1}` : ''}`;
+    };
+    const mip = range(descriptor.baseMipLevel ?? 0, descriptor.mipLevelCount, 'mip');
+    const layer = range(descriptor.baseArrayLayer ?? 0, descriptor.arrayLayerCount, '层');
+    const captured = snapshot ? ` · 子资源 mip ${snapshot.mipLevel ?? '—'} / 层 ${snapshot.arrayLayer ?? '—'}` : '';
+    return `View #${viewId} → Texture #${textureId} · ${mip} · ${layer} · ${descriptor.dimension || '维度未记录'} / ${descriptor.aspect || 'aspect 未记录'}${captured}`;
+  }
+  function samplerSummaryForInput(draw, names, groupSlot, binding) {
+    const textureName = names.get(`${groupSlot}:${binding}`)?.name;
+    if (!textureName) return 'Sampler：WGSL 纹理名称未记录，无法静态配对';
+    const samplerNames = new Set();
+    for (const id of list(pipelineForEvent(draw)?.shaderIds)) {
+      const shader = resourceArray('shaders').find(item => String(item.id) === String(id));
+      for (const call of String(shader?.code || '').matchAll(/\btextureSample\w*\s*\(\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)\s*,/g)) {
+        if (call[1] === textureName) samplerNames.add(call[2]);
+      }
+    }
+    if (!samplerNames.size) return 'Sampler：WGSL 未记录可静态配对的 textureSample 调用';
+    const paired = [];
+    for (const samplerName of samplerNames) {
+      const declared = [...names.entries()].filter(([, value]) =>
+        value.name === samplerName && /^sampler(?:_comparison)?\b/.test(value.type));
+      for (const [slot, declaration] of declared) {
+        const [groupSlotText, bindingText] = slot.split(':');
+        const group = list(draw.bindGroups).find(item => Number(item.slot) === Number(groupSlotText));
+        const entry = list(group?.resources).find(item => Number(item.binding) === Number(bindingText));
+        if (entry?.resource?.type !== 'Sampler') continue;
+        const sampler = resourceArray('samplers').find(item => String(item.id) === String(entry.resource.id));
+        const descriptor = sampler?.descriptor || {};
+        const filters = [descriptor.minFilter, descriptor.magFilter, descriptor.mipmapFilter].filter(Boolean);
+        const wrap = [descriptor.addressModeU, descriptor.addressModeV].filter(Boolean);
+        paired.push(`${declaration.name} G${groupSlotText}/B${bindingText} #${entry.resource.id}` +
+          `${filters.length ? ` · filter ${filters.join('/')}` : ''}${wrap.length ? ` · UV ${wrap.join('/')}` : ''}` +
+          `${descriptor.compare ? ` · compare ${descriptor.compare}` : ''}`);
+      }
+    }
+    return paired.length ? `WGSL Sampler 配对：${[...new Set(paired)].join('；')}` :
+      'Sampler：WGSL 有配对调用，但当前 Draw 没有可核实的 Sampler 绑定';
+  }
+  function appendInputTexturePreview(item, pass, draw, group, entry, names) {
+    const resource = entry.resource;
+    const viewId = resource.type === 'TextureView' ? resource.id : null;
+    const snapshots = inputSnapshotsForBinding(pass, draw, group.slot, entry.binding, resource);
+    const sampler = samplerSummaryForInput(draw, names, group.slot, entry.binding);
+    for (const snapshot of snapshots.length ? snapshots : [null]) {
+      const binding = { frame: draw.frameOrdinal, pass: draw.passIndex, draw: draw.commandIndex,
+        group: group.slot, slot: entry.binding };
+      const key = inputBindingKey(binding, resource.textureId, viewId, snapshot);
+      const captured = snapshot?.captureMoment === 'pre-draw' &&
+        !!(snapshot.imageFile || snapshot.rawFile);
+      const row = make('div', undefined, 'binding-texture-preview');
+      const thumbnail = make('button', undefined, 'binding-texture-thumb');
+      thumbnail.type = 'button';
+      thumbnail.title = `在大画布查看 Draw #${draw.commandIndex} G${group.slot}/B${entry.binding} 的此纹理子资源`;
+      const metadata = make('div', undefined, 'binding-texture-meta');
+      const status = make('span', captured ?
+        `Draw 前 GPU 已读回${snapshot.imageFile ? ' · 缩略图' : ' · 仅 RAW'}${snapshot.bindingAmbiguous ? ' · 同 View 多槽位，采集槽位未区分' : ''}` :
+        snapshot?.captureMoment === 'unavailable' ?
+          `Draw 前未读回：${snapshot.reason || snapshot.rawReason || snapshot.imageReason || '原因未记录'}` :
+          '此绑定没有 Draw 前读回；不显示帧末图冒充输入', 'binding-texture-status');
+      status.dataset.status = captured ? 'captured' : 'unavailable';
+      const thumbnailUrl = captured ? assetUrl(snapshot.imageFile) : null;
+      if (thumbnailUrl) {
+        const image = make('img');
+        image.src = thumbnailUrl;
+        image.alt = `Draw #${draw.commandIndex} G${group.slot}/B${entry.binding} 输入纹理缩略图`;
+        image.loading = 'lazy';
+        image.decoding = 'async';
+        image.addEventListener('error', () => {
+          thumbnail.replaceChildren(make('span', snapshot.rawFile ? 'RAW' : '无图'));
+          status.textContent = snapshot.rawFile ? 'PNG 加载失败；原始像素仍可查看' : 'PNG 加载失败；文件不可查看';
+          status.dataset.status = snapshot.rawFile ? 'captured' : 'unavailable';
+        });
+        thumbnail.appendChild(image);
+      } else thumbnail.appendChild(make('span', captured && snapshot.rawFile ? 'RAW' : '无图'));
+      const open = () => {
+        const index = state.events.indexOf(draw);
+        if (index < 0) return;
+        selectEvent(index);
+        previewTexture(resource.textureId, viewId, true, key);
+      };
+      thumbnail.addEventListener('click', open);
+      metadata.appendChild(status);
+      metadata.appendChild(make('span', inputViewSummary(resource.textureId, viewId, snapshot)));
+      metadata.appendChild(make('span', sampler));
+      const button = make('button', '在大画布查看此绑定', 'inline-link');
+      button.type = 'button';
+      button.addEventListener('click', open);
+      metadata.appendChild(button);
+      row.append(thumbnail, metadata);
+      item.appendChild(row);
+    }
+  }
+  function attachmentAction(target, role) {
+    const depth = role === 'Depth';
+    const stencil = role === 'Stencil';
+    // Legacy reports stored only depth's action in loadOp/storeOp. Never use
+    // those aliases for stencil: a depth clear does not mean stencil cleared.
+    const load = depth ? target.depthLoadOp ?? target.loadOp :
+      stencil ? target.stencilLoadOp : target.loadOp;
+    const store = depth ? target.depthStoreOp ?? target.storeOp :
+      stencil ? target.stencilStoreOp : target.storeOp;
+    const clear = depth ? target.depthClearValue :
+      stencil ? target.stencilClearValue : target.clearValue;
+    const readOnly = depth ? target.depthReadOnly :
+      stencil ? target.stencilReadOnly : null;
+    const clearText = load === 'clear' && clear != null ?
+      ` (${safeJson(clear, 160).replace(/\s+/g, ' ')})` : '';
+    return `${load ?? '未记录'}${clearText} / ${store ?? '未记录'}${readOnly === true ? ' · 只读' : ''}`;
+  }
+  function attachmentRows(targets) {
+    return list(targets).flatMap(target => {
+      const roles = target.kind === 'color' ? [`Color ${target.slot}`] :
+        target.kind === 'depth-stencil' ?
+          (String(target.format || '').includes('stencil') ? ['Depth', 'Stencil'] : ['Depth']) : [];
+      return roles.map(role => [role,
+        `#${printable(target.outputTextureId ?? target.textureId)} ${target.outputTextureLabel || target.textureLabel || ''}`,
+        target.format || '—', attachmentAction(target, role)]);
+    });
   }
   function renderPipelineDetail() {
     const holder = el('pipeline-detail');
@@ -1291,16 +1460,28 @@
       addDetailRow(grid, 'Front Face', descriptor.primitive?.frontFace || '默认');
       addDetailRow(grid, 'Viewport', list(draw.viewport).join(', ') || '未单独设置');
       addDetailRow(grid, 'Scissor', draw.scissorRect ? list(draw.scissorRect).join(', ') : '未单独设置');
-      addDetailRow(grid, 'Depth / Stencil', descriptor.depthStencil ? safeJson(descriptor.depthStencil, 4000) : '未启用');
+      const depthStencil = descriptor.depthStencil;
+      addDetailRow(grid, 'Depth format', depthStencil?.format ?? '未启用');
+      if (depthStencil) {
+        addDetailRow(grid, 'Depth compare', depthStencil.depthCompare ?? '未记录');
+        addDetailRow(grid, 'Depth write', depthStencil.depthWriteEnabled == null ? '未记录' : depthStencil.depthWriteEnabled ? '启用' : '关闭');
+        addDetailRow(grid, 'Stencil reference', draw.stencilReference ?? '未记录');
+        addDetailRow(grid, 'Stencil read mask', depthStencil.stencilReadMask ?? '未记录');
+        addDetailRow(grid, 'Stencil write mask', depthStencil.stencilWriteMask ?? '未记录');
+      }
       holder.appendChild(grid);
+      if (depthStencil) {
+        holder.appendChild(make('h3', 'Stencil 正反面状态', 'section-caption'));
+        table(holder, ['面', 'Compare', 'Fail', 'Depth fail', 'Pass'],
+          [['Front', depthStencil.stencilFront], ['Back', depthStencil.stencilBack]].map(([face, config]) =>
+            [face, config?.compare ?? '未记录', config?.failOp ?? '未记录',
+              config?.depthFailOp ?? '未记录', config?.passOp ?? '未记录']));
+      }
       return;
     }
     if (stage === 'output') {
       holder.appendChild(make('h3', 'Pass 输出附件', 'section-caption'));
-      table(holder, ['Slot', 'Texture', '格式', 'Load / Store'], list(draw.targets).map(target =>
-        [target.kind === 'color' ? `Color ${target.slot}` : target.kind,
-          `#${target.outputTextureId ?? target.textureId} ${target.outputTextureLabel || target.textureLabel || ''}`,
-          target.format || '—', `${target.loadOp || '—'} / ${target.storeOp || '—'}`]));
+      table(holder, ['附件', 'Texture', '格式', 'Load / Store'], attachmentRows(draw.targets));
       holder.appendChild(make('h3', '混合 / 写入', 'section-caption'));
       addDataSection(holder, 'Fragment targets', descriptor.fragment?.targets);
       return;
@@ -1582,7 +1763,7 @@
         const target = output.target;
         const tr = make('tr');
         for (const value of [output.role, output.label, target.format || '—',
-          `${target.loadOp || '—'} / ${target.storeOp || '—'}`]) tr.appendChild(make('td', value));
+          attachmentAction(target, output.role)]) tr.appendChild(make('td', value));
         const cell = make('td');
         if (output.snapshot?.imageFile || output.snapshot?.rawFile) {
           const button = make('button', '预览该输出', 'inline-link');
@@ -1656,13 +1837,7 @@
               String(choice.bufferId) === String(resource.id)));
             item.appendChild(button);
           } else if (resource.textureId != null) {
-            const button = make('button', '查看此 Draw 输入', 'inline-link');
-            button.type = 'button';
-            button.addEventListener('click', () => {
-              selectEvent(state.events.indexOf(draw));
-              previewTexture(resource.textureId, resource.type === 'TextureView' ? resource.id : null, true);
-            });
-            item.appendChild(button);
+            appendInputTexturePreview(item, pass, draw, group, entry, names);
           } else if (resource.type === 'Sampler' && resourceIndexById('samplers', resource.id) >= 0) {
             const button = make('button', '查看采样器', 'inline-link');
             button.type = 'button';
@@ -1795,12 +1970,14 @@
       if (id == null) return;
       const texture = resourceArray('textures').find(item => String(item.id) === String(id));
       if (!texture) return;
-      const key = `${role}:${id}:${viewId ?? ''}:${mipLevel ?? ''}`;
+      const key = role === '绑定输入' && binding ?
+        inputBindingKey(binding, id, viewId, snapshot) : `${role}:${id}:${viewId ?? ''}:${mipLevel ?? ''}`;
       const existing = seen.get(key);
       const recordBinding = option => {
         if (!binding) return;
-        const identity = `${binding.group}:${binding.slot}:${binding.draw}`;
-        if (!option.bindings.some(item => `${item.group}:${item.slot}:${item.draw}` === identity)) {
+        const identity = `${binding.frame}:${binding.pass}:${binding.draw}:${binding.group}:${binding.slot}`;
+        if (!option.bindings.some(item =>
+          `${item.frame}:${item.pass}:${item.draw}:${item.group}:${item.slot}` === identity)) {
           option.bindings.push(binding);
         }
       };
@@ -1849,7 +2026,7 @@
       }
       const option = { key, id, role, viewId, label: label || texture.label || `纹理 #${id}`,
         bindingNames: role === '绑定输入' && label ? [label] : [], texture, snapshot,
-        bindings: [],
+        bindings: [], arrayLayer: snapshot?.arrayLayer ?? null,
         file, evidence, mipLevel, unavailableReason: evidence === 'input-unavailable' ||
           evidence === 'aspect-unavailable' ? snapshot?.reason || snapshot?.rawReason ||
             snapshot?.imageReason : evidenceOverride };
@@ -1862,18 +2039,16 @@
         if (entry?.resource?.textureId == null) continue;
         const textureId = entry.resource.textureId;
         const viewId = entry.resource.type === 'TextureView' ? entry.resource.id : null;
-        const recorded = list(pass?.inputSnapshots).filter(item =>
-          String(item.textureId) === String(textureId) && String(item.viewId) === String(viewId) &&
-          (item.captureMoment === 'unavailable' || Number(item.drawCommandIndex) === Number(draw.commandIndex)));
+        const recorded = inputSnapshotsForBinding(pass, draw, group.slot, entry.binding, entry.resource);
+        const binding = { frame: draw.frameOrdinal, pass: draw.passIndex,
+          group: group.slot, slot: entry.binding, draw: draw.commandIndex,
+          name: entry.resource.label || '' };
         if (recorded.length) {
           for (const snapshot of recorded) add(textureId, '绑定输入',
             snapshot.bindingName || entry.resource.label || `纹理 #${textureId}`,
             snapshot, undefined, viewId, snapshot.mipLevel ?? 0,
-            { group: group.slot, slot: entry.binding, draw: draw.commandIndex,
-              name: snapshot.bindingName || entry.resource.label || '' });
-        } else add(textureId, '绑定输入', entry.resource.label, null, undefined, viewId, null,
-          { group: group.slot, slot: entry.binding, draw: draw.commandIndex,
-            name: entry.resource.label || '' });
+            { ...binding, name: snapshot.bindingName || binding.name });
+        } else add(textureId, '绑定输入', entry.resource.label, null, undefined, viewId, null, binding);
       }
     }
     for (const target of list(pass?.targets || event?.targets)) {
@@ -1922,8 +2097,8 @@
       select.style.maxWidth = 'none';
       select.style.width = '100%';
       for (const item of options) {
-        const evidence = item.evidence === 'pre-draw' ? `Draw #${item.snapshot.drawCommandIndex} 前实拍 · mip ${item.mipLevel ?? 0}` :
-          item.evidence === 'input-unavailable' ? `Draw 输入不可回读 · mip ${item.mipLevel ?? 0}` :
+        const evidence = item.evidence === 'pre-draw' ? `Draw #${item.snapshot.drawCommandIndex} 前实拍` :
+          item.evidence === 'input-unavailable' ? 'Draw 输入不可回读' :
           item.evidence === 'pass-end-aspect' ? `Pass 结束 · ${item.snapshot.sampleCount > 1 ? `sample ${item.snapshot.sampleIndex ?? 0}/${item.snapshot.sampleCount}` : '单样本'}` :
           item.evidence === 'aspect-unavailable' ? '此 Pass 不可回读' :
           item.evidence === 'aspect-not-captured' ? '旧捕获无独立读回' :
@@ -1935,7 +2110,9 @@
           item.evidence === 'pass-aggregate' ? '请选具体 Draw' :
           item.evidence === 'later-write' ? '最终状态已变化' :
           item.file ? '捕获最终' : '无图像';
-        const option = make('option', `${item.role} · #${item.id} ${item.label} [${evidence}]`);
+        const binding = item.role === '绑定输入' ? item.bindings[0] : null;
+        const bindingLabel = binding ? `G${binding.group}/B${binding.slot} · Draw #${binding.draw} · ` : '';
+        const option = make('option', `${item.role} · ${bindingLabel}#${item.id} ${item.label} [${evidence}${binding ? ` · mip ${item.mipLevel ?? '—'} / 层 ${item.arrayLayer ?? '—'}` : ''}]`);
         if (item.bindingNames.length > 1) option.title = `共享此纹理的绑定：${item.bindingNames.join('、')}`;
         option.value = item.key;
         select.appendChild(option);
