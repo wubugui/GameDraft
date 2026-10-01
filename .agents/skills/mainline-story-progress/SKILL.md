@@ -18,7 +18,7 @@ description: >-
 能玩。**准确 = 每一句都能在游戏数据里找到出处，且那份数据玩家真的走得到。**
 
 写这份文档的规则是制作人 2026-09-02 定死的，原文在两处（内容一致）：
-`FindingDogStory/AGENTS.md` 的「主线故事进度文档」一节、本仓库 `production-mode` 技能第七节。
+`FindingDogStory/CLAUDE.md` 的「主线故事进度文档」一节、本仓库 `production-mode` 技能第七节。
 **开工前把那一节原文读一遍**——本技能是按那六条规则执行的操作手册，不替代它们。
 
 ## 什么时候写，什么时候只报
@@ -36,11 +36,11 @@ description: >-
 
 ```bash
 # 本技能的查询脚本（下文简写为 mp）
-sh scripts/py.sh .cursor/skills/mainline-story-progress/scripts/mainline_progress.py <子命令>
+.tools/venv/Scripts/python.exe .cursor/skills/mainline-story-progress/scripts/mainline_progress.py <子命令>
 
 # 叙事交叉引用：一条信号谁发谁听、一个状态怎么进来谁在看着
-sh scripts/py.sh -m tools.narrative_xref "<信号>"
-sh scripts/py.sh -m tools.narrative_xref --state 图id.状态id
+.tools/venv/Scripts/python.exe -m tools.narrative_xref "<信号>"
+.tools/venv/Scripts/python.exe -m tools.narrative_xref --state 图id.状态id
 ```
 
 | mp 子命令 | 回答什么 |

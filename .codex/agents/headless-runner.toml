@@ -12,15 +12,16 @@ developer_instructions = """
 
 ## 启动方式
 
-- 用 preview_start 起 dev server,配置名 `game-dev`(端口 5173;被占用时用 `game-dev-5174` / `game-dev-5178` / `game-dev-5180`)。**禁止用 Bash 起 dev server。**
+- 先查 5173-5176 端口和现有消费者;不要接管或结束别的会话的服务。需要新服务时,在项目根目录用 `exec_command` 运行 `.tools/venv/Scripts/python.exe -m tools.dev game start`,保留返回的命令 session_id,从 Vite 输出读取实际端口。Codex 没有 `preview_start`。
+- 用可用的 Codex 浏览器工具打开该端口的游戏页;需要页内 eval/截图时先确认工具确实提供该能力。若没有,只做命令通道可证实的逻辑验证,画面结论标为未验证。
 - URL 必带 `?mode=dev`(跳过首启手势门;narrativeWarp 也只在 dev 模式被消费)。
 - 命令通道队列是跨会话共享的:驱动前先探针确认没有别的 dev server 在消费队列。
 
 ## 铁律(违反 = 结果作废)
 
-- **驱动会话期间不许 Read/grep `src/`**——fsevents 会让 vite 整页 reload,补丁和游戏实例全丢。要看代码用 `git show HEAD:src/...`(注意工作区未提交改动与 HEAD 有偏差,必要时先让主会话告知关键 diff)。
+- **驱动会话期间不访问仓库文件,也不运行 git 命令**——文件访问可能让 Vite 整页 reload,补丁和游戏实例全丢。所需代码与 diff 在开跑前读完。
 - **流程验证禁作弊**:只读 `playerView`、只用 `player*` 命令推进;`debugSet*`/`setFlag` 直推状态只许用于"把游戏摆到起点",不许用于跨过被验证的环节。
-- 不用 computer-use / 点像素操作游戏;一律走命令通道或页内 eval。
+- 不用点像素操作游戏;流程推进一律走命令通道或页内 eval,浏览器工具只用于打开页面、页内 eval 与截图。
 - 严肃断言在页内直读 `window.__game` 私有字段——共享快照是单槽最后写者赢,多实例时会读串。
 - 改了 scene JSON 必须整页 reload(内存缓存不重取磁盘);vite 整页刷新后 window 补丁全丢,长流程结果写 localStorage 中继。
 

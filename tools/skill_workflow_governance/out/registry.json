@@ -1,6 +1,6 @@
 {
   "root": "E:/GameDev/GameDraft",
-  "generated_at": "2026-09-25T09:15:50",
+  "generated_at": "2026-09-28T13:02:17",
   "artifacts": [
     {
       "id": "agent..mcp",
@@ -1149,6 +1149,29 @@
       "commands": [],
       "references": [],
       "tags": [
+        "script"
+      ]
+    },
+    {
+      "id": "scripts-agent_hooks-codex_hooks",
+      "type": "script",
+      "title": "codex_hooks",
+      "path": "scripts/agent_hooks/codex_hooks.py",
+      "source": "script",
+      "summary": "\"\"\"Codex event adapter for the existing GameDraft Claude hook policies.",
+      "agent": "shared",
+      "modified": "2026-09-28T12:49:27",
+      "modified_ts": 1790570967.502312,
+      "size": 8970,
+      "headings": [],
+      "trigger_hints": [
+        "+ \"\\n按适用门验证后运行 .tools/venv/Scripts/python.exe \" f\"scripts/agent_hooks/validation_gate.py --mark {sid}；若无需这些门，说明理由后再标记。\") return {\"decision\": \"block\", \"reason\": reason}"
+      ],
+      "commands": [],
+      "references": [],
+      "tags": [
+        "claude",
+        "codex",
         "script"
       ]
     },
@@ -3439,7 +3462,7 @@
           "line": 29,
           "target": "atlas.png",
           "status": "ok",
-          "resolved_to": "artifact/IgniteAnim_20260916/backup/atlas.png",
+          "resolved_to": "artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/atlas.png",
           "note": "suffix matches=21"
         },
         {
@@ -3448,7 +3471,7 @@
           "line": 29,
           "target": "anim.json",
           "status": "ok",
-          "resolved_to": "artifact/IgniteAnim_20260916/backup/anim.json",
+          "resolved_to": "artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/anim.json",
           "note": "suffix matches=21"
         },
         {
@@ -5718,7 +5741,7 @@
           "line": 120,
           "target": "anim.json",
           "status": "ok",
-          "resolved_to": "artifact/IgniteAnim_20260916/backup/anim.json",
+          "resolved_to": "artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/anim.json",
           "note": "suffix matches=21"
         },
         {
@@ -6103,7 +6126,7 @@
           "line": 120,
           "target": "anim.json",
           "status": "ok",
-          "resolved_to": "artifact/IgniteAnim_20260916/backup/anim.json",
+          "resolved_to": "artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/anim.json",
           "note": "suffix matches=21"
         },
         {
@@ -7738,7 +7761,7 @@
           "line": 3,
           "target": "atlas.png",
           "status": "ok",
-          "resolved_to": "artifact/IgniteAnim_20260916/backup/atlas.png",
+          "resolved_to": "artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/atlas.png",
           "note": "suffix matches=21"
         },
         {
@@ -7747,7 +7770,7 @@
           "line": 4,
           "target": "anim.json",
           "status": "ok",
-          "resolved_to": "artifact/IgniteAnim_20260916/backup/anim.json",
+          "resolved_to": "artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/anim.json",
           "note": "suffix matches=21"
         },
         {
@@ -7801,7 +7824,7 @@
           "line": 84,
           "target": "anim.json",
           "status": "ok",
-          "resolved_to": "artifact/IgniteAnim_20260916/backup/anim.json",
+          "resolved_to": "artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/anim.json",
           "note": "suffix matches=21"
         },
         {
@@ -9180,7 +9203,7 @@
           "line": 83,
           "target": "*.meta.json",
           "status": "ok",
-          "resolved_to": "artifact/IgniteAnim_20260916/backup/atlas.meta.json",
+          "resolved_to": "artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/atlas.meta.json",
           "note": "glob matches=21"
         },
         {
@@ -9505,14 +9528,25 @@
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
-      "id": "drift.cursor-skill.animation-production.29.artifact-igniteanim_20260916-backup-anim.json",
+      "id": "drift.cursor-skill.animation-production.29.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json",
       "severity": "warn",
       "category": "drift-risk",
       "artifact_id": "cursor-skill.animation-production",
       "path": ".cursor/skills/animation-production/SKILL.md",
       "line": 29,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`artifact/IgniteAnim_20260916/backup/anim.json` is about 26 days newer than this file.",
+      "evidence": "`artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/anim.json` is about 38 days newer than this file.",
+      "suggestion": "Check whether the skill/workflow still describes the current implementation."
+    },
+    {
+      "id": "drift.cursor-skill.animation-production.29.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.png",
+      "severity": "warn",
+      "category": "drift-risk",
+      "artifact_id": "cursor-skill.animation-production",
+      "path": ".cursor/skills/animation-production/SKILL.md",
+      "line": 29,
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "evidence": "`artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/atlas.png` is about 38 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9534,7 +9568,7 @@
       "path": ".cursor/skills/animation-production/SKILL.md",
       "line": 60,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/rendering/SpriteEntity.ts` is about 36 days newer than this file.",
+      "evidence": "`src/rendering/SpriteEntity.ts` is about 37 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9567,7 +9601,7 @@
       "path": ".cursor/skills/commit-push-gamedraft/SKILL.md",
       "line": 77,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`resources/editor_projects.dvc` is about 36 days newer than this file.",
+      "evidence": "`resources/editor_projects.dvc` is about 38 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10216,7 +10250,7 @@
       "path": ".cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md",
       "line": 20,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`.git/config` is about 37 days newer than this file.",
+      "evidence": "`.git/config` is about 38 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10249,7 +10283,7 @@
       "path": "AGENTS.md",
       "line": 19,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/skill_workflow_governance/out/agent-context-current.md` is about 35 days newer than this file.",
+      "evidence": "`tools/skill_workflow_governance/out/agent-context-current.md` is about 40 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10260,7 +10294,7 @@
       "path": "AGENTS.md",
       "line": 20,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/skill_workflow_governance/out/registry.json` is about 35 days newer than this file.",
+      "evidence": "`tools/skill_workflow_governance/out/registry.json` is about 40 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10359,7 +10393,7 @@
       "path": "docs/plan/production-tooling-requirements.md",
       "line": 414,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`resources/editor_projects/editor_data/production_workbench/runtime_debug_snapshot.json` is about 37 days newer than this file.",
+      "evidence": "`resources/editor_projects/editor_data/production_workbench/runtime_debug_snapshot.json` is about 38 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10462,14 +10496,25 @@
       "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
     },
     {
-      "id": "drift.tools-animation_pipeline-readme.4.artifact-igniteanim_20260916-backup-anim.json",
+      "id": "drift.tools-animation_pipeline-readme.3.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.png",
+      "severity": "warn",
+      "category": "drift-risk",
+      "artifact_id": "tools-animation_pipeline-readme",
+      "path": "tools/animation_pipeline/README.md",
+      "line": 3,
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "evidence": "`artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/atlas.png` is about 38 days newer than this file.",
+      "suggestion": "Check whether the skill/workflow still describes the current implementation."
+    },
+    {
+      "id": "drift.tools-animation_pipeline-readme.4.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json",
       "severity": "warn",
       "category": "drift-risk",
       "artifact_id": "tools-animation_pipeline-readme",
       "path": "tools/animation_pipeline/README.md",
       "line": 4,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`artifact/IgniteAnim_20260916/backup/anim.json` is about 26 days newer than this file.",
+      "evidence": "`artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/anim.json` is about 38 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10495,14 +10540,14 @@
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
-      "id": "drift.tools-animation_pipeline-readme.84.artifact-igniteanim_20260916-backup-anim.json",
+      "id": "drift.tools-animation_pipeline-readme.84.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json",
       "severity": "warn",
       "category": "drift-risk",
       "artifact_id": "tools-animation_pipeline-readme",
       "path": "tools/animation_pipeline/README.md",
       "line": 84,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`artifact/IgniteAnim_20260916/backup/anim.json` is about 26 days newer than this file.",
+      "evidence": "`artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/anim.json` is about 38 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10800,6 +10845,17 @@
       "line": 82,
       "title": "Referenced artifact is newer than this rule/workflow",
       "evidence": "`artifact/AlbedoCliff_20260907/analysis/division_keep_residual.png` is about 19 days newer than this file.",
+      "suggestion": "Check whether the skill/workflow still describes the current implementation."
+    },
+    {
+      "id": "drift.tools-video_to_atlas-readme.83.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.meta.json",
+      "severity": "warn",
+      "category": "drift-risk",
+      "artifact_id": "tools-video_to_atlas-readme",
+      "path": "tools/video_to_atlas/README.md",
+      "line": 83,
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "evidence": "`artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/atlas.meta.json` is about 38 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -11387,24 +11443,24 @@
     }
   ],
   "stats": {
-    "artifact_count": 144,
-    "issue_count": 190,
+    "artifact_count": 145,
+    "issue_count": 193,
     "by_type": {
       "agent_rules": 3,
       "ci_workflow": 1,
       "package_script": 31,
-      "script": 40,
+      "script": 41,
       "skill": 36,
       "tool_requirements": 10,
       "workflow_doc": 23
     },
     "by_severity": {
       "info": 51,
-      "warn": 139
+      "warn": 142
     },
     "by_category": {
       "broken-reference": 34,
-      "drift-risk": 102,
+      "drift-risk": 105,
       "missing-lifecycle": 31,
       "missing-metadata": 3,
       "possible-overlap": 15,
@@ -11543,7 +11599,7 @@
       "kind": "agent-review",
       "summary": "规则/工作流引用的代码或文档更新过，说明文字可能已经落后。",
       "next": "交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。",
-      "issue_count": 102,
+      "issue_count": 105,
       "artifact_count": 20,
       "artifact_types": [
         "agent_rules",
@@ -11577,7 +11633,8 @@
         "drift.claude-skill.add-text-ref.33.tools-editor-shared-rich_text_field.py",
         "drift.cursor-skill.add-text-ref.33.tools-editor-shared-rich_text_field.py",
         "drift.cursor-skill.animation-production.14.agent_docs-asset-pipeline-mechanisms-sprite-atlas-anim-contract.md",
-        "drift.cursor-skill.animation-production.29.artifact-igniteanim_20260916-backup-anim.json",
+        "drift.cursor-skill.animation-production.29.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json",
+        "drift.cursor-skill.animation-production.29.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.png",
         "drift.cursor-skill.animation-production.60.src-rendering-spriteentity.ts",
         "drift.cursor-skill.commit-push-gamedraft.22.scripts-sync-dvc-cache.py",
         "drift.cursor-skill.commit-push-gamedraft.77.resources-editor_projects.dvc",
@@ -11643,9 +11700,10 @@
         "drift.docs-plan-production-tooling-requirements.55.public-assets-data-narrative_graphs.json",
         "drift.docs-plan-production-tooling-requirements.311.public-assets-data-narrative_graphs.json",
         "drift.docs-plan-production-tooling-requirements.414.resources-editor_projects-editor_data-production_workbench-runtime_debug_snapshot.json",
-        "drift.tools-animation_pipeline-readme.4.artifact-igniteanim_20260916-backup-anim.json",
+        "drift.tools-animation_pipeline-readme.3.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.png",
+        "drift.tools-animation_pipeline-readme.4.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json",
         "drift.tools-animation_pipeline-readme.83.tools-video_to_atlas-atlas_core.py",
-        "drift.tools-animation_pipeline-readme.84.artifact-igniteanim_20260916-backup-anim.json",
+        "drift.tools-animation_pipeline-readme.84.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json",
         "drift.tools-character_lighting_lab-readme.22.tools-character_lighting_lab-pipeline.py",
         "drift.tools-json_lang-readme.7.artifact-storm-audio-fix-20260920-before-code-src-core-actionparammanifest.ts",
         "drift.tools-json_lang-readme.8.src-systems-graphdialogue-evaluategraphcondition.ts",
@@ -11666,6 +11724,7 @@
         "drift.tools-task_orchestration_editor-readme.15.public-assets-data-quests.json",
         "drift.tools-video_to_atlas-readme.34.tools-video_to_atlas-atlas_core.py",
         "drift.tools-video_to_atlas-readme.82.artifact-albedocliff_20260907-analysis-division_keep_residual.png",
+        "drift.tools-video_to_atlas-readme.83.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.meta.json",
         "drift.tools-voice_workbench-readme.27.artifact-storm-audio-fix-20260920-before-audio_config.json",
         "drift.tools-voice_workbench-readme.31.artifact-storm-audio-fix-20260920-before-audio_config.json"
       ],
@@ -11725,7 +11784,7 @@
           "href": "/governance/source?path=.cursor/skills/add-text-ref/SKILL.md&line=20#L20"
         }
       ],
-      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，102 项）。\n目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。\n执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/animation-production/SKILL.md\n- .cursor/skills/commit-push-gamedraft/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/feature-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/interactive-architecture-html/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- AGENTS.md\n- artifact/cursor-workflow-guide.md\n- docs/plan/production-tooling-requirements.md\n- tools/animation_pipeline/README.md\n- tools/character_lighting_lab/README.md\n- tools/json_lang/README.md\n- tools/narrative_debugger/README.md\n- tools/scene_relight/README.md\n- tools/task_orchestration_editor/README.md\n- tools/video_to_atlas/README.md\n- tools/voice_workbench/README.md"
+      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，105 项）。\n目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。\n执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/animation-production/SKILL.md\n- .cursor/skills/commit-push-gamedraft/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/feature-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/interactive-architecture-html/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- AGENTS.md\n- artifact/cursor-workflow-guide.md\n- docs/plan/production-tooling-requirements.md\n- tools/animation_pipeline/README.md\n- tools/character_lighting_lab/README.md\n- tools/json_lang/README.md\n- tools/narrative_debugger/README.md\n- tools/scene_relight/README.md\n- tools/task_orchestration_editor/README.md\n- tools/video_to_atlas/README.md\n- tools/voice_workbench/README.md"
     },
     {
       "id": "missing-metadata",

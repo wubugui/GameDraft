@@ -1,5 +1,6 @@
 [mcp_servers.narrative-debugger]
-command = ".tools/venv/bin/python"
+command = "E:/GameDev/GameDraft/.tools/venv/Scripts/python.exe"
+cwd = "E:/GameDev/GameDraft"
 args = [
     "-m",
     "tools.narrative_debugger.mcp_server",

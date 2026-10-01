@@ -1,9 +1,9 @@
 # Skill / Workflow Governance Report
 
-- Generated: `2026-09-25T09:15:50`
+- Generated: `2026-09-28T13:02:17`
 - Root: `E:/GameDev/GameDraft`
-- Artifacts: `144`
-- Issues: `190`
+- Artifacts: `145`
+- Issues: `193`
 
 ## Summary
 
@@ -12,7 +12,7 @@
 - `agent_rules`: `3`
 - `ci_workflow`: `1`
 - `package_script`: `31`
-- `script`: `40`
+- `script`: `41`
 - `skill`: `36`
 - `tool_requirements`: `10`
 - `workflow_doc`: `23`
@@ -20,7 +20,7 @@
 ### Issues By Severity
 
 - `info`: `51`
-- `warn`: `139`
+- `warn`: `142`
 
 ## Issues
 
@@ -45,12 +45,13 @@
 | warn | missing-metadata | .cursor/skills/agent-docs-cli/SKILL.md:1 | No obvious trigger/use/scope section was detected. | Add a short 'when to use / when not to use' section near the top of the skill. |
 | warn | missing-metadata | .cursor/skills/animation-production/SKILL.md:1 | No obvious trigger/use/scope section was detected. | Add a short 'when to use / when not to use' section near the top of the skill. |
 | warn | drift-risk | .cursor/skills/animation-production/SKILL.md:14 | `agent_docs/asset-pipeline/mechanisms/sprite-atlas-anim-contract.md` is about 36 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/animation-production/SKILL.md:29 | `artifact/IgniteAnim_20260916/backup/anim.json` is about 26 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | .cursor/skills/animation-production/SKILL.md:29 | `artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/anim.json` is about 38 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | .cursor/skills/animation-production/SKILL.md:29 | `artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/atlas.png` is about 38 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | broken-reference | .cursor/skills/animation-production/SKILL.md:49 | `tmp/libtv_animation_batch_run_20260702/run_animation_batch.py` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | drift-risk | .cursor/skills/animation-production/SKILL.md:60 | `src/rendering/SpriteEntity.ts` is about 36 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | .cursor/skills/animation-production/SKILL.md:60 | `src/rendering/SpriteEntity.ts` is about 37 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/commit-push-gamedraft/SKILL.md:22 | `scripts/sync-dvc-cache.py` is about 20 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | broken-reference | .cursor/skills/commit-push-gamedraft/SKILL.md:35 | `.tools/venv/bin/python` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | drift-risk | .cursor/skills/commit-push-gamedraft/SKILL.md:77 | `resources/editor_projects.dvc` is about 36 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | .cursor/skills/commit-push-gamedraft/SKILL.md:77 | `resources/editor_projects.dvc` is about 38 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/commit-push-gamedraft/SKILL.md:118 | `tools/dev/sync.py` is about 20 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | broken-reference | .cursor/skills/commit-push-gamedraft/SKILL.md:149 | `.tools/venv/.../python` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
 | warn | drift-risk | .cursor/skills/commit-push-gamedraft/SKILL.md:153 | `agent_docs/meta/recipes/dvc-oss-restore.md` is about 35 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
@@ -109,11 +110,11 @@
 | warn | drift-risk | .cursor/skills/pure-data-iteration/SKILL.md:75 | `agent_docs/content/recipes/content-validation-gate.md` is about 35 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/pure-data-iteration/SKILL.md:77 | `docs/玩法功能需求清单.md` is about 35 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/pure-data-iteration/SKILL.md:77 | `docs/玩法功能需求清单.md` is about 35 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md:20 | `.git/config` is about 37 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md:20 | `.git/config` is about 38 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | AGENTS.md:3 | `CLAUDE.md` is about 37 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | AGENTS.md:8 | `agent_docs/INDEX.md` is about 36 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | AGENTS.md:19 | `tools/skill_workflow_governance/out/agent-context-current.md` is about 35 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | AGENTS.md:20 | `tools/skill_workflow_governance/out/registry.json` is about 35 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | AGENTS.md:19 | `tools/skill_workflow_governance/out/agent-context-current.md` is about 40 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | AGENTS.md:20 | `tools/skill_workflow_governance/out/registry.json` is about 40 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | broken-reference | CLAUDE.md:83 | `agent-context-current.md` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
 | warn | drift-risk | artifact/cursor-workflow-guide.md:42 | `docs/玩法功能需求清单.md` is about 35 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | artifact/cursor-workflow-guide.md:47 | `docs/玩法功能需求清单.md` is about 35 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
@@ -122,7 +123,7 @@
 | warn | drift-risk | artifact/cursor-workflow-guide.md:144 | `docs/游戏架构设计文档.md` is about 28 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | docs/plan/production-tooling-requirements.md:55 | `public/assets/data/narrative_graphs.json` is about 35 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | docs/plan/production-tooling-requirements.md:311 | `public/assets/data/narrative_graphs.json` is about 35 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | docs/plan/production-tooling-requirements.md:414 | `resources/editor_projects/editor_data/production_workbench/runtime_debug_snapshot.json` is about 37 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | docs/plan/production-tooling-requirements.md:414 | `resources/editor_projects/editor_data/production_workbench/runtime_debug_snapshot.json` is about 38 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | broken-reference | docs/plan/production-workbench-acceptance-checklist.md:18 | `.tools/venv/bin/python` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
 | warn | broken-reference | scripts/lib/build_helpers.mjs:238 | `resources/runtime/audio/x.wav` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
 | warn | broken-reference | scripts/lib/build_helpers.mjs:239 | `audio/x.wav` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
@@ -132,10 +133,11 @@
 | warn | broken-reference | tools/acoustic_workbench/README.md:72 | `devstate.json` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
 | warn | broken-reference | tools/anim_preview/README.md:106 | `setup.png` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
 | warn | broken-reference | tools/anim_preview/README.md:125 | `setup.png` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | drift-risk | tools/animation_pipeline/README.md:4 | `artifact/IgniteAnim_20260916/backup/anim.json` is about 26 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | tools/animation_pipeline/README.md:3 | `artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/atlas.png` is about 38 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | tools/animation_pipeline/README.md:4 | `artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/anim.json` is about 38 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | broken-reference | tools/animation_pipeline/README.md:6 | `tmp/libtv_animation_batch_run_20260702/run_animation_batch.py` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
 | warn | drift-risk | tools/animation_pipeline/README.md:83 | `tools/video_to_atlas/atlas_core.py` is about 36 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | tools/animation_pipeline/README.md:84 | `artifact/IgniteAnim_20260916/backup/anim.json` is about 26 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | tools/animation_pipeline/README.md:84 | `artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/anim.json` is about 38 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | tools/character_lighting_lab/README.md:22 | `tools/character_lighting_lab/pipeline.py` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | broken-reference | tools/character_lighting_lab/README.md:73 | `tools/scene_relight/bake.py` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
 | warn | broken-reference | tools/character_lighting_lab/README.md:399 | `tools/scene_depth_editor` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
@@ -163,6 +165,7 @@
 | warn | broken-reference | tools/video_to_atlas/README.md:7 | `.tools/venv/bin/python` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
 | warn | drift-risk | tools/video_to_atlas/README.md:34 | `tools/video_to_atlas/atlas_core.py` is about 36 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | tools/video_to_atlas/README.md:82 | `artifact/AlbedoCliff_20260907/analysis/division_keep_residual.png` is about 19 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | tools/video_to_atlas/README.md:83 | `artifact/AnimRoute_20260925/batch/work/huihungui_anim/out_auto_chroma/atlas.meta.json` is about 38 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | tools/voice_workbench/README.md:27 | `artifact/storm-audio-fix-20260920/before/audio_config.json` is about 32 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | tools/voice_workbench/README.md:31 | `artifact/storm-audio-fix-20260920/before/audio_config.json` is about 32 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | info | missing-lifecycle | .claude/skills/agent-docs-cli/SKILL.md:1 | No status/owner/last-verified style metadata was detected. | Consider adding status, owner, and last verified fields once the registry format is settled. |
@@ -258,6 +261,7 @@
 | package_script | package-script.verify-sweep-dev | npm run verify:sweep:dev | package.json | package_json |
 | script | bootstrap | GameDraft bootstrap for macOS/Linux. Creates a project venv (.tools/venv) | bootstrap.sh | script |
 | script | dev | macOS/Linux task entry: ./dev.sh <task> [args] | dev.sh | script |
+| script | scripts-agent_hooks-codex_hooks | codex_hooks | scripts/agent_hooks/codex_hooks.py | script |
 | script | scripts-agent_hooks-flag_discipline | ---------------------------------------------------------------- 检测 | scripts/agent_hooks/flag_discipline.py | script |
 | script | scripts-agent_hooks-no_local_blender | .local-disabled = 被替身顶掉后改名留在原处的原件,跑它同样算违规 | scripts/agent_hooks/no_local_blender.py | script |
 | script | scripts-agent_hooks-validation_gate | validation_gate | scripts/agent_hooks/validation_gate.py | script |

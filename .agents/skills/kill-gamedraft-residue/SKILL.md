@@ -12,13 +12,13 @@ description: 杀掉本项目(GameDraft)的游戏运行时与编辑器/工作台�
 1. 用户点名要保留某个（如"控制台留着"）时，先只列不杀，拿到它的 PID：
 
    ```bash
-   sh scripts/py.sh scripts/kill_gamedraft_residue.py --dry-run
+   .tools/venv/Scripts/python.exe scripts/kill_gamedraft_residue.py --dry-run
    ```
 
 2. 执行（列出并杀；保留项每个加一次 `--keep <PID>`，整棵子树都保留）：
 
    ```bash
-   sh scripts/py.sh scripts/kill_gamedraft_residue.py [--keep <PID> ...]
+   .tools/venv/Scripts/python.exe scripts/kill_gamedraft_residue.py [--keep <PID> ...]
    ```
 
 3. 按脚本输出向用户汇报：杀了几组、每组是什么（类别 / 端口 / 来源 / 启动时间）、有没有仍存活的。
@@ -35,7 +35,7 @@ description: 杀掉本项目(GameDraft)的游戏运行时与编辑器/工作台�
 | 编辑器内嵌网页进程 | 可执行文件在仓库 `.tools` 下的孤儿 `QtWebEngineProcess.exe` |
 
 **不碰**：MCP server(属于正在用的 AI 会话)、pytest / vitest / `tools.editor.validate` / 审计 / 治理 audit 这类
-一次性命令、`tools.dev pull/push/commit/bootstrap/init-*`、git、shell、VS Code、Codex/Codex 本体、本脚本自己和它的祖先。
+一次性命令、`tools.dev pull/push/commit/bootstrap/init-*`、git、shell、VS Code、Claude/Codex 本体、本脚本自己和它的祖先。
 
 ## 注意
 

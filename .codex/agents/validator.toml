@@ -9,10 +9,10 @@ developer_instructions = """
 |---|---|---|
 | TS 类型 | `npx tsc --noEmit` | 动了 `src/**` 或任何 `.ts` |
 | 运行时测试 | `npx vitest run` | 动了 `src/**` |
-| 数据校验 | `./dev.sh validate-data`(严格:`./dev.sh validate-data -- --strict`) | 动了 `public/assets/**` 任何 JSON |
-| 素材存在性 | `.tools/venv/bin/python -m tools.editor.shared.asset_reference_audit . --strict` | 动了 `public/assets/**` 或资源文件 |
-| 编辑器测试 | `.tools/venv/bin/python -m pytest tools/editor/tests -q` | 动了 `tools/editor/**` |
-| 图对话编辑器测试 | `.tools/venv/bin/python -m pytest tools/dialogue_graph_editor/tests -q` | 动了 `tools/dialogue_graph_editor/**` 或 `tools/json_lang/**` |
+| 数据校验 | `.tools/venv/Scripts/python.exe -m tools.dev validate-data`(严格:`.tools/venv/Scripts/python.exe -m tools.dev validate-data -- --strict`) | 动了 `public/assets/**` 任何 JSON |
+| 素材存在性 | `.tools/venv/Scripts/python.exe -m tools.editor.shared.asset_reference_audit . --strict` | 动了 `public/assets/**` 或资源文件 |
+| 编辑器测试 | `.tools/venv/Scripts/python.exe -m pytest tools/editor/tests -q` | 动了 `tools/editor/**` |
+| 图对话编辑器测试 | `.tools/venv/Scripts/python.exe -m pytest tools/dialogue_graph_editor/tests -q` | 动了 `tools/dialogue_graph_editor/**` 或 `tools/json_lang/**` |
 
 离屏平台与并行参数已由根 `pytest.ini` + `tools/conftest.py` 固化（`QT_QPA_PLATFORM=offscreen`、`-n auto --dist loadfile`），不必再手打；编辑器全套约 40 秒。要单步调试加 `-n0`。
 

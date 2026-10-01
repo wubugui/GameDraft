@@ -36,22 +36,22 @@ Codex, Claude, or another agent client can reference this file directly instead 
 
 ## Audit Summary
 
-- Generated: `2026-09-25T09:15:50`
+- Generated: `2026-09-28T13:02:17`
 - Root: `E:/GameDev/GameDraft`
-- Artifacts: `144`
-- Issues: `190`
-- By severity: `{"info": 51, "warn": 139}`
-- By category: `{"broken-reference": 34, "drift-risk": 102, "missing-lifecycle": 31, "missing-metadata": 3, "possible-overlap": 15, "weak-workflow-entry": 5}`
+- Artifacts: `145`
+- Issues: `193`
+- By severity: `{"info": 51, "warn": 142}`
+- By category: `{"broken-reference": 34, "drift-risk": 105, "missing-lifecycle": 31, "missing-metadata": 3, "possible-overlap": 15, "weak-workflow-entry": 5}`
 
 ## Governance Resources
 
 - `governance://hub` (1): 治理台 Host 快照。完整 MCP Host / Agent Workbench 快照。
 - `governance://canvas/current` (0): 当前画布状态。0 个引用，视图 workpacks
-- `governance://audit/stats` (190): 审计统计。144 个资产，190 个问题
-- `governance://dashboard/elements` (492): 页面元素引用索引。dashboard 中 492 个可引用的数据元素和面板入口。
+- `governance://audit/stats` (193): 审计统计。145 个资产，193 个问题
+- `governance://dashboard/elements` (497): 页面元素引用索引。dashboard 中 497 个可引用的数据元素和面板入口。
 - `governance://workpacks` (6): 治理包索引。6 个治理包
-- `governance://issues` (190): 证据库。190 条原始证据
-- `governance://artifacts` (144): 资产清单。144 个 skill/workflow/agent 资产
+- `governance://issues` (193): 证据库。193 条原始证据
+- `governance://artifacts` (145): 资产清单。145 个 skill/workflow/agent 资产
 - `governance://apps` (5): 治理台应用。已注册的内置应用和外部 MCP/命令应用。
 - `governance://tools` (14): 治理台工具。Host 暴露给 agent 的工具清单。
 - `governance://prompts` (9): 治理台提示词。Host 暴露给 agent 的 prompt 模板。
@@ -63,11 +63,11 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://view/issues` (1): 证据库区。原始 issue / evidence 列表。
 - `governance://view/artifacts` (1): 资产清单区。扫描到的 skill / workflow / script 资产。
 - `governance://stat/workpack-count` (6): 治理包数量。6
-- `governance://stat/issue-count` (190): 证据项数量。190
+- `governance://stat/issue-count` (193): 证据项数量。193
 - `governance://stat/error-count` (0): 断链/错误数量。0
-- `governance://stat/warn-count` (139): 需复核数量。139
+- `governance://stat/warn-count` (142): 需复核数量。142
 - `governance://workpack/broken-reference` (34): 断链修复包。缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。
-- `governance://workpack/drift-risk` (102): 规则漂移复核包。规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
+- `governance://workpack/drift-risk` (105): 规则漂移复核包。规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
 - `governance://workpack/missing-metadata` (3): Skill 触发条件补齐包。Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。
 - `governance://workpack/missing-lifecycle` (31): 生命周期元数据补齐包。缺少 status / owner / last verified 这类治理字段，可以标准化批量补。
 - `governance://workpack/weak-workflow-entry` (5): 工作流入口补齐包。工作流文档没有明显脚本、工具或检查入口，后续 agent 很难执行。
@@ -91,7 +91,8 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://issue/missing-trigger.cursor-skill.agent-docs-cli` (1): Skill has no clear trigger/use condition。.cursor/skills/agent-docs-cli/SKILL.md:1
 - `governance://issue/missing-trigger.cursor-skill.animation-production` (1): Skill has no clear trigger/use condition。.cursor/skills/animation-production/SKILL.md:1
 - `governance://issue/drift.cursor-skill.animation-production.14.agent_docs-asset-pipeline-mechanisms-sprite-atlas-anim-contract.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/animation-production/SKILL.md:14
-- `governance://issue/drift.cursor-skill.animation-production.29.artifact-igniteanim_20260916-backup-anim.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/animation-production/SKILL.md:29
+- `governance://issue/drift.cursor-skill.animation-production.29.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/animation-production/SKILL.md:29
+- `governance://issue/drift.cursor-skill.animation-production.29.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.png` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/animation-production/SKILL.md:29
 - `governance://issue/broken-ref.cursor-skill.animation-production.49.tmp-libtv_animation_batch_run_20260702-run_animation_batch.py` (1): Reference target is missing。.cursor/skills/animation-production/SKILL.md:49
 - `governance://issue/drift.cursor-skill.animation-production.60.src-rendering-spriteentity.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/animation-production/SKILL.md:60
 - `governance://issue/drift.cursor-skill.commit-push-gamedraft.22.scripts-sync-dvc-cache.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/commit-push-gamedraft/SKILL.md:22
@@ -178,10 +179,11 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://issue/broken-ref.tools-acoustic_workbench-readme.72.devstate.json` (1): Reference target is missing。tools/acoustic_workbench/README.md:72
 - `governance://issue/broken-ref.tools-anim_preview-readme.106.setup.png` (1): Reference target is missing。tools/anim_preview/README.md:106
 - `governance://issue/broken-ref.tools-anim_preview-readme.125.setup.png` (1): Reference target is missing。tools/anim_preview/README.md:125
-- `governance://issue/drift.tools-animation_pipeline-readme.4.artifact-igniteanim_20260916-backup-anim.json` (1): Referenced artifact is newer than this rule/workflow。tools/animation_pipeline/README.md:4
+- `governance://issue/drift.tools-animation_pipeline-readme.3.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.png` (1): Referenced artifact is newer than this rule/workflow。tools/animation_pipeline/README.md:3
+- `governance://issue/drift.tools-animation_pipeline-readme.4.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json` (1): Referenced artifact is newer than this rule/workflow。tools/animation_pipeline/README.md:4
 - `governance://issue/broken-ref.tools-animation_pipeline-readme.6.tmp-libtv_animation_batch_run_20260702-run_animation_batch.py` (1): Reference target is missing。tools/animation_pipeline/README.md:6
 - `governance://issue/drift.tools-animation_pipeline-readme.83.tools-video_to_atlas-atlas_core.py` (1): Referenced artifact is newer than this rule/workflow。tools/animation_pipeline/README.md:83
-- `governance://issue/drift.tools-animation_pipeline-readme.84.artifact-igniteanim_20260916-backup-anim.json` (1): Referenced artifact is newer than this rule/workflow。tools/animation_pipeline/README.md:84
+- `governance://issue/drift.tools-animation_pipeline-readme.84.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json` (1): Referenced artifact is newer than this rule/workflow。tools/animation_pipeline/README.md:84
 - `governance://issue/drift.tools-character_lighting_lab-readme.22.tools-character_lighting_lab-pipeline.py` (1): Referenced artifact is newer than this rule/workflow。tools/character_lighting_lab/README.md:22
 - `governance://issue/broken-ref.tools-character_lighting_lab-readme.73.tools-scene_relight-bake.py` (1): Reference target is missing。tools/character_lighting_lab/README.md:73
 - `governance://issue/broken-ref.tools-character_lighting_lab-readme.399.tools-scene_depth_editor` (1): Reference target is missing。tools/character_lighting_lab/README.md:399
@@ -209,6 +211,7 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://issue/broken-ref.tools-video_to_atlas-readme.7..tools-venv-bin-python` (1): Reference target is missing。tools/video_to_atlas/README.md:7
 - `governance://issue/drift.tools-video_to_atlas-readme.34.tools-video_to_atlas-atlas_core.py` (1): Referenced artifact is newer than this rule/workflow。tools/video_to_atlas/README.md:34
 - `governance://issue/drift.tools-video_to_atlas-readme.82.artifact-albedocliff_20260907-analysis-division_keep_residual.png` (1): Referenced artifact is newer than this rule/workflow。tools/video_to_atlas/README.md:82
+- `governance://issue/drift.tools-video_to_atlas-readme.83.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.meta.json` (1): Referenced artifact is newer than this rule/workflow。tools/video_to_atlas/README.md:83
 - `governance://issue/drift.tools-voice_workbench-readme.27.artifact-storm-audio-fix-20260920-before-audio_config.json` (1): Referenced artifact is newer than this rule/workflow。tools/voice_workbench/README.md:27
 - `governance://issue/drift.tools-voice_workbench-readme.31.artifact-storm-audio-fix-20260920-before-audio_config.json` (1): Referenced artifact is newer than this rule/workflow。tools/voice_workbench/README.md:31
 - `governance://issue/missing-lifecycle.claude-skill.agent-docs-cli` (1): Skill has no lifecycle metadata。.claude/skills/agent-docs-cli/SKILL.md:1
@@ -299,6 +302,7 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://artifact/package-script.verify-sweep-dev` (1): npm run verify:sweep:dev。package.json
 - `governance://artifact/bootstrap` (1): GameDraft bootstrap for macOS/Linux. Creates a project venv (.tools/venv)。bootstrap.sh
 - `governance://artifact/dev` (1): macOS/Linux task entry: ./dev.sh <task> [args]。dev.sh
+- `governance://artifact/scripts-agent_hooks-codex_hooks` (1): codex_hooks。scripts/agent_hooks/codex_hooks.py
 - `governance://artifact/scripts-agent_hooks-flag_discipline` (1): ---------------------------------------------------------------- 检测。scripts/agent_hooks/flag_discipline.py
 - `governance://artifact/scripts-agent_hooks-no_local_blender` (1): .local-disabled = 被替身顶掉后改名留在原处的原件,跑它同样算违规。scripts/agent_hooks/no_local_blender.py
 - `governance://artifact/scripts-agent_hooks-validation_gate` (1): validation_gate。scripts/agent_hooks/validation_gate.py
@@ -442,6 +446,7 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://source/docs%2Fplan%2Fproduction-workbench-acceptance-checklist.md` (1): docs/plan/production-workbench-acceptance-checklist.md。项目内源码/文档路径。
 - `governance://source/docs%2Fplan%2Fproduction-workbench-acceptance-status.md` (1): docs/plan/production-workbench-acceptance-status.md。项目内源码/文档路径。
 - `governance://source/package.json` (1): package.json。项目内源码/文档路径。
+- `governance://source/scripts%2Fagent_hooks%2Fcodex_hooks.py` (1): scripts/agent_hooks/codex_hooks.py。项目内源码/文档路径。
 - `governance://source/scripts%2Fagent_hooks%2Fflag_discipline.py` (1): scripts/agent_hooks/flag_discipline.py。项目内源码/文档路径。
 - `governance://source/scripts%2Fagent_hooks%2Fno_local_blender.py` (1): scripts/agent_hooks/no_local_blender.py。项目内源码/文档路径。
 - `governance://source/scripts%2Fagent_hooks%2Fvalidation_gate.py` (1): scripts/agent_hooks/validation_gate.py。项目内源码/文档路径。
@@ -613,7 +618,7 @@ Prompt:
 
 - URI: `governance://workpack/drift-risk`
 - Kind: `agent-review`
-- Issues: `102`
+- Issues: `105`
 - Summary: 规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
 - Next: 交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。
 - Paths:
@@ -633,7 +638,7 @@ Prompt:
 Prompt:
 
 ```text
-请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，102 项）。
+请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，105 项）。
 目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
 执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。
 要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
@@ -844,24 +849,24 @@ Prompt:
     "filters": {},
     "visibleView": "workpacks",
     "stats": {
-      "artifact_count": 144,
-      "issue_count": 190,
+      "artifact_count": 145,
+      "issue_count": 193,
       "by_type": {
         "agent_rules": 3,
         "ci_workflow": 1,
         "package_script": 31,
-        "script": 40,
+        "script": 41,
         "skill": 36,
         "tool_requirements": 10,
         "workflow_doc": 23
       },
       "by_severity": {
         "info": 51,
-        "warn": 139
+        "warn": 142
       },
       "by_category": {
         "broken-reference": 34,
-        "drift-risk": 102,
+        "drift-risk": 105,
         "missing-lifecycle": 31,
         "missing-metadata": 3,
         "possible-overlap": 15,
@@ -869,8 +874,8 @@ Prompt:
       }
     },
     "workpackCount": 6,
-    "issueCount": 190,
-    "artifactCount": 144
+    "issueCount": 193,
+    "artifactCount": 145
   },
   "enabled_apps": [
     {
@@ -952,15 +957,15 @@ Prompt:
       "uri": "governance://audit/stats",
       "title": "审计统计",
       "kind": "audit",
-      "summary": "144 个资产，190 个问题",
-      "count": 190
+      "summary": "145 个资产，193 个问题",
+      "count": 193
     },
     {
       "uri": "governance://dashboard/elements",
       "title": "页面元素引用索引",
       "kind": "element-index",
-      "summary": "dashboard 中 492 个可引用的数据元素和面板入口。",
-      "count": 492
+      "summary": "dashboard 中 497 个可引用的数据元素和面板入口。",
+      "count": 497
     },
     {
       "uri": "governance://workpacks",
@@ -973,15 +978,15 @@ Prompt:
       "uri": "governance://issues",
       "title": "证据库",
       "kind": "issue-index",
-      "summary": "190 条原始证据",
-      "count": 190
+      "summary": "193 条原始证据",
+      "count": 193
     },
     {
       "uri": "governance://artifacts",
       "title": "资产清单",
       "kind": "artifact-index",
-      "summary": "144 个 skill/workflow/agent 资产",
-      "count": 144
+      "summary": "145 个 skill/workflow/agent 资产",
+      "count": 145
     },
     {
       "uri": "governance://apps",
@@ -1064,8 +1069,8 @@ Prompt:
       "uri": "governance://stat/issue-count",
       "title": "证据项数量",
       "kind": "stat",
-      "summary": "190",
-      "count": 190
+      "summary": "193",
+      "count": 193
     },
     {
       "uri": "governance://stat/error-count",
@@ -1078,8 +1083,8 @@ Prompt:
       "uri": "governance://stat/warn-count",
       "title": "需复核数量",
       "kind": "stat",
-      "summary": "139",
-      "count": 139
+      "summary": "142",
+      "count": 142
     },
     {
       "uri": "governance://workpack/broken-reference",
@@ -1093,7 +1098,7 @@ Prompt:
       "title": "规则漂移复核包",
       "kind": "workpack",
       "summary": "规则/工作流引用的代码或文档更新过，说明文字可能已经落后。",
-      "count": 102
+      "count": 105
     },
     {
       "uri": "governance://workpack/missing-metadata",
@@ -1257,7 +1262,14 @@ Prompt:
       "count": 1
     },
     {
-      "uri": "governance://issue/drift.cursor-skill.animation-production.29.artifact-igniteanim_20260916-backup-anim.json",
+      "uri": "governance://issue/drift.cursor-skill.animation-production.29.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json",
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "kind": "issue",
+      "summary": ".cursor/skills/animation-production/SKILL.md:29",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/drift.cursor-skill.animation-production.29.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.png",
       "title": "Referenced artifact is newer than this rule/workflow",
       "kind": "issue",
       "summary": ".cursor/skills/animation-production/SKILL.md:29",
@@ -1866,7 +1878,14 @@ Prompt:
       "count": 1
     },
     {
-      "uri": "governance://issue/drift.tools-animation_pipeline-readme.4.artifact-igniteanim_20260916-backup-anim.json",
+      "uri": "governance://issue/drift.tools-animation_pipeline-readme.3.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.png",
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "kind": "issue",
+      "summary": "tools/animation_pipeline/README.md:3",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/drift.tools-animation_pipeline-readme.4.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json",
       "title": "Referenced artifact is newer than this rule/workflow",
       "kind": "issue",
       "summary": "tools/animation_pipeline/README.md:4",
@@ -1887,7 +1906,7 @@ Prompt:
       "count": 1
     },
     {
-      "uri": "governance://issue/drift.tools-animation_pipeline-readme.84.artifact-igniteanim_20260916-backup-anim.json",
+      "uri": "governance://issue/drift.tools-animation_pipeline-readme.84.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-anim.json",
       "title": "Referenced artifact is newer than this rule/workflow",
       "kind": "issue",
       "summary": "tools/animation_pipeline/README.md:84",
@@ -2080,6 +2099,13 @@ Prompt:
       "title": "Referenced artifact is newer than this rule/workflow",
       "kind": "issue",
       "summary": "tools/video_to_atlas/README.md:82",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/drift.tools-video_to_atlas-readme.83.artifact-animroute_20260925-batch-work-huihungui_anim-out_auto_chroma-atlas.meta.json",
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "kind": "issue",
+      "summary": "tools/video_to_atlas/README.md:83",
       "count": 1
     },
     {
@@ -2710,6 +2736,13 @@ Prompt:
       "title": "macOS/Linux task entry: ./dev.sh <task> [args]",
       "kind": "artifact",
       "summary": "dev.sh",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/scripts-agent_hooks-codex_hooks",
+      "title": "codex_hooks",
+      "kind": "artifact",
+      "summary": "scripts/agent_hooks/codex_hooks.py",
       "count": 1
     },
     {
@@ -3709,6 +3742,13 @@ Prompt:
     {
       "uri": "governance://source/package.json",
       "title": "package.json",
+      "kind": "source",
+      "summary": "项目内源码/文档路径。",
+      "count": 1
+    },
+    {
+      "uri": "governance://source/scripts%2Fagent_hooks%2Fcodex_hooks.py",
+      "title": "scripts/agent_hooks/codex_hooks.py",
       "kind": "source",
       "summary": "项目内源码/文档路径。",
       "count": 1

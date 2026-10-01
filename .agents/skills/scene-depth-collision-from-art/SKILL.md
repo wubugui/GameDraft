@@ -7,8 +7,8 @@ description: 从一张场景原画一次做出碰撞 + 深度(连同所有跟着
 
 > 知识在库里,**先读完再动手**:深度标定与塌平面的来龙去脉 `agent_docs/asset-pipeline/mechanisms/scene-bake-downstream.md`(「已知坑」④);
 > 碰撞口径 `agent_docs/editor-tools/recipes/collision-from-art.md`;作者层与重投 `agent_docs/editor-tools/mechanisms/terrain-workbench.md`。
-> 本技能只管怎么做。命令前加 `PYTHONIOENCODING=utf-8`;下文 `AR` = `sh scripts/py.sh -m tools.terrain_workbench.art_review`,
-> `REDO` = `sh scripts/py.sh -m tools.character_lighting_lab.redo_depth`。产物默认在 `local/collision_review/<场景>/`。
+> 本技能只管怎么做。命令前加 `PYTHONIOENCODING=utf-8`;下文 `AR` = `.tools/venv/Scripts/python.exe -m tools.terrain_workbench.art_review`,
+> `REDO` = `.tools/venv/Scripts/python.exe -m tools.character_lighting_lab.redo_depth`。产物默认在 `local/collision_review/<场景>/`。
 
 ## 为什么是这个顺序(一句话)
 
@@ -76,7 +76,7 @@ description: 从一张场景原画一次做出碰撞 + 深度(连同所有跟着
 - 落雷 / 粒子依赖真实表面的,抽查一次(`strikeThreat` 无靶落点候选 > 0,见 `agent_docs/runtime/mechanisms/strike-threat.md`)。
 
 ### 8. 收尾
-- `sh scripts/py.sh -m tools.terrain_workbench --check <场景>`、`audit_walkable --reach`、`validate-data`(只看有没有新增 error)。
+- `.tools/venv/Scripts/python.exe -m tools.terrain_workbench --check <场景>`、`audit_walkable --reach`、`validate-data`(只看有没有新增 error)。
 - 回报制作人(**以图为主**):改前 / 改后 `depthsheet` 并排、第二轮摆人图、俯角、开放了的"物体后面的地"位置、第 5 步停下没收敛的点。
 
 ## 已知坑

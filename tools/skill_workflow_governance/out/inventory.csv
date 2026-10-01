@@ -36,6 +36,7 @@ package-script.verify-sweep,package_script,npm run verify:sweep,package.json,pac
 package-script.verify-sweep-dev,package_script,npm run verify:sweep:dev,package.json,package_json,2026-09-08T02:50:08,node scripts/scene_sweep.mjs --target dev
 bootstrap,script,GameDraft bootstrap for macOS/Linux. Creates a project venv (.tools/venv),bootstrap.sh,script,2026-08-19T00:57:36,set -euo pipefail
 dev,script,macOS/Linux task entry: ./dev.sh <task> [args],dev.sh,script,2026-08-19T00:57:36,set -euo pipefail
+scripts-agent_hooks-codex_hooks,script,codex_hooks,scripts/agent_hooks/codex_hooks.py,script,2026-09-28T12:49:27,"""""""Codex event adapter for the existing GameDraft Claude hook policies."
 scripts-agent_hooks-flag_discipline,script,---------------------------------------------------------------- 检测,scripts/agent_hooks/flag_discipline.py,script,2026-09-15T01:45:11,"""""""flag 纪律门(制作人 2026-09-15 定):不准自己写 flag,派生 flag 只读;编排一律走叙事状态机。"
 scripts-agent_hooks-no_local_blender,script,".local-disabled = 被替身顶掉后改名留在原处的原件,跑它同样算违规",scripts/agent_hooks/no_local_blender.py,script,2026-09-24T09:55:09,"""""""本机 Blender 禁用门(制作人 2026-09-24 定):Blender 一律走局域网 Hub,本机不许运行任何 Blender。"
 scripts-agent_hooks-validation_gate,script,validation_gate,scripts/agent_hooks/validation_gate.py,script,2026-08-28T03:10:13,"""""""Claude Code Stop hook:收尾验证门(廉价判定,不跑真实校验)。"
