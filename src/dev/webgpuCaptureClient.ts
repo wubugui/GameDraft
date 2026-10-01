@@ -72,6 +72,7 @@ interface FrameDiagnosticBatch {
   busy: boolean;
   cancelled: boolean;
   failed: boolean;
+  submissionCounts: number[];
 }
 
 interface Inspector {
@@ -380,14 +381,16 @@ export class WebGpuCaptureClient {
           } : null;
           this.frameDiagnostics = {
             jobId: job.id, uploads: Promise.resolve(), active: null,
-            busy: false, cancelled: false, failed: false,
+            busy: false, cancelled: false, failed: false, submissionCounts: [],
           };
-          this.setFrameHook((draw) => this.captureDisplayFrame(draw));
+          // Explicit stepping owns the whole frame, including offscreen GPU work
+          // performed by Game.tick before Application.render composites the stage.
+          this.setFrameHook(this.advanceFrameLoop ? null : (draw) => this.captureDisplayFrame(draw));
           this.acceptStatus(job);
           if (this.advanceFrameLoop) {
             try {
               this.holdFrameLoop();
-              this.advanceFrameLoop();
+              this.captureDisplayFrame(this.advanceFrameLoop);
             } catch (error) {
               await this.fail(job, `无法推进捕获帧：${String(error)}`);
               return;
@@ -521,6 +524,7 @@ export class WebGpuCaptureClient {
       try {
         const diagnostics = await result;
         if (batch.cancelled || !this.isCurrentJob(job)) return;
+        batch.submissionCounts[frameIndex - 1] = diagnostics.submissionCount;
         await this.exportDiagnostics(job, frameIndex, diagnostics);
         if (images) await images.uploads;
         frameWritten = true;
@@ -528,7 +532,7 @@ export class WebGpuCaptureClient {
         if (batch.active === diagnostic) batch.active = null;
         batch.busy = false;
         if (frameWritten && frameIndex < job.requestedFrames && !batch.cancelled && this.isCurrentJob(job)) {
-          if (this.advanceFrameLoop) this.advanceFrameLoop();
+          if (this.advanceFrameLoop) this.captureDisplayFrame(this.advanceFrameLoop);
           else this.releaseFrameLoop(frameResume);
         }
       }
@@ -647,6 +651,13 @@ export class WebGpuCaptureClient {
       if (!this.isCurrentJob(job) || diagnostics.cancelled || images?.cancelled) return;
       const stream = await inspector.saveCaptureData(`${job.id}.wgpuc`, { download: false });
       saved = true;
+      if (diagnostics.submissionCounts.length !== actualFrames ||
+          diagnostics.submissionCounts.some(count => !Number.isSafeInteger(count) || count < 1)) {
+        throw new Error('抓帧缺少完整的逐帧 GPU 提交边界');
+      }
+      stream.metadata.gamedraftCapture = {
+        version: 1, frameSubmissionCounts: diagnostics.submissionCounts,
+      };
       const blob = inspector.captureStreamToBlob(stream);
       if (!(blob instanceof Blob) || blob.size === 0) throw new Error('WebGPU Inspector 生成了空抓帧文件');
       if (blob.size > MAX_CAPTURE_BYTES) {

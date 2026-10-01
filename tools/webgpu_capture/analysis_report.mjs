@@ -171,6 +171,15 @@ function resourceTable(objects, byId) {
 }
 
 export function buildCaptureDetails(metadata, passes) {
+  const capture = metadata.gamedraftCapture;
+  const submissionCounts = capture?.frameSubmissionCounts;
+  if (capture !== undefined && (capture?.version !== 1 || !Array.isArray(submissionCounts) ||
+      submissionCounts.length < 1 || submissionCounts.length > 120 ||
+      submissionCounts.some(count => !Number.isSafeInteger(count) || count < 1) ||
+      submissionCounts.reduce((sum, count) => sum + count, 0) !==
+        metadata.commands.filter(command => command?.method === 'submit').length)) {
+    throw new Error('invalid GameDraft capture frame submission boundaries');
+  }
   const objects = objectList(metadata);
   const byId = new Map(objects.map(object => [object.id, object]));
   const resources = resourceTable(objects, byId);
@@ -183,6 +192,7 @@ export function buildCaptureDetails(metadata, passes) {
   let frameOrdinal = 1;
   let frameBeginCommand = 0;
   let currentFrameTextureId = null;
+  let submissionsInFrame = 0;
 
   for (let commandIndex = 0; commandIndex < metadata.commands.length; commandIndex++) {
     const command = metadata.commands[commandIndex];
@@ -266,14 +276,18 @@ export function buildCaptureDetails(metadata, passes) {
     }
     events.push(event);
     if (method === 'submit') {
+      submissionsInFrame++;
+      if (submissionCounts && submissionsInFrame < submissionCounts[frameOrdinal - 1]) continue;
       frames.push({
         frameOrdinal, beginCommand: frameBeginCommand, endCommand: commandIndex,
-        submitCommandIndex: commandIndex, boundarySource: 'queue.submit',
-        boundaryConfidence: 'inferred', frameTextureId: currentFrameTextureId,
+        submitCommandIndex: commandIndex,
+        boundarySource: submissionCounts ? 'gamedraft-capture' : 'queue.submit',
+        boundaryConfidence: submissionCounts ? 'explicit' : 'inferred', frameTextureId: currentFrameTextureId,
         imageFile: null,
       });
       frameTextureId = currentFrameTextureId;
       frameOrdinal++;
+      submissionsInFrame = 0;
       frameBeginCommand = commandIndex + 1;
       currentFrameTextureId = null;
     }

@@ -349,6 +349,8 @@ export interface RhiFrameDebugCapture {
     onPassEnd: (pass: RhiRenderPassEndCapture) => void;
     onAspectEnd?: (aspect: RhiDepthStencilAspectCapture) => void;
     onSubmitted?: () => void;
+    /** Exact submission timing, unaffected by results from earlier ordinary frames. */
+    onProfile?: (profile: RhiGpuSubmissionProfile) => void;
     onAborted?: () => void;
   }): () => void;
 }

@@ -142,6 +142,28 @@ export class DialogueUI {
   private captureSteppedMs = 0;
   private captureFrameActive = false;
   private captureResumeCallbacks = new Set<() => void>();
+  private fadeAnimations = new Set<() => boolean>();
+  private fadeRaf = 0;
+
+  private scheduleFadeFrame(): void {
+    if (this.fadeRaf || this.capturePauseDepth > 0 || this.fadeAnimations.size === 0) return;
+    this.fadeRaf = requestAnimationFrame(() => {
+      this.fadeRaf = 0;
+      this.stepFades();
+      this.scheduleFadeFrame();
+    });
+  }
+
+  private stepFades(): void {
+    for (const step of [...this.fadeAnimations]) {
+      if (!step()) this.fadeAnimations.delete(step);
+    }
+  }
+
+  private animateFade(step: () => boolean): void {
+    this.fadeAnimations.add(step);
+    this.scheduleFadeFrame();
+  }
 
   private captureClockNow(): number {
     return (this.capturePauseDepth > 0 ? this.capturePauseStartedAt : performance.now())
@@ -149,7 +171,11 @@ export class DialogueUI {
   }
 
   suspendForCapture(): () => void {
-    if (this.capturePauseDepth++ === 0) this.capturePauseStartedAt = performance.now();
+    if (this.capturePauseDepth++ === 0) {
+      this.capturePauseStartedAt = performance.now();
+      if (this.fadeRaf) cancelAnimationFrame(this.fadeRaf);
+      this.fadeRaf = 0;
+    }
     let released = false;
     return () => {
       if (released) return;
@@ -159,6 +185,7 @@ export class DialogueUI {
         const pending = [...this.captureResumeCallbacks];
         this.captureResumeCallbacks.clear();
         for (const resume of pending) resume();
+        this.scheduleFadeFrame();
       }
     };
   }
@@ -166,6 +193,7 @@ export class DialogueUI {
   beginCaptureFrame(dt: number): () => void {
     this.captureSteppedMs += dt * 1000;
     this.captureFrameActive = true;
+    this.stepFades();
     return () => { this.captureFrameActive = false; };
   }
   private renderer: Renderer;
@@ -610,18 +638,17 @@ export class DialogueUI {
     flash.eventMode = 'none';
     layer.addChild(flash);
     const start = this.captureClockNow();
-    const fade = (): void => {
-      if (flash.destroyed) return;
-      if (this.capturePauseDepth > 0) { requestAnimationFrame(fade); return; }
+    this.animateFade(() => {
+      if (flash.destroyed) return false;
       const t = Math.min(1, (this.captureClockNow() - start) / 280);
       flash.alpha = (1 - UITheme.motion.easeOut(t)) * 0.45;
-      if (t < 1) { requestAnimationFrame(fade); return; }
+      if (t < 1) return true;
       if (flash.parent) flash.parent.removeChild(flash);
       flash.destroy();
       // 闪完再重建，让"已采集"的常驻下划线接上——立刻重建会把这 280ms 的动画连容器一起拆
       if (this.isShowingFullText) this.buildClueLayer();
-    };
-    requestAnimationFrame(fade);
+      return false;
+    });
   }
 
   private clearClueLayer(): void {
@@ -859,14 +886,12 @@ export class DialogueUI {
     const shown = this.container;
     shown.alpha = 0;
     const fadeStarted = this.captureClockNow();
-    const fade = () => {
-      if (shown.destroyed) return;
-      if (this.capturePauseDepth > 0) { requestAnimationFrame(fade); return; }
+    this.animateFade(() => {
+      if (shown.destroyed) return false;
       const t = Math.min((this.captureClockNow() - fadeStarted) / UITheme.motion.normal, 1);
       shown.alpha = t;
-      if (t < 1) requestAnimationFrame(fade);
-    };
-    requestAnimationFrame(fade);
+      return t < 1;
+    });
 
     window.addEventListener('pointerdown', this.onClickBound);
     window.addEventListener('keydown', this.onKeyBound);
@@ -1367,6 +1392,9 @@ export class DialogueUI {
   }
 
   hide(): void {
+    if (this.fadeRaf) cancelAnimationFrame(this.fadeRaf);
+    this.fadeRaf = 0;
+    this.fadeAnimations.clear();
     // 框已拆：下一场对话要重新按新档画框，别拿上一场的档做比对
     this.framedLayout = null;
     // 两层挂在 container 上、随它一起销毁；这里只摘句柄，免得留指向死容器的引用

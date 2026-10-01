@@ -25,7 +25,7 @@ function installBrowser(inspector: object): void {
   vi.stubGlobal('location', { href: 'http://127.0.0.1:5216/?mode=dev' });
 }
 
-function diagnosticRhi(): { rhi: RhiDevice; submit: (frame: number) => void } {
+function diagnosticRhi(profiled = false): { rhi: RhiDevice; submit: (frame: number, kind?: 'frame' | 'submit') => void } {
   let armed: Parameters<RhiFrameDebugCapture['captureNextSubmission']>[0] | null = null;
   const rhi = {
     native: { device: {} },
@@ -36,15 +36,15 @@ function diagnosticRhi(): { rhi: RhiDevice; submit: (frame: number) => void } {
       };
     } },
     gpuProfiler: {
-      status: () => ({ state: 'unsupported', reason: '测试设备无 timestamp-query' }),
+      status: () => profiled ? { state: 'enabled' } : { state: 'unsupported', reason: '测试设备无 timestamp-query' },
       onResult: () => () => {}, setEnabled: () => {},
     },
   } as unknown as RhiDevice;
-  return { rhi, submit(frame) {
+  return { rhi, submit(frame, kind = 'frame') {
     const hooks = armed;
     if (!hooks) throw new Error('本帧未安装 RHI 诊断钩子');
     armed = null;
-    hooks.onPassEnd({ frame, submissionKind: 'frame', submissionLabel: 'test',
+    hooks.onPassEnd({ frame, submissionKind: kind, submissionLabel: 'test',
       encoder: {} as GPUCommandEncoder, texture: null, copyable: false,
       reason: '测试纹理不可回读', label: 'test pass', passOrdinal: 0,
       targetLabel: 'RT', colorIndex: 0, width: 2, height: 2, format: 'rgba8unorm' });
@@ -55,13 +55,15 @@ function diagnosticRhi(): { rhi: RhiDevice; submit: (frame: number) => void } {
     hooks.onDrawBuffer?.({ encoder: {} as GPUCommandEncoder, passOrdinal: 0,
       role: 'uniform', buffer: null, bufferId: null, bufferLabel: 'Uniform',
       totalSize: 4, offset: 0, size: 4, rangeScope: 'binding', reason: '测试 Buffer 不可回读' });
-    hooks.onAspectEnd?.({ frame, submissionKind: 'frame', submissionLabel: 'test',
+    hooks.onAspectEnd?.({ frame, submissionKind: kind, submissionLabel: 'test',
       encoder: {} as GPUCommandEncoder, texture: null, textureId: null, viewId: null,
       label: 'test pass', passOrdinal: 0, targetLabel: 'Depth', aspect: 'depth',
       width: 2, height: 2, sourceFormat: 'depth24plus', sampleCount: 1,
       reason: '测试深度不可回读' });
-    hooks.onResourceInventory?.({ textureCount: 0, bufferCount: 0, textureSubresourceCount: 0 });
+    if (kind === 'frame') hooks.onResourceInventory?.({ textureCount: 0, bufferCount: 0, textureSubresourceCount: 0 });
     hooks.onSubmitted?.();
+    if (profiled) queueMicrotask(() => hooks.onProfile?.({ kind, frame, label: 'test',
+      passes: [{ kind: 'render', label: 'test pass', gpuMs: 0.25 }], totalGpuMs: 0.25 }));
   } };
 }
 
@@ -240,7 +242,7 @@ describe('WebGPU 真帧抓取', () => {
       captureStreamToBlob: vi.fn(() => new Blob(['WGPUCAP test'])),
     };
     installBrowser(inspector);
-    const diagnostic = diagnosticRhi();
+    const diagnostic = diagnosticRhi(true);
     const reports: Record<string, unknown>[] = [];
     let suspended = 0;
     let drawn = 0;
@@ -272,7 +274,12 @@ describe('WebGPU 真帧抓取', () => {
       advanceFrameLoop: () => {
         expect(suspended).toBe(1);
         drawn++;
-        hook!(() => { order.push(`draw-${drawn}`); diagnostic.submit(drawn); });
+        expect(hook).toBeNull();
+        order.push(`offscreen-${drawn}`);
+        diagnostic.submit(drawn, 'submit');
+        diagnostic.submit(drawn, 'submit');
+        order.push(`draw-${drawn}`);
+        diagnostic.submit(drawn);
       },
       setFrameHook: (next) => { hook = next; }, onChange: () => {},
     });
@@ -289,11 +296,11 @@ describe('WebGPU 真帧抓取', () => {
     expect(drawn).toBe(2);
     expect(suspended).toBe(1);
     expect(client.status.frozen).toBe(true);
-    expect(order.filter(item => item === 'begin' || item === 'end' || item.startsWith('draw-')))
-      .toEqual(['begin', 'draw-1', 'end', 'begin', 'draw-2', 'end']);
+    expect(order.filter(item => item === 'begin' || item === 'end' || /^(draw|offscreen)-/.test(item)))
+      .toEqual(['begin', 'offscreen-1', 'draw-1', 'end', 'begin', 'offscreen-2', 'draw-2', 'end']);
     expect(inspector.beginFrameCapture).toHaveBeenCalledWith({ maxBufferSize: 0, maxTextureSize: 0 });
-    expect(inspector.disableRecording).toHaveBeenCalledTimes(8);
-    expect(inspector.enableRecording).toHaveBeenCalledTimes(8);
+    expect(inspector.disableRecording).toHaveBeenCalledTimes(24);
+    expect(inspector.enableRecording).toHaveBeenCalledTimes(24);
     for (let index = 0; index < order.length; index++) {
       if (order[index] === 'pause-diagnostic') expect(order[index + 1]).toBe('resume-diagnostic');
     }
@@ -302,14 +309,15 @@ describe('WebGPU 真帧抓取', () => {
     await vi.waitFor(() => expect(client.status.job?.state).toBe('completed'));
     expect(reports.map(report => report.frameIndex)).toEqual([1, 2]);
     for (const report of reports) {
-      expect(report.passes).toHaveLength(1);
-      expect(report.inputs).toHaveLength(1);
-      expect(report.aspects).toHaveLength(1);
-      expect(report.buffers).toHaveLength(1);
+      for (const records of [report.passes, report.inputs, report.aspects, report.buffers]) {
+        expect((records as Array<{ passOrdinal: number }>).map(record => record.passOrdinal)).toEqual([0, 1, 2]);
+      }
+      expect((report.gpuPasses as Array<{ ordinal: number }>).map(record => record.ordinal)).toEqual([0, 1, 2]);
     }
     expect(suspended).toBe(0);
     expect(client.status.frozen).toBe(false);
     expect(inspector.saveCaptureData).toHaveBeenCalledWith('job-1.wgpuc', { download: false });
+    expect(stream.metadata).toEqual({ gamedraftCapture: { version: 1, frameSubmissionCounts: [3, 3] } });
     const upload = fetchMock.mock.calls.find(([, init]) => init.method === 'PUT');
     expect(upload?.[0]).toContain('actualFrames=2');
     expect(upload?.[0]).toContain('action=upload');
@@ -340,6 +348,7 @@ describe('WebGPU 真帧抓取', () => {
     (client as unknown as { encodeFrameImage: () => Promise<Blob> }).encodeFrameImage =
       async () => new Blob(['PNG'], { type: 'image/png' });
     const sample = (): CapturedFrameDiagnostics => ({
+      submissionCount: 1,
       passes: [{ passOrdinal: 0, label: 'Pass', targetLabel: 'RT', colorIndex: 0,
         width: 1, height: 1, format: 'rgba8unorm', rawBytesPerRow: 256,
         rawPixels: new Uint8Array(256) }],
@@ -408,6 +417,7 @@ describe('WebGPU 真帧抓取', () => {
       format: 'rgba8unorm', rawBytesPerRow: 256, rawPixels: sharedPixels,
     });
     const diagnostics: CapturedFrameDiagnostics = {
+      submissionCount: 1,
       passes: [], inputs: [input(0, 'first'), input(1, 'second')],
       aspects: [], buffers: [], resourceTextures: [], resourceBuffers: [],
       resourceInventory: { textureCount: 0, bufferCount: 0, textureSubresourceCount: 0 },

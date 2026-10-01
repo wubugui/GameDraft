@@ -40,6 +40,7 @@ export class LumaGpuTimingCapture {
     private readonly kind: 'frame' | 'submit',
     private readonly frame: number | null,
     private readonly label: string,
+    private readonly onResult?: (profile: RhiGpuSubmissionProfile) => void,
   ) {}
 
   /** 在开始 render / compute pass 之前调用；只把查询索引放在 pass descriptor 的 timestampWrites。 */
@@ -79,7 +80,7 @@ export class LumaGpuTimingCapture {
   /** queue.submit 成功后才映射；异步结果不会挡住游戏帧。 */
   submitted(): void {
     if (!this.queryCount) {
-      this.owner.publish({ kind: this.kind, frame: this.frame, label: this.label, passes: [], totalGpuMs: 0 });
+      this.publish({ kind: this.kind, frame: this.frame, label: this.label, passes: [], totalGpuMs: 0 });
       this.cleanup();
       return;
     }
@@ -126,7 +127,12 @@ export class LumaGpuTimingCapture {
     } finally {
       read.unmap();
     }
-    this.owner.publish({ kind: this.kind, frame: this.frame, label: this.label, passes, totalGpuMs });
+    this.publish({ kind: this.kind, frame: this.frame, label: this.label, passes, totalGpuMs });
+  }
+
+  private publish(profile: RhiGpuSubmissionProfile): void {
+    this.owner.publish(profile);
+    this.onResult?.(profile);
   }
 
   private cleanup(): void {
@@ -171,9 +177,12 @@ export class LumaGpuProfiler implements RhiGpuProfiler {
     return () => this.listeners.delete(listener);
   }
 
-  start(kind: 'frame' | 'submit', frame: number | null, label: string): LumaGpuTimingCapture | null {
-    if (this.status().state !== 'enabled' || this.inFlight.size >= MAX_IN_FLIGHT) return null;
-    const capture = new LumaGpuTimingCapture(this, this.device, kind, frame, label);
+  start(kind: 'frame' | 'submit', frame: number | null, label: string,
+    onResult?: (profile: RhiGpuSubmissionProfile) => void): LumaGpuTimingCapture | null {
+    // Ordinary sampling may drop a busy frame. Explicit capture must retain every
+    // submission; its caller holds the game until this frame's readbacks finish.
+    if (this.status().state !== 'enabled' || (!onResult && this.inFlight.size >= MAX_IN_FLIGHT)) return null;
+    const capture = new LumaGpuTimingCapture(this, this.device, kind, frame, label, onResult);
     this.inFlight.add(capture);
     return capture;
   }

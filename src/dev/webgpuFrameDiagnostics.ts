@@ -133,6 +133,7 @@ export interface CapturedGpuPass {
 }
 
 export interface CapturedFrameDiagnostics {
+  submissionCount: number;
   passes: CapturedPassPixels[];
   inputs: CapturedInputPixels[];
   aspects: CapturedAspectPixels[];
@@ -353,7 +354,7 @@ export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
   const device = rhi.native.device;
   const pending: PendingPass[] = [];
   const pendingInputs: PendingInput[] = [];
-  const inputReadbackCache = new WeakMap<GPUTexture, Map<string, PendingInput>>();
+  let inputReadbackCache = new WeakMap<GPUTexture, Map<string, PendingInput>>();
   const pendingAspects: PendingAspect[] = [];
   const pendingBuffers: PendingDrawBuffer[] = [];
   const pendingResourceTextures: PendingResourceTexture[] = [];
@@ -376,8 +377,8 @@ export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
   let omittedTimings = 0;
   let finished = false;
   let cancelled = false;
-  let expectedFrame: number | null = null;
-  let expectedLabel = '';
+  const profiles: Array<Promise<RhiGpuSubmissionProfile>> = [];
+  let passOffset = 0;
   let submittedResolve!: () => void;
   let abortedReject!: (reason: Error) => void;
   const submitted = new Promise<void>((resolve, reject) => {
@@ -389,12 +390,6 @@ export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
   const status = rhi.gpuProfiler?.status() ?? { state: 'unsupported' as const,
     reason: 'RHI 没有 GPU timestamp-query 诊断能力' };
   const restoreProfiler = status.state === 'disabled';
-  let profileResolve!: (value: RhiGpuSubmissionProfile) => void;
-  const profilePromise = new Promise<RhiGpuSubmissionProfile>(resolve => { profileResolve = resolve; });
-  const offProfile = rhi.gpuProfiler?.onResult(profile => {
-    if (profile.kind === 'frame' && expectedFrame !== null && profile.frame === expectedFrame &&
-        (!expectedLabel || profile.label === expectedLabel)) profileResolve(profile);
-  });
   if (restoreProfiler) rhi.gpuProfiler?.setEnabled(true);
 
   let depthPipeline: GPUComputePipeline | undefined;
@@ -413,8 +408,6 @@ export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
   };
 
   const onPassEnd = (event: RhiRenderPassEndCapture): void => {
-    expectedFrame = event.frame;
-    expectedLabel = event.submissionLabel;
     if (event.colorIndex === null) return;
     if (pending.length >= MAX_PASS_RECORDS || event.passOrdinal >= MAX_PASS_RECORDS) {
       omittedReadbacks++;
@@ -567,8 +560,6 @@ export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
   };
 
   const onAspectEnd = (event: RhiDepthStencilAspectCapture): void => {
-    expectedFrame = event.frame;
-    expectedLabel = event.submissionLabel;
     if (pendingAspects.length >= MAX_ASPECT_RECORDS) {
       omittedAspects++;
       return;
@@ -786,25 +777,51 @@ export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
     try { callback(event); }
     finally { recordingControl.enableRecording(); }
   };
-  const stopHook = rhi.frameDebugCapture?.captureNextSubmission({
-    kind: 'frame',
-    onPassEnd: withoutInspectorRecording(onPassEnd),
-    onDrawInput: withoutInspectorRecording(onDrawInput),
-    onDrawBuffer: withoutInspectorRecording(onDrawBuffer),
-    onAspectEnd: withoutInspectorRecording(onAspectEnd),
-    onResourceTexture: withoutInspectorRecording(onResourceTexture),
-    onResourceBuffer: withoutInspectorRecording(onResourceBuffer),
-    onResourceInventory,
-    onSubmitted: () => submittedResolve(),
-    onAborted: () => abortedReject(new Error('GPU 提交中止')),
-  });
+  let stopHook: (() => void) | undefined;
+  const armSubmission = (): void => {
+    const offset = passOffset;
+    let passCount = 0;
+    let isDisplayFrame = false;
+    let resolveProfile!: (profile: RhiGpuSubmissionProfile) => void;
+    const profile = new Promise<RhiGpuSubmissionProfile>(resolve => { resolveProfile = resolve; });
+    // Content versions are local to one command list. Never reuse a pre-Draw
+    // snapshot across submissions, where uploads/writes can restart at version 0.
+    inputReadbackCache = new WeakMap();
+    const inFrame = <T extends { passOrdinal: number }>(callback: (event: T) => void) =>
+      withoutInspectorRecording((event: T) => {
+        passCount = Math.max(passCount, event.passOrdinal + 1);
+        callback({ ...event, passOrdinal: offset + event.passOrdinal });
+      });
+    stopHook = rhi.frameDebugCapture?.captureNextSubmission({
+      kind: 'any',
+      onPassEnd: inFrame(onPassEnd),
+      onDrawInput: inFrame(onDrawInput),
+      onDrawBuffer: inFrame(onDrawBuffer),
+      onAspectEnd: inFrame(onAspectEnd),
+      onResourceTexture: withoutInspectorRecording(onResourceTexture),
+      onResourceBuffer: withoutInspectorRecording(onResourceBuffer),
+      onResourceInventory: inventory => {
+        isDisplayFrame = true;
+        onResourceInventory(inventory);
+      },
+      onProfile: resolveProfile,
+      onSubmitted: () => {
+        stopHook = undefined;
+        profiles.push(profile);
+        passOffset += passCount;
+        if (isDisplayFrame) submittedResolve();
+        else if (!cancelled) armSubmission();
+      },
+      onAborted: () => { if (!cancelled) abortedReject(new Error('GPU 提交中止')); },
+    });
+  };
+  armSubmission();
   if (!stopHook) submittedResolve();
 
   const cancel = (): void => {
     if (cancelled) return;
     cancelled = true;
     stopHook?.();
-    offProfile?.();
     if (restoreProfiler) rhi.gpuProfiler?.setEnabled(false);
     for (const record of pending) {
       record.buffer?.destroy();
@@ -956,11 +973,12 @@ export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
       }
       if (status.state !== 'unsupported' && !cancelled) {
         try {
-          const profile = await withTimeout(profilePromise, PROFILE_TIMEOUT_MS, 'GPU timestamp-query 无结果');
-          gpuPasses = profile.passes.slice(0, MAX_PASS_RECORDS).map((pass, ordinal) => ({
+          const results = await withTimeout(Promise.all(profiles), PROFILE_TIMEOUT_MS, 'GPU timestamp-query 无结果');
+          const passes = results.flatMap(profile => [...profile.passes]);
+          gpuPasses = passes.slice(0, MAX_PASS_RECORDS).map((pass, ordinal) => ({
             ordinal, kind: pass.kind, label: pass.label, durationMs: pass.gpuMs,
           }));
-          if (profile.passes.length > MAX_PASS_RECORDS) omittedTimings = profile.passes.length - MAX_PASS_RECORDS;
+          if (passes.length > MAX_PASS_RECORDS) omittedTimings = passes.length - MAX_PASS_RECORDS;
           gpuProfilerStatus = { state: 'enabled' };
         } catch (error) {
           gpuProfilerStatus = { state: 'unsupported', reason: String(error) };
@@ -968,7 +986,6 @@ export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
       }
     } finally {
       stopHook?.();
-      offProfile?.();
       if (restoreProfiler) rhi.gpuProfiler?.setEnabled(false);
       for (const record of pending) {
         record.buffer?.destroy();
@@ -1004,7 +1021,8 @@ export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
       omittedBuffers ? `${omittedBuffers} 个 Draw Buffer 超过 ${MAX_BUFFER_RECORDS} 条回读记录上限` : '',
       omittedTimings ? `${omittedTimings} 个 GPU 计时结果超过 ${MAX_PASS_RECORDS} 条记录上限` : '',
     ].filter(Boolean).join('；');
-    return { passes: pending.map(record => record.info), inputs: pendingInputs.map(record => record.info),
+    return { submissionCount: profiles.length,
+      passes: pending.map(record => record.info), inputs: pendingInputs.map(record => record.info),
       aspects: pendingAspects.map(record => record.info), gpuPasses, gpuProfilerStatus,
       buffers: pendingBuffers.map(record => record.info),
       resourceInventory: resourceInventory ?? { textureCount: 0, bufferCount: 0, textureSubresourceCount: 0 },

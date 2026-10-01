@@ -1096,6 +1096,20 @@ test('shares one same-frame input readback while preserving each Draw binding an
 });
 
 test('multi-frame diagnostics attach every resource to its exact frame despite repeated Pass labels', async () => {
+  // A logical game frame can submit offscreen work before the canvas. Explicit
+  // boundaries must group it even when every frame repeats the same labels.
+  const commands = Array.from({ length: 4 }, () => [
+    { method: 'beginRenderPass', args: [{ label: 'repeated', colorAttachments: [] }] },
+    { method: 'end', args: [] }, { method: 'submit', args: [] },
+  ]).flat();
+  const metadata = { objects: [], commands, payloadTable: [],
+    gamedraftCapture: { version: 1, frameSubmissionCounts: [2, 2] } };
+  const grouped = summarizeCapture({ metadata, payloads: [] });
+  assert.deepEqual(grouped.passes.map(pass => pass.frameOrdinal), [1, 1, 2, 2]);
+  assert.deepEqual(grouped.frames.map(frame => frame.boundaryConfidence), ['explicit', 'explicit']);
+  assert.throws(() => summarizeCapture({ metadata: { ...metadata,
+    gamedraftCapture: { version: 1, frameSubmissionCounts: [2, 1] } }, payloads: [] }),
+  /frame submission boundaries/);
   const external = await mkdtemp(join(tmpdir(), 'gamedraft-selected-frame-'));
   const oldOutput = process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
   process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = external;

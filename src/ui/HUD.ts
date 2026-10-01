@@ -298,8 +298,8 @@ export class HUD {
   private zoneInteractOffCb: () => void;
 
   private mapNameText: Text;
-  private sceneNameFadeTimer: number | null = null;
-  private sceneNameFadeRaf = 0;
+  private sceneNameFadeAt: number | null = null;
+  private sceneNameFade: { from: number; start: number } | null = null;
   private onResizeBound: () => void;
   private unsubscribeResize: (() => void) | null = null;
   private sceneEnterCb: (p: { sceneId: string; sceneName?: string }) => void;
@@ -323,7 +323,7 @@ export class HUD {
    */
   private firstPersonSources = new Set<string>();
   private firstPersonCb: (p?: { source?: string; active?: boolean }) => void;
-  private hudFadeRaf = 0;
+  private hudFade: { from: number; metaFrom: number; target: number; metaTarget: number; start: number } | null = null;
 
   /** 过场与第一人称两个来源合起来定 HUD 该不该收（唯一决定处，谁变都走这里）。 */
   private applyHudFade(): void {
@@ -342,24 +342,12 @@ export class HUD {
    * （Pixi 的 worldAlpha 是连乘），"只留三把火/气味"就无从实现。
    */
   private fadeHudTo(target: number, includeMeta: boolean): void {
-    if (this.hudFadeRaf) cancelAnimationFrame(this.hudFadeRaf);
+    this.hudFade = null;
     const from = this.fadeLayer.alpha;
     const metaFrom = this.metaColumn.alpha;
     const metaTarget = includeMeta ? target : 1;
     if (from === target && metaFrom === metaTarget) return;
-    const start = this.animationNow();
-    const dur = UITheme.motion.normal;
-    const tick = (): void => {
-      if (this.container.destroyed) { this.hudFadeRaf = 0; return; }
-      if (this.capturePauseDepth > 0) { this.hudFadeRaf = requestAnimationFrame(tick); return; }
-      const raw = Math.min((this.animationNow() - start) / dur, 1);
-      const k = UITheme.motion.easeOut(raw);
-      this.fadeLayer.alpha = from + (target - from) * k;
-      this.metaColumn.alpha = metaFrom + (metaTarget - metaFrom) * k;
-      if (raw < 1) this.hudFadeRaf = requestAnimationFrame(tick);
-      else this.hudFadeRaf = 0;
-    };
-    this.hudFadeRaf = requestAnimationFrame(tick);
+    this.hudFade = { from, metaFrom, target, metaTarget, start: this.animationNow() };
   }
   private resolveDisplay: ((s: string) => string) | null = null;
 
@@ -512,7 +500,6 @@ export class HUD {
       // 场景名是「到哪了」的一次性播报，不是常驻读数（审查 P2：永久挂着与场景抢戏）：
       // 进场亮 4s，再 600ms 淡走；换场景重来。
       this.mapNameText.alpha = 1;
-      if (this.sceneNameFadeTimer) window.clearTimeout(this.sceneNameFadeTimer);
       this.scheduleSceneNameFade(4000);
       // 上一张场景的区域提示不许跟着过来：切场景先收，新场景由 InteractionSystem 下一帧重发。
       this.setZoneInteractHint(null);
@@ -741,33 +728,32 @@ export class HUD {
 
   /** 场景名的退场淡出（600ms）；进新场景由 sceneEnterCb 拉回 alpha=1 重计时。 */
   private scheduleSceneNameFade(durationMs: number): void {
-    const deadline = this.animationNow() + durationMs;
-    const finish = (): void => {
-      if (this.mapNameText.destroyed) { this.sceneNameFadeTimer = null; return; }
-      const remaining = deadline - this.animationNow();
-      if (this.capturePauseDepth > 0 || remaining > 0) {
-        this.sceneNameFadeTimer = window.setTimeout(finish, this.capturePauseDepth > 0 ? 100 : remaining);
-        return;
-      }
-      this.sceneNameFadeTimer = null;
-      this.fadeSceneNameOut();
-    };
-    this.sceneNameFadeTimer = window.setTimeout(finish, durationMs);
+    this.sceneNameFade = null;
+    this.sceneNameFadeAt = this.animationNow() + durationMs;
   }
 
-  private fadeSceneNameOut(): void {
-    if (this.sceneNameFadeRaf) cancelAnimationFrame(this.sceneNameFadeRaf);
-    const from = this.mapNameText.alpha;
-    const start = this.animationNow();
-    const tick = (): void => {
-      if (this.mapNameText.destroyed) { this.sceneNameFadeRaf = 0; return; }
-      if (this.capturePauseDepth > 0) { this.sceneNameFadeRaf = requestAnimationFrame(tick); return; }
-      const t = Math.min(1, (this.animationNow() - start) / 600);
-      this.mapNameText.alpha = from * (1 - UITheme.motion.easeOut(t));
-      if (t < 1) this.sceneNameFadeRaf = requestAnimationFrame(tick);
-      else this.sceneNameFadeRaf = 0;
-    };
-    this.sceneNameFadeRaf = requestAnimationFrame(tick);
+  /** Normal RAF and explicit capture frames consume the same animation state and clock. */
+  private stepFades(): void {
+    if (this.container.destroyed) return;
+    const now = this.animationNow();
+    const fade = this.hudFade;
+    if (fade) {
+      const t = Math.min(1, Math.max(0, (now - fade.start) / UITheme.motion.normal));
+      const k = UITheme.motion.easeOut(t);
+      this.fadeLayer.alpha = fade.from + (fade.target - fade.from) * k;
+      this.metaColumn.alpha = fade.metaFrom + (fade.metaTarget - fade.metaFrom) * k;
+      if (t >= 1) this.hudFade = null;
+    }
+    if (this.mapNameText.destroyed) return;
+    if (this.sceneNameFadeAt !== null && now >= this.sceneNameFadeAt) {
+      this.sceneNameFade = { from: this.mapNameText.alpha, start: this.sceneNameFadeAt };
+      this.sceneNameFadeAt = null;
+    }
+    if (this.sceneNameFade) {
+      const t = Math.min(1, Math.max(0, (now - this.sceneNameFade.start) / 600));
+      this.mapNameText.alpha = this.sceneNameFade.from * (1 - UITheme.motion.easeOut(t));
+      if (t >= 1) this.sceneNameFade = null;
+    }
   }
 
   /**
@@ -1038,6 +1024,7 @@ export class HUD {
       const dt = Math.min(0.05, Math.max(0, (now - this.flameLastT) / 1000));
       this.flameLastT = now;
       this.flameTime += dt;
+      this.stepFades();
       this.stepFlames(dt);
       this.stepSmell(dt);
       this.flameRafId = requestAnimationFrame(step);
@@ -1589,6 +1576,7 @@ export class HUD {
     if (this.capturePauseDepth === 0) return;
     this.captureSteppedMs += dt * 1000;
     this.flameTime += dt;
+    this.stepFades();
     this.stepFlames(dt);
     this.stepSmell(dt);
   }
@@ -1614,6 +1602,7 @@ export class HUD {
   stepFixedTick(dt: number): void {
     if (!this.fixedTickMode || this.capturePauseDepth > 0) return;
     this.flameTime += dt;
+    this.stepFades();
     this.stepFlames(dt);
     this.stepSmell(dt);
   }
@@ -1741,9 +1730,9 @@ export class HUD {
     this.eventBus.off('debug:smellVisibleChanged', this.smellDebugVisibleCb);
     this.unsubscribeResize?.();
     this.unsubscribeResize = null;
-    if (this.hudFadeRaf) { cancelAnimationFrame(this.hudFadeRaf); this.hudFadeRaf = 0; }
-    if (this.sceneNameFadeTimer) { window.clearTimeout(this.sceneNameFadeTimer); this.sceneNameFadeTimer = null; }
-    if (this.sceneNameFadeRaf) { cancelAnimationFrame(this.sceneNameFadeRaf); this.sceneNameFadeRaf = 0; }
+    this.hudFade = null;
+    this.sceneNameFadeAt = null;
+    this.sceneNameFade = null;
     this.eventBus.off('cutscene:start', this.cutsceneStartCb);
     this.eventBus.off('cutscene:end', this.cutsceneEndCb);
     this.eventBus.off('ui:firstPerson', this.firstPersonCb);

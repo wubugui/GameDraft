@@ -956,8 +956,10 @@ class LumaCommandList implements RhiCommandList {
     private readonly frame: number | null,
   ) {
     this.native = device.gpuDevice.createCommandEncoder({ label });
-    this.timing = device.gpuProfiler.start(kind, frame, label);
     this.captureHooks = device._takeFrameCapture(kind);
+    const onProfile = this.captureHooks?.onProfile;
+    this.timing = device.gpuProfiler.start(kind, frame, label,
+      onProfile ? profile => device._notifyCapture(() => onProfile(profile)) : undefined);
     this.frameDebugCaptureActive = this.captureHooks !== null;
   }
 
