@@ -59,6 +59,7 @@ TARGET_SPECS: dict[str, dict[str, Any]] = {
     "bgm": {"label": "音乐", "file": f"{_DATA}/audio_config.json", "pointer": "/bgm/{id}"},
     "ambient": {"label": "环境声", "file": f"{_DATA}/audio_config.json", "pointer": "/ambient/{id}"},
     "sfx": {"label": "音效", "file": f"{_DATA}/audio_config.json", "pointer": "/sfx/{id}"},
+    "footstep_sets": {"label": "脚步集", "file": f"{_DATA}/footstep_sets.json", "pointer": "/sets/{id}"},
     "scenarios": {"label": "Scenario", "file": f"{_DATA}/scenarios.json", "anchor": "scenarios"},
     "archive_entries": {"label": "档案", "file_pattern": f"{_DATA}/archive/{{bookType}}.json",
                         "anchor": "entries", "scope_param": "bookType"},
@@ -275,7 +276,8 @@ def _apply_spec(row: Target, spec: dict[str, Any], params: dict[str, Any]) -> No
         if spec.get("anchor"):
             row.anchors = [[str(spec["anchor"]), row.target_id]]
         if spec.get("pointer"):
-            row.pointer = str(spec["pointer"]).replace("{id}", row.target_id)
+            ident = row.target_id.replace("~", "~0").replace("/", "~1")
+            row.pointer = str(spec["pointer"]).replace("{id}", ident)
 
 
 def _scene_entity_target(

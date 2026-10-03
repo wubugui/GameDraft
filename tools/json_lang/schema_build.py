@@ -530,6 +530,9 @@ def build_schema(spec: LanguageSpec, ud: UniverseData) -> dict:
     object_pattern_props: dict[str, dict] = {
         _CONDITION_HOST_KEY_PATTERN: {"$ref": "#/definitions/conditionHost"},
     }
+    if spec.loading_transition_labels:
+        object_pattern_props["^loadingTransition$"] = _with_labels(
+            list(spec.loading_transition_labels), spec.loading_transition_labels)
     if ud.action_host_keys:
         host_alt = "|".join(re.escape(k) for k in ud.action_host_keys)
         object_pattern_props[f"^(?:{host_alt})$"] = {

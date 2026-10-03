@@ -3,9 +3,10 @@ import { ActionExecutor } from './ActionExecutor';
 import { EventBus } from './EventBus';
 import { FlagStore } from './FlagStore';
 import { registerActionHandlers, type ActionRegistryDeps } from './ActionRegistry';
-import { ACTION_PARAM_MANIFEST } from './actionParamManifest';
+import { ACTION_PARAM_MANIFEST, presentationActionErrors } from './actionParamManifest';
 import type { EmoteBubbleOffsetOpts, IEmoteBubbleAnchor } from '../data/types';
-import { CUTSCENE_ACTION_WHITELIST } from '../data/types';
+import { CUTSCENE_ACTION_WHITELIST, GameState } from '../data/types';
+import { parsePropPresets } from '../data/propPresets';
 
 /**
  * master 0faee8d 带进来的两个动作参数（与渲染无关，engine2d 分支逐字沿用）：
@@ -110,5 +111,79 @@ describe('setPropState 的 onlyIfBurning', () => {
     await h.executor.executeBatchAwait([{ type: 'setPropState', params: { socket: 'right_hand', state: 'out', onlyIfBurning: true } }]);
     expect(h.propCalls).toEqual([]);
     warn.mockRestore();
+  });
+});
+
+function guardHarness() {
+  const eventBus = new EventBus();
+  const executor = new ActionExecutor(eventBus, new FlagStore(eventBus));
+  const dismiss = vi.fn();
+  const showSticky = vi.fn(() => dismiss);
+  const teachPropGuard = vi.fn(async (_vitality: number | 'guardSafety') => true);
+  const stateController: { currentState: GameState } = { currentState: GameState.ActionSequence };
+  const subject: IEmoteBubbleAnchor = { getDisplayObject: () => ({}), getEmoteBubbleAnchorLocalY: () => -60 };
+  const resolveEmoteTarget = vi.fn(() => subject as IEmoteBubbleAnchor | null);
+  registerActionHandlers(executor, {
+    resolveRichText: (text: string) => text, resolveEmoteTarget,
+    emoteBubbleManager: { showSticky }, teachPropGuard, stateController,
+  } as unknown as ActionRegistryDeps);
+  return { executor, dismiss, showSticky, teachPropGuard, stateController, resolveEmoteTarget };
+}
+
+describe('teachPropGuard 与预设 guardSafety 参数合同', () => {
+  it.each([undefined, null, false, {}, '', 'guardsafety', 'guardSafety ', NaN, Infinity, -Infinity, -0.1, 0, 1.01])(
+    '非法火势 %s 在动作入口拒绝，不开提示或进入操作教学', async (vitality) => {
+      const h = guardHarness();
+      await expect(h.executor.executeAwait({ type: 'teachPropGuard', params: { vitality, text: '护好火' } }))
+        .rejects.toThrow(/teachPropGuard/);
+      expect(h.showSticky).not.toHaveBeenCalled(); expect(h.teachPropGuard).not.toHaveBeenCalled();
+      expect(h.dismiss).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['guardSafety', 0.0001, 1] as const)('接受合法 %s，保持原阈值并在完成后收提示', async (vitality) => {
+    const h = guardHarness();
+    await h.executor.executeAwait({ type: 'teachPropGuard', params: { vitality, text: '  护好火  ' } });
+    expect(h.teachPropGuard).toHaveBeenCalledExactlyOnceWith(vitality);
+    expect(h.showSticky).toHaveBeenCalledWith(expect.anything(), '护好火', { variant: 'speech' });
+    expect(h.dismiss).toHaveBeenCalledOnce();
+  });
+
+  it.each(['empty-text', 'no-player', 'wrong-state'] as const)('%s 即使阈值合法也拒绝，不留下提示', async (reason) => {
+    const h = guardHarness();
+    if (reason === 'no-player') h.resolveEmoteTarget.mockReturnValue(null);
+    if (reason === 'wrong-state') h.stateController.currentState = GameState.Loading;
+    await expect(h.executor.executeAwait({ type: 'teachPropGuard', params: { vitality: 'guardSafety', text: reason === 'empty-text' ? ' \n ' : '护好火' } }))
+      .rejects.toThrow(/teachPropGuard/);
+    expect(h.showSticky).not.toHaveBeenCalled(); expect(h.teachPropGuard).not.toHaveBeenCalled();
+  });
+
+  it('真实教学 Promise 未完成前保持阻塞，取消或失败同样收提示并向调用方拒绝', async () => {
+    const h = guardHarness(); let settle!: (value: boolean) => void;
+    h.teachPropGuard.mockImplementation(() => new Promise<boolean>(resolve => { settle = resolve; }));
+    let completed = false;
+    const pending = h.executor.executeAwait({ type: 'teachPropGuard', params: { vitality: 'guardSafety', text: '护好火' } });
+    const rejected = expect(pending).rejects.toThrow(/教学取消/); void pending.then(() => { completed = true; }, () => {});
+    await Promise.resolve(); expect(h.showSticky).toHaveBeenCalledOnce(); expect(completed).toBe(false); expect(h.dismiss).not.toHaveBeenCalled();
+    settle(false); await rejected; expect(h.dismiss).toHaveBeenCalledOnce();
+    const failure = new Error('guard simulation failed'); h.teachPropGuard.mockRejectedValueOnce(failure);
+    await expect(h.executor.executeAwait({ type: 'teachPropGuard', params: { vitality: 0.6, text: '护好火' } })).rejects.toBe(failure);
+    expect(h.dismiss).toHaveBeenCalledTimes(2);
+  });
+
+  it('构建期只接受 guardSafety 原字面量或有限 (0,1] 数值，注册参数与运行时同口径', () => {
+    expect(ACTION_PARAM_MANIFEST.teachPropGuard).toEqual({ required: ['vitality', 'text'], nonEmpty: ['text'] });
+    for (const vitality of ['guardSafety', 0.0001, 1]) expect(presentationActionErrors('teachPropGuard', { vitality, text: '护好火' })).toEqual([]);
+    for (const vitality of ['guardsafety', '0.6', undefined, null, true, NaN, Infinity, -0.1, 0, 1.01]) {
+      expect(presentationActionErrors('teachPropGuard', { vitality, text: '护好火' })).toContain('vitality must be guardSafety or a finite number in (0, 1]');
+    }
+  });
+
+  it('实际预设解析只保存有限 (0,1) 安全线；非法配置不补虚构默认或丢掉其它 playerControl 字段', () => {
+    const parse = (guardSafety: unknown) => parsePropPresets({ torch: { image: 'torch.png', playerControl: { guardState: 'guarding', guardSafety } } }).torch.playerControl;
+    expect(parse(0.637)?.guardSafety).toBe(0.637);
+    for (const guardSafety of [undefined, null, false, '', '0.6', NaN, Infinity, -Infinity, -0.1, 0, 1, 1.01]) {
+      const control = parse(guardSafety); expect(control?.guardSafety).toBeUndefined(); expect(control?.guardState).toBe('guarding');
+    }
   });
 });

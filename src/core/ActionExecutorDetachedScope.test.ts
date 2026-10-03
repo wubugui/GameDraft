@@ -119,8 +119,8 @@ describe('动作批的执行作用域', () => {
   it('切场临时回探索并触发入场动作后，仍保留外层动作的锁直到收尾', async () => {
     const { actions, sc } = makeExecutor();
     actions.register('travel', async () => {
-      sc.setState(GameState.SceneTransition);
-      sc.setState(GameState.Exploring);
+      sc.beginLoading('travel');
+      sc.finishLoading('travel', GameState.Exploring);
       await actions.executeAwait({ type: 'probe', params: {} });
       sc.setState(GameState.ActionSequence);
     });
@@ -139,6 +139,31 @@ describe('动作批的执行作用域', () => {
     expect(sc.currentState).toBe(GameState.ActionSequence);
     done[laterFirst ? 0 : 1]();
     await Promise.all([first, later]);
+    expect(sc.currentState).toBe(GameState.Exploring);
+  });
+
+  it.each([false, true])('加载观察共享锁，最后一条结束才可恢复探索（后开先结束=%s）', async (laterFirst) => {
+    const { actions, sc } = makeExecutor();
+    const done: Array<() => void> = [];
+    actions.register('hold', () => new Promise<void>(resolve => done.push(resolve)));
+    const first = actions.executeAwait({ type: 'hold', params: {} });
+    const owner = actions.getExploreLockOwner()!;
+    const later = actions.executeAwait({ type: 'hold', params: {} });
+    expect(actions.getExploreLockOwner()).toBe(owner);
+    sc.beginLoading('overlap');
+
+    done[laterFirst ? 1 : 0]();
+    await (laterFirst ? later : first);
+    expect(owner.settled).toBe(false);
+    expect(actions.getExploreLockOwner()).toBe(owner);
+    expect(sc.currentState).toBe(GameState.Loading);
+
+    done[laterFirst ? 0 : 1]();
+    await Promise.all([first, later]);
+    expect(owner.settled).toBe(true);
+    expect(actions.getExploreLockOwner()).toBeNull();
+    expect(sc.currentState).toBe(GameState.Loading);
+    expect(sc.finishLoading('overlap', GameState.Exploring)).toBe(true);
     expect(sc.currentState).toBe(GameState.Exploring);
   });
 

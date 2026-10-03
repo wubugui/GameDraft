@@ -68,7 +68,7 @@ describe('resolveContactAo：作者面 → 着色参数（制作人 2026-09-24 �
     });
     for (const invalid of [Number.NaN, Number.POSITIVE_INFINITY, '250', false]) {
       expect(resolveContactAo({ fadeInMs: invalid as number, fadeOutMs: invalid as number }, SCENE)).toMatchObject({
-        fadeInMs: 1000, fadeOutMs: 1000,
+        fadeInMs: CONTACT_AO_FADE_IN_MS_DEFAULT, fadeOutMs: CONTACT_AO_FADE_OUT_MS_DEFAULT,
       });
     }
   });

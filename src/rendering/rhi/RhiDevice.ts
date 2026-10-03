@@ -443,6 +443,8 @@ export interface RhiDevice {
   runFrame(record: (frame: RhiFrame) => void): boolean;
   /** 帧外提交一批命令(加载期烘焙、预热等),同样截住异常 */
   submit(label: string, record: (commands: RhiCommandList) => void): boolean;
+  /** 调用之前已提交的 GPU 工作完成；设备丢失或销毁必须拒绝。 */
+  waitForSubmittedWork(): Promise<void>;
 
   onDiagnostic(listener: RhiDiagnosticListener): () => void;
   /**

@@ -129,8 +129,8 @@ class TestNpcContactAoForm:
         npc = _cast_off_npc(scene)
         panel.load_npc_props(copy.deepcopy(npc))
         w = panel._npc_contact_ao
-        assert w._spins['fadeInMs'].value() == 1000
-        assert w._spins['fadeOutMs'].value() == 1000
+        assert w._spins['fadeInMs'].value() == cao.FADE_IN_MS_DEFAULT
+        assert w._spins['fadeOutMs'].value() == cao.FADE_OUT_MS_DEFAULT
         out = copy.deepcopy(npc)
         panel._write_npc_widgets_to_dict(out)
         assert 'contactAo' not in out
@@ -138,14 +138,15 @@ class TestNpcContactAoForm:
         w._spins['fadeOutMs'].setValue(5000)
         panel._write_npc_widgets_to_dict(out)
         assert out['contactAo'] == {'fadeInMs': 0, 'fadeOutMs': 5000}
-        w._spins['fadeInMs'].setValue(1000)
-        w._spins['fadeOutMs'].setValue(1000)
+        w._spins['fadeInMs'].setValue(cao.FADE_IN_MS_DEFAULT)
+        w._spins['fadeOutMs'].setValue(cao.FADE_OUT_MS_DEFAULT)
         panel._write_npc_widgets_to_dict(out)
         assert 'contactAo' not in out
 
-    def test_动画AO渐变显式默认及小数往返保真(self, panel, scene) -> None:
+    @pytest.mark.parametrize('fade_in', [cao.FADE_IN_MS_DEFAULT, 1000])
+    def test_动画AO渐变显式默认及小数往返保真(self, panel, scene, fade_in) -> None:
         src = copy.deepcopy(scene['npcs'][0])
-        src['contactAo'] = {'fadeInMs': 1000, 'fadeOutMs': 123.456, 'futureKey': 7}
+        src['contactAo'] = {'fadeInMs': fade_in, 'fadeOutMs': 123.456, 'futureKey': 7}
         panel.load_npc_props(src)
         out = copy.deepcopy(src)
         panel._write_npc_widgets_to_dict(out)

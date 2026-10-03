@@ -111,6 +111,21 @@ function rendererOf(app: Application): FakeRenderer {
 }
 
 describe('Application.init', () => {
+  it('destroy during renderer creation cancels init and disposes the late renderer', async () => {
+    const app = new Application();
+    const pending = app.init();
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    app.destroy(true);
+    await rejected;
+    await Promise.resolve();
+    expect((created.renderers[0] as FakeRenderer).destroyedWith).toBe(true);
+    expect(app.stage).toBeNull();
+    expect(rafQueue.size).toBe(0);
+    await app.init({ autoStart: false });
+    expect(app.stage).not.toBeNull();
+    expect(rendererOf(app).destroyedWith).toBe('not-destroyed');
+    app.destroy(true);
+  });
   it('建渲染器(画布取自 DOMAdapter、宽高缺省 800×600、参数原样下传),装好 ticker / resize', async () => {
     const app = new Application();
     const stage = app.stage;

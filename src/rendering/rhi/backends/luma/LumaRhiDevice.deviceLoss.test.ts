@@ -63,6 +63,45 @@ function drawFrame(dev: LumaRhiDevice): boolean {
 }
 
 describe('设备丢失后在同一画布上重建设备(D6,对照 Pixi GlContextSystem 的 contextlost / contextrestored)', () => {
+  it('提交完成屏障真实等待原生queue，不在GPU完成之前兑现', async () => {
+    const { fakes, dev } = setup();
+    let finish!: () => void;
+    const work = new Promise<void>(resolve => { finish = resolve; });
+    const queue = (fakes[0].device as { handle: { queue: Record<string, unknown> } }).handle.queue;
+    queue.onSubmittedWorkDone = () => work;
+    let settled = false;
+    const waiting = dev.waitForSubmittedWork().then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish();
+    await waiting;
+    expect(settled).toBe(true);
+    dev.destroy();
+  });
+
+  it.each(['loss', 'destroy'] as const)('原生queue永远不结束时%s也必须拒绝提交完成屏障', async (cause) => {
+    const { fakes, dev } = setup();
+    const queue = (fakes[0].device as { handle: { queue: Record<string, unknown> } }).handle.queue;
+    queue.onSubmittedWorkDone = () => new Promise<void>(() => {});
+    const waiting = dev.waitForSubmittedWork().catch(error => error);
+    if (cause === 'loss') fakes[0].lose('queue wait interrupted');
+    else dev.destroy();
+    const error = await waiting;
+    expect(error).toBeInstanceOf(RhiError);
+    expect(error.message).toContain('等待GPU提交完成');
+    dev.destroy();
+    await expect(dev.waitForSubmittedWork()).rejects.toBeInstanceOf(RhiError);
+  });
+
+  it('原生queue完成失败保留真实错误，不能被提交完成屏障吞成成功', async () => {
+    const { fakes, dev } = setup();
+    const failure = new Error('native queue completion failed');
+    const queue = (fakes[0].device as { handle: { queue: Record<string, unknown> } }).handle.queue;
+    queue.onSubmittedWorkDone = () => Promise.reject(failure);
+    await expect(dev.waitForSubmittedWork()).rejects.toBe(failure);
+    dev.destroy();
+  });
+
   it('丢失 → 诊断 → 重建 → 已恢复 → onRestored;之后的帧提交到新设备', async () => {
     const { fakes, dev, diags, order, restoredCount } = setup();
     expect(drawFrame(dev)).toBe(true);

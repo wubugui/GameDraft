@@ -102,6 +102,15 @@ class CacheClass {
   get parsers(): CacheParser[] {
     return this._parsers;
   }
+
+  /** 按资源身份摘掉所有别名，旧资源不能删除同名的新资源。 */
+  removeValue(value: unknown): void {
+    for (const [key, cached] of this._cache) {
+      if (cached !== value) continue;
+      this._cache.delete(key);
+      this._cacheMap.delete(key);
+    }
+  }
 }
 
 /** 全局缓存单例(同 Pixi `Cache`) */

@@ -2260,6 +2260,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   destroy(): void {
     if (this._destroyed) return;
     this._destroyed = true;
+    this.rejectPendingReadbacks('device destroyed');
     this.gpuProfiler.destroy();
     if (this.armedCapture) this._notifyCapture(this.armedCapture.onAborted);
     this.armedCapture = null;
@@ -2388,6 +2389,11 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     this.swapchainMsaa.clear();
     for (const c of this.swapchainMsaaColors.values()) c.release();
     this.swapchainMsaaColors.clear();
+  }
+
+  waitForSubmittedWork(): Promise<void> {
+    if (this._isLost || this._destroyed) return Promise.reject(new RhiError('backend', '等待GPU提交完成:设备不可用'));
+    return this.untilLost((this.luma as Device & { handle: GPUDevice }).handle.queue.onSubmittedWorkDone(), '等待GPU提交完成');
   }
 
   /** 异步回读与这一代设备的丢失赛跑:设备丢了就 reject,不让调用方永远等着(GPU 进程崩溃时 mapAsync 可能迟迟不回) */

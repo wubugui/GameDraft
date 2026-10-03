@@ -87,6 +87,53 @@ export class SaveManager implements ISaveDataProvider {
    * 极难复现。串起来就没这回事。
    */
   private writeChain = new Map<string, Promise<unknown>>();
+  private restoreTail: Promise<unknown> = Promise.resolve();
+  private restoreWrapper: ((run: () => Promise<boolean>) => Promise<boolean>) | null = null;
+  private disposed = false;
+  private lifetime = new AbortController();
+
+  /** Stop active/queued restores before the composition layer destroys their world consumers. */
+  destroy(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.lifetime.abort(new DOMException('SaveManager destroyed', 'AbortError'));
+    this.restoreWrapper = null;
+    this.canSave = () => false;
+    this.store = null;
+    this.mirror.clear();
+    this.metaCache.clear();
+  }
+
+  private assertAlive(): void {
+    if (this.disposed) throw this.lifetime.signal.reason;
+  }
+
+  private async awaitRestore<T>(work: Promise<T>): Promise<T> {
+    const signal = this.lifetime.signal;
+    if (signal.aborted) {
+      void work.catch(() => undefined);
+      throw signal.reason;
+    }
+    this.assertAlive();
+    let abort!: () => void;
+    const cancelled = new Promise<never>((_, reject) => {
+      abort = () => reject(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+    });
+    try {
+      const result = await Promise.race([work, cancelled]);
+      this.assertAlive();
+      return result;
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
+  }
+
+  /** The composition layer owns loading/control for the entire deserialize + rollback window. */
+  setRestoreWrapper(wrapper: ((run: () => Promise<boolean>) => Promise<boolean>) | null): void {
+    if (this.disposed) return;
+    this.restoreWrapper = wrapper;
+  }
 
   constructor(
     collector: SerializeCollector,
@@ -109,19 +156,23 @@ export class SaveManager implements ISaveDataProvider {
    * 后续 `save()` 仍会如实报告写盘成败。
    */
   hydrate(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
     if (!this.hydrating) this.hydrating = this.doHydrate();
     return this.hydrating;
   }
 
   private async doHydrate(): Promise<void> {
     try {
-      this.store = await resolvePersistentStore();
+      const store = await resolvePersistentStore();
+      if (this.disposed) return;
+      this.store = store;
     } catch (e) {
       console.error('SaveManager: 无法取得持久化后端', e);
       return;
     }
     try {
       const all = await this.store.readAll(SAVE_NAMESPACE);
+      if (this.disposed) return;
       for (let i = 0; i < MAX_SLOTS; i++) {
         const raw = all[slotKey(i)];
         if (typeof raw === 'string' && raw.trim()) this.setMirror(i, raw);
@@ -136,7 +187,10 @@ export class SaveManager implements ISaveDataProvider {
   private enqueueWrite<T>(key: string, task: () => Promise<T>): Promise<T> {
     const prev = this.writeChain.get(key) ?? Promise.resolve();
     // 前一次失败不该卡住后一次：catch 掉再接
-    const next = prev.catch(() => {}).then(task);
+    const next = prev.catch(() => {}).then(() => {
+      this.assertAlive();
+      return task();
+    });
     this.writeChain.set(key, next.catch(() => {}));
     return next;
   }
@@ -149,7 +203,7 @@ export class SaveManager implements ISaveDataProvider {
    * 万一新体系出问题，旧档还在原地。
    */
   private async migrateLegacySaves(): Promise<void> {
-    if (!this.store) return;
+    if (!this.store || this.disposed) return;
     try {
       if (localStorage.getItem(LEGACY_MIGRATED_FLAG)) return;
     } catch {
@@ -157,6 +211,7 @@ export class SaveManager implements ISaveDataProvider {
     }
     let moved = 0;
     for (let i = 0; i < MAX_SLOTS; i++) {
+      if (this.disposed) return;
       if (this.mirror.has(i)) continue;
       let raw: string | null = null;
       try {
@@ -173,6 +228,7 @@ export class SaveManager implements ISaveDataProvider {
       }
       try {
         await this.store.write(SAVE_NAMESPACE, slotKey(i), raw);
+        if (this.disposed) return;
         this.setMirror(i, raw);
         moved++;
       } catch (e) {
@@ -209,11 +265,13 @@ export class SaveManager implements ISaveDataProvider {
 
   /** 当前是否可存档。调试器用它把"现在存不了档"说成人话，而不是静默失败。 */
   canSaveNow(): boolean {
+    if (this.disposed) return false;
     return this.canSave ? this.canSave() : true;
   }
 
   /** 镜像与卡片缓存的唯一写入口：两边必须同进同出，否则菜单显示的和磁盘上的对不上。 */
   private setMirror(slot: number, raw: string): void {
+    if (this.disposed) return;
     this.mirror.set(slot, raw);
     this.metaCache.set(slot, this.parseMeta(slot, raw));
   }
@@ -324,6 +382,7 @@ export class SaveManager implements ISaveDataProvider {
    * 调试器的"拍子档案库"用它，不占玩家的存档槽。
    */
   capturePayload(): string | null {
+    if (this.disposed) return null;
     if (this.canSave && !this.canSave()) return null;
     try {
       return JSON.stringify({
@@ -350,6 +409,7 @@ export class SaveManager implements ISaveDataProvider {
   }
 
   private async loadFromRaw(raw: string): Promise<boolean> {
+    if (this.disposed) return false;
     // 先解析并校验结构：坏档在覆盖任何系统状态之前拒绝，不进回滚路径
     type SavePayload = { version: number; timestamp: number; systems: Record<string, object> };
     let payload: SavePayload;
@@ -359,7 +419,8 @@ export class SaveManager implements ISaveDataProvider {
       console.error('SaveManager: 存档损坏（JSON 解析失败），已拒绝读取', e);
       return false;
     }
-    if (!payload || typeof payload !== 'object' || typeof payload.systems !== 'object' || payload.systems === null) {
+    if (!payload || typeof payload !== 'object' || typeof payload.systems !== 'object'
+      || payload.systems === null || Array.isArray(payload.systems)) {
       console.error('SaveManager: 存档结构无效（缺 systems），已拒绝读取');
       return false;
     }
@@ -370,25 +431,60 @@ export class SaveManager implements ISaveDataProvider {
       );
     }
 
+    const job = async (): Promise<boolean> => {
+      if (this.disposed) return false;
+      const run = (): Promise<boolean> => {
+        this.assertAlive();
+        return this.restorePayload(payload.systems);
+      };
+      try {
+        return await this.awaitRestore(this.restoreWrapper ? this.restoreWrapper(run) : run());
+      } catch (error) {
+        if (!this.disposed) console.error('SaveManager: restore wrapper failed', error);
+        return false;
+      }
+    };
+    const next = this.restoreTail.catch(() => {}).then(job);
+    this.restoreTail = next.catch(() => {});
+    try { return await this.awaitRestore(next); }
+    catch (error) {
+      if (!this.disposed) console.error('SaveManager: restore queue failed', error);
+      return false;
+    }
+  }
+
+  private async restorePayload(systems: Record<string, object>): Promise<boolean> {
     // 读档原子性（R18）：先经 collector 对当前全系统状态拍快照；distribute / 场景重载
     // 任一失败都回滚快照并重载原场景，避免“系统状态已覆盖、场景还是旧局”的半读档脏混合态。
-    const snapshot = this.collector();
+    let snapshot: Record<string, object>;
+    try {
+      this.assertAlive();
+      snapshot = JSON.parse(JSON.stringify(this.collector())) as Record<string, object>;
+    } catch (error) {
+      if (!this.disposed) console.error('SaveManager: could not snapshot before restore', error);
+      return false;
+    }
     const snapshotSceneId =
       (snapshot['sceneManager'] as { currentSceneId?: string } | undefined)?.currentSceneId ?? this.fallbackScene;
 
     try {
-      this.distributor(payload.systems);
+      this.assertAlive();
+      this.distributor(systems);
+      this.assertAlive();
 
-      const sceneMgr = payload.systems['sceneManager'] as { currentSceneId?: string } | undefined;
+      const sceneMgr = systems['sceneManager'] as { currentSceneId?: string } | undefined;
       const sceneId = sceneMgr?.currentSceneId ?? this.fallbackScene;
-      await this.sceneReloader(sceneId);
+      await this.awaitRestore(this.sceneReloader(sceneId));
 
       return true;
     } catch (e) {
+      if (this.disposed) return false;
       console.error('SaveManager: failed to load', e);
       try {
+        this.assertAlive();
         this.distributor(snapshot);
-        await this.sceneReloader(snapshotSceneId);
+        this.assertAlive();
+        await this.awaitRestore(this.sceneReloader(snapshotSceneId));
       } catch (rollbackError) {
         console.error('SaveManager: 读档失败后的回滚也失败，运行时状态可能不一致', rollbackError);
       }

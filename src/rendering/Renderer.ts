@@ -403,7 +403,8 @@ export class Renderer {
     }
     try {
       // 渲染器拆自己的资源,再拆它建的 RHI 设备
-      app.destroy(true);
+      // The application owns every remaining stage node; the first argument only removes its canvas.
+      app.destroy(true, { children: true });
     } catch (e) {
       console.warn('Renderer: Application.destroy failed', e);
     }

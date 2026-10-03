@@ -33,7 +33,7 @@ import { GpuProgram } from '../shader/GpuProgram';
 import { GpuTextures } from './GpuTextures';
 import { GpuBuffers } from './GpuBuffers';
 import { GCSystem } from './GCSystem';
-import { Pipelines, STENCIL_DEPTH_FORMAT, targetSampleCount, type VertexLayout } from './Pipelines';
+import { Pipelines, STENCIL_DEPTH_FORMAT, targetSampleCount, type VertexLayout, type PipelineReadiness } from './Pipelines';
 import { Batcher, adjustedBlendMode } from './Batcher';
 import type { BlendMode } from '../core/blendModes';
 import type { Geometry } from '../shader/Geometry';
@@ -157,6 +157,11 @@ export interface PipelinePrewarmSpec {
   sampleCount?: number;
 }
 
+export interface FrameReadiness extends PipelineReadiness {
+  submitted: boolean;
+  passes: number;
+}
+
 export class WebGPURenderer extends RendererBase {
   readonly extract: ExtractSystem;
   /** 空闲 GPU 资源回收(照 Pixi 的 `renderer.gc`;选项 gcActive / gcMaxUnusedTime / gcFrequency) */
@@ -173,6 +178,9 @@ export class WebGPURenderer extends RendererBase {
   /** 画布中间纹理(见 CANVAS_FLIP_WGSL):画布尺寸 / 格式变了就重建 */
   private canvasFlip: RhiTexture | null = null;
   private destroyed = false;
+  private readonly revealControllers = new Set<AbortController>();
+  private lastSubmissionSucceeded = false;
+  private submissionCount = 0;
   /** 退订设备恢复通知 */
   private readonly offRestored: () => void;
   /** 设备恢复的通知落在一次 render 中途(理论上不会:恢复只在帧外):等最外层这次 render 结束再丢缓存 */
@@ -211,6 +219,7 @@ export class WebGPURenderer extends RendererBase {
       return;
     }
     this.contextChangePending = false;
+    for (const controller of this.revealControllers) controller.abort(new Error('GPU device changed during frame preparation'));
     for (const t of [...this.targets.keys()]) this.releaseTargets(t);
     this.canvasFlip?.destroy();
     this.canvasFlip = null;
@@ -289,8 +298,10 @@ export class WebGPURenderer extends RendererBase {
       // 画布零面积(挂载后、布局前的头几帧,resizeTo 的元素还是 0×0):WebGPU 取不到零尺寸的交换链纹理,
       // 这一帧本来也看不见,整帧不录(Pixi WebGL 在零面积画布上是静默画空)
       if (usesCanvas && (this.canvas.width === 0 || this.canvas.height === 0)) return;
-      if (usesCanvas) this.rhi.runFrame((frame) => this.record(state, cmds, frame.commands, frame));
-      else this.rhi.submit('engine2d render', (commands) => this.record(state, cmds, commands, null));
+      this.lastSubmissionSucceeded = usesCanvas
+        ? this.rhi.runFrame((frame) => this.record(state, cmds, frame.commands, frame))
+        : this.rhi.submit('engine2d render', (commands) => this.record(state, cmds, commands, null));
+      this.submissionCount++;
     } catch (e) {
       // 规划中途失败:借出的池纹理还回去(不然每失败一帧池里多一张),异常照旧抛给调用方(游戏的渲染兜错)
       state.builder.abort();
@@ -631,6 +642,56 @@ export class WebGPURenderer extends RendererBase {
     return this.pipelines.whenAllReady(timeoutMs);
   }
 
+  /**
+   * 完整首帧屏障：遮罩下实际绘制目标树，收集真正用到的管线并等它们成功；重复一次验证闭包稳定，
+   * 再确认没有跳过 draw、提交成功且 GPU 工作完成。失败/超时不能当成 ready。
+   * 调用方负责保持遮罩；这个方法只准备画面，不推进任何玩法时间。
+   */
+  async prepareForReveal(options: { container: Container; timeoutMs?: number; signal?: AbortSignal }): Promise<FrameReadiness> {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const parentAbort = (): void => controller.abort(options.signal?.reason ?? new DOMException('Frame preparation cancelled', 'AbortError'));
+    if (options.signal?.aborted) parentAbort();
+    options.signal?.addEventListener('abort', parentAbort, { once: true });
+    this.revealControllers.add(controller);
+    const deadline = performance.now() + Math.max(1, options.timeoutMs ?? 30_000);
+    const timeout = setTimeout(() => controller.abort(new DOMException('Complete frame preparation timed out', 'TimeoutError')), Math.max(1, options.timeoutMs ?? 30_000));
+    const lossCheck = setInterval(() => { if (this.rhi.isLost) controller.abort(new Error('GPU device lost during frame preparation')); }, 50);
+    const required = new Set<RhiRenderPipeline>();
+    let passes = 0;
+    try {
+      for (;;) {
+        signal.throwIfAborted();
+        if (this.destroyed || this.rhi.isLost) throw new Error('Renderer unavailable during frame preparation');
+        if (!options.container.visible || !options.container.activeSelf || this.canvas.width <= 0 || this.canvas.height <= 0) throw new Error('Target frame is not drawable');
+        const before = this.submissionCount;
+        const size = required.size;
+        const used = this.pipelines.collectRequired(() => this.render({ container: options.container, debugLabel: 'loading / complete first frame' }));
+        for (const pipeline of used) required.add(pipeline);
+        passes++;
+        const report = await this.pipelines.whenRequiredReady(required, Math.max(0, deadline - performance.now()), signal);
+        signal.throwIfAborted();
+        if (report.status !== 'ready') throw new Error(`Required GPU pipelines ${report.status}: ${[...report.pending, ...report.failed.map(f => f.label)].join(', ')}`);
+        if (before === this.submissionCount || !this.lastSubmissionSucceeded) throw new Error('Complete first frame submission failed');
+        // 第一次提交可能因在途管线跳过 draw；等 ready 后必须重画。新一轮还可能出现条件依赖的新管线。
+        if (required.size !== size || passes < 2) continue;
+        if (this.rhi.lastFrameStats.skippedDraws > 0) throw new Error('Complete first frame contains skipped draws');
+        await new Promise<void>((resolve, reject) => {
+          const abort = (): void => { signal.removeEventListener('abort', abort); reject(signal.reason); };
+          signal.addEventListener('abort', abort, { once: true });
+          this.rhi.waitForSubmittedWork().then(() => { signal.removeEventListener('abort', abort); resolve(); }, error => { signal.removeEventListener('abort', abort); reject(error); });
+        });
+        signal.throwIfAborted();
+        return { ...this.pipelines.readiness(required), submitted: true, passes };
+      }
+    } finally {
+      clearTimeout(timeout);
+      clearInterval(lossCheck);
+      options.signal?.removeEventListener('abort', parentAbort);
+      this.revealControllers.delete(controller);
+    }
+  }
+
   // ───────────────────────── 生成纹理 / 回读
 
   generateTexture(input: Container | GenerateTextureOptions): RenderTexture {
@@ -722,6 +783,8 @@ export class WebGPURenderer extends RendererBase {
   destroy(options: boolean | { removeView?: boolean } = false): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    for (const controller of this.revealControllers) controller.abort(new DOMException('Renderer destroyed', 'AbortError'));
+    this.revealControllers.clear();
     this.offRestored();
     this.prewarmSpecs.length = 0;
     this.events?.destroy();

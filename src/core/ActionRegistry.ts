@@ -2275,56 +2275,16 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (d.inspectBox.isOpen) d.inspectBox.close();
   };
 
-  /**
-   * 切场动作的状态锁（2026-08-18 拍板：加载中绝不能是 Exploring）：
-   * 玩家可控通道（Exploring / executeAwait 批锁的 ActionSequence）挂 SceneTransition；
-   * 对话/过场等叙事态内的 changeScene 沿用 Cutscene 锁，不抢各自的状态。
-   * 还权竞态：SceneTransition 由 Game 的 scene:revealed/transitionEnd 钩子揭幕即还权到
-   * Exploring（先于本 restore 跑），故 restore 见到 Exploring 时若批锁尚未收尾需重挂
-   * ActionSequence，保证批内尾随动作仍在锁下执行（批锁 finally 会再还 Exploring）。
-   */
-  const beginSceneSwitchLock = () => {
-    const prev = d.stateController.currentState;
-    const lockState = prev === GameState.Exploring || prev === GameState.ActionSequence
-      ? GameState.SceneTransition
-      : GameState.Cutscene;
-    d.stateController.setState(lockState);
-    return () => {
-      const cur = d.stateController.currentState;
-      if (cur === lockState) {
-        d.stateController.setState(prev);
-      } else if (
-        lockState === GameState.SceneTransition
-        && cur === GameState.Exploring
-        && prev === GameState.ActionSequence
-      ) {
-        d.stateController.setState(GameState.ActionSequence);
-      }
-    };
-  };
-
   executor.register('switchScene', (p) => {
-    const restore = beginSceneSwitchLock();
     prepareSceneSwitch();
-    return d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined)
-      .then(restore)
-      .catch((e) => {
-        console.warn('ActionRegistry: switchScene failed', e);
-        restore();
-      });
+    return d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined);
   }, ['targetScene', 'targetSpawnPoint']);
 
   executor.register('changeScene', (p) => {
-    const restore = beginSceneSwitchLock();
     prepareSceneSwitch();
     const cam = typeof p.cameraX === 'number' && typeof p.cameraY === 'number'
       ? { x: p.cameraX as number, y: p.cameraY as number } : undefined;
-    return d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined, cam)
-      .then(restore)
-      .catch((e) => {
-        console.warn('ActionRegistry: changeScene failed', e);
-        restore();
-      });
+    return d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined, cam);
   }, ['targetScene', 'targetSpawnPoint', 'cameraX', 'cameraY']);
 
   executor.register('shopPurchase', (p) => {

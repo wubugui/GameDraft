@@ -366,6 +366,18 @@ describe('空后端模拟建坏的管线(D7)', () => {
 });
 
 describe('空后端模拟设备丢失与恢复(D6,与真后端同一套可见行为)', () => {
+  it('提交完成屏障只在可用设备兑现，丢失或销毁后与真后端同样拒绝', async () => {
+    const dev = new NullRhiDevice();
+    await expect(dev.waitForSubmittedWork()).resolves.toBeUndefined();
+    await dev.loseDevice('submission unavailable', { restore: false });
+    await expect(dev.waitForSubmittedWork()).rejects.toMatchObject({ code: 'backend' });
+    dev.destroy();
+    await expect(dev.waitForSubmittedWork()).rejects.toMatchObject({ code: 'backend' });
+    const destroyed = new NullRhiDevice();
+    destroyed.destroy();
+    await expect(destroyed.waitForSubmittedWork()).rejects.toBeInstanceOf(RhiError);
+  });
+
   it('loseDevice:诊断「丢失」→ 恢复前帧作废 → 旧资源作废、作用域保留 → 诊断「已恢复」→ onRestored → 帧照常', async () => {
     const dev = new NullRhiDevice();
     const diags: { severity: string; message: string }[] = [];

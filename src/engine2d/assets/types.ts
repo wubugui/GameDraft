@@ -50,6 +50,10 @@ export type ProgressCallback = (progress: number) => void;
 
 /** 装载选项(同 Pixi `LoadOptions`) */
 export interface LoadOptions {
+  /** 仅取消本次消费者；同 URL 的其它消费者仍可完成。 */
+  signal?: AbortSignal;
+  /** 一次实际装载的时间上限，含解码与 parser。 */
+  timeoutMs?: number;
   onProgress?: (progress: number) => void;
   onError?: (error: Error, url: string | ResolvedAsset) => void;
   /** throw(缺省)= 一个失败整批失败;skip = 跳过失败的;retry = 重试 retryCount 次后再抛 */

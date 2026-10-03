@@ -11,6 +11,12 @@
   display: block;
 }
 
+#touch-mobile-controls[hidden],
+#touch-mobile-controls.is-loading {
+  display: none !important;
+  pointer-events: none !important;
+}
+
 #touch-mobile-controls.is-explore .touch-mc-overlay-only,
 #touch-mobile-controls.is-overlay .touch-mc-explore-only {
   display: none !important;

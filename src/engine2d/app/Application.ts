@@ -61,6 +61,8 @@ let warnedViewDeprecation = false;
 let warnedCtorDeprecation = false;
 
 export class Application<R extends RendererBase = WebGPURenderer> {
+  /** Suspend component simulation while presentation and GPU preparation keep running. */
+  playerLoopPaused = false;
   /**
    * 已装的插件,按顺序 init、逆序 destroy。
    * 与 Pixi 注册顺序相同:ResizePlugin、TickerPlugin(Pixi 另有一个只调 devtools 全局钩子的 ApplicationInitHook,不移植)。
@@ -74,6 +76,9 @@ export class Application<R extends RendererBase = WebGPURenderer> {
   renderer!: R;
   /** 开发期单帧探针；只在抓帧任务进行时安装，正常渲染路径不多包一层。 */
   private frameCaptureHook: ((draw: () => void) => void) | null = null;
+  private lifecycleGeneration = 0;
+  private cancelInit: (() => void) | null = null;
+  private initializedPlugins: ApplicationPlugin[] = [];
 
   // ── TickerPlugin 在 init 里装到实例上(init 之前访问是 undefined,与 Pixi 相同)
   declare ticker: Ticker;
@@ -95,9 +100,32 @@ export class Application<R extends RendererBase = WebGPURenderer> {
 
   /** 建渲染器并装插件 */
   async init(options?: Partial<ApplicationOptions>): Promise<void> {
+    this.cancelInit?.();
+    const generation = ++this.lifecycleGeneration;
     options = { ...options };
     this.stage ||= new Container();
-    this.renderer = (await createRenderer(toRendererOptions(options))) as unknown as R;
+    let cancel!: () => void;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      cancel = () => reject(new DOMException('Application initialization cancelled', 'AbortError'));
+    });
+    this.cancelInit = cancel;
+    const created = createRenderer(toRendererOptions(options)).then(renderer => {
+      if (generation !== this.lifecycleGeneration) {
+        renderer.destroy(true);
+        throw new DOMException('Stale Application initialization', 'AbortError');
+      }
+      return renderer;
+    });
+    try {
+      const renderer = await Promise.race([created, cancelled]);
+      if (generation !== this.lifecycleGeneration) {
+        renderer.destroy(true);
+        throw new DOMException('Stale Application initialization', 'AbortError');
+      }
+      this.renderer = renderer as unknown as R;
+    } finally {
+      if (this.cancelInit === cancel) this.cancelInit = null;
+    }
 
     // ── 事件系统接线位置(events 模块另写,接线由主代理做)。
     // Pixi 里 EventSystem 是**渲染器系统**,在 autoDetectRenderer 内部 init,早于下面的插件:
@@ -109,11 +137,14 @@ export class Application<R extends RendererBase = WebGPURenderer> {
 
     Application._plugins.forEach((plugin) => {
       plugin.init.call(this as unknown as Application, options as Partial<ApplicationOptions>);
+      this.initializedPlugins.push(plugin);
     });
 
     // 层级(照 Unity):stage 是一个场景根;玩家循环(组件的 Start / Update / LateUpdate)挂在 ticker 上、渲染之前
     this.stage.isSceneRoot = true;
-    this._playerLoopTick = () => PlayerLoop.shared.tick(this.ticker.deltaMS / 1000);
+    this._playerLoopTick = () => {
+      if (!this.playerLoopPaused) PlayerLoop.shared.tick(this.ticker.deltaMS / 1000);
+    };
     this.ticker.add(this._playerLoopTick, null, UPDATE_PRIORITY.NORMAL);
   }
 
@@ -121,6 +152,7 @@ export class Application<R extends RendererBase = WebGPURenderer> {
 
   /** 把 stage 画到画布(TickerPlugin 每帧以 LOW 优先级调用) */
   render(): void {
+    if (!this.renderer || !this.stage) return;
     const hook = this.frameCaptureHook;
     if (hook && this.canvas.width > 0 && this.canvas.height > 0 && this.stage.visible && this.stage.activeSelf) {
       // 整次 renderer.render 含准备资源、上传和画布提交；begin/end 不能包在底层 RHI 提交之后。
@@ -160,12 +192,15 @@ export class Application<R extends RendererBase = WebGPURenderer> {
    * @param options stage 的销毁参数(同 Container.destroy)
    */
   destroy(rendererDestroyOptions: RendererDestroyOptions = false, options: boolean | DestroyOptions = false): void {
+    ++this.lifecycleGeneration;
+    this.cancelInit?.();
+    this.cancelInit = null;
     this.frameCaptureHook = null;
     if (this._playerLoopTick) {
       this.ticker?.remove(this._playerLoopTick, null);
       this._playerLoopTick = null;
     }
-    const plugins = Application._plugins.slice(0);
+    const plugins = this.initializedPlugins.splice(0);
     plugins.reverse();
     plugins.forEach((plugin) => {
       plugin.destroy.call(this as unknown as Application);

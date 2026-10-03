@@ -19,16 +19,17 @@ import { ContactAoTransition } from './contactAoTransition';
 import { resolveContactAo } from './contactAo';
 
 describe('动画 AO 浓度过渡', () => {
-  it('首次直接采用动作开关；默认一秒淡出和淡入，终点精确落到 0/1', () => {
+  it('首次直接采用动作开关；默认两秒淡出和淡入，半程与终点精确落到 0.5/0/1', () => {
     const fade = new ContactAoTransition();
     const defaults = resolveContactAo(undefined, { contact: 0.75, contactSize: 1 });
+    expect(defaults).toMatchObject({ fadeInMs: 2000, fadeOutMs: 2000 });
     const step = (enabled: boolean, ms: number) => fade.update(enabled, ms, defaults.fadeInMs, defaults.fadeOutMs);
     expect(step(true, 16)).toBe(1);
-    expect(step(false, 500)).toBeCloseTo(0.5);
-    expect(step(false, 500)).toBe(0);
+    expect(step(false, defaults.fadeOutMs / 2)).toBeCloseTo(0.5);
+    expect(step(false, defaults.fadeOutMs / 2)).toBe(0);
     expect(fade.active).toBe(false);
-    expect(step(true, 500)).toBeCloseTo(0.5);
-    expect(step(true, 500)).toBe(1);
+    expect(step(true, defaults.fadeInMs / 2)).toBeCloseTo(0.5);
+    expect(step(true, defaults.fadeInMs / 2)).toBe(1);
     expect(fade.active).toBe(false);
     expect(new ContactAoTransition().update(false, 16, 250, 150)).toBe(0);
   });

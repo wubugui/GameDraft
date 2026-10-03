@@ -54,6 +54,7 @@ describe('AssetManager.loadSceneData', () => {
 
 describe('AssetManager unified cache', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -161,6 +162,110 @@ describe('AssetManager unified cache', () => {
     expect(assets.getStats().json.entries).toBe(0);
     await assets.loadJson('/assets/data/a.json');
     expect(assets.getStats().json.pinned).toBe(1);
+  });
+
+  it('取消一个消费者不会取消同 URL 的其它消费者，也不会重复请求', async () => {
+    let finish!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const assets = new AssetManager();
+    const cancel = new AbortController();
+    const first = assets.loadJson('/shared.json', { signal: cancel.signal });
+    const firstRejected = expect(first).rejects.toMatchObject({ name: 'AbortError' });
+    const second = assets.loadJson('/shared.json');
+    await Promise.resolve(); await Promise.resolve();
+    cancel.abort();
+    await firstRejected;
+    finish(new Response('{"ready":true}', { headers: { 'content-type': 'application/json' } }));
+    await expect(second).resolves.toEqual({ ready: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(assets.getJson('/shared.json')).toEqual({ ready: true });
+    assets.dispose();
+  });
+
+  it('最后消费者取消会中止真实I/O与队列，释放并发槽且同URL立即可重试', async () => {
+    const aborted: string[] = [];
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => {
+      calls.push(String(url));
+      if (calls.length > 1) return Promise.resolve(new Response('{"ready":true}'));
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => { aborted.push(String(url)); reject(init.signal?.reason); }, { once: true });
+      });
+    });
+    const assets = new AssetManager({}, { concurrency: 1 });
+    const firstCancel = new AbortController();
+    const queuedCancel = new AbortController();
+    const first = assets.loadJson('/cancel-shared.json', { signal: firstCancel.signal });
+    const queued = assets.loadJson('/old-queued.json', { signal: queuedCancel.signal });
+    const rejected = Promise.allSettled([first, queued]);
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    queuedCancel.abort();
+    firstCancel.abort();
+    expect((await rejected).every(result => result.status === 'rejected')).toBe(true);
+    await expect(assets.loadJson('/cancel-shared.json')).resolves.toEqual({ ready: true });
+    expect(aborted).toEqual(['./cancel-shared.json']);
+    expect(calls).not.toContain('./old-queued.json');
+    assets.dispose();
+  });
+
+  it('超时封口后可重试，晚到的旧产物不能覆盖新缓存', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let oldFinish!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementationOnce(() => new Promise(resolve => { oldFinish = resolve; }))
+      .mockResolvedValue(new Response('{"version":2}'));
+    const assets = new AssetManager({}, { timeoutMs: 20 });
+    const first = assets.loadJson('/retry.json');
+    const rejection = expect(first).rejects.toMatchObject({ name: 'TimeoutError' });
+    await vi.advanceTimersByTimeAsync(20);
+    await rejection;
+    await expect(assets.loadJson('/retry.json')).resolves.toEqual({ version: 2 });
+    oldFinish(new Response('{"version":1}'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(assets.getJson('/retry.json')).toEqual({ version: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+    assets.dispose();
+  });
+
+  it('并发上限同时约束所有批次，dispose终止排队及在途消费者', async () => {
+    let active = 0;
+    let peak = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+      active++; peak = Math.max(peak, active);
+      init?.signal?.addEventListener('abort', () => { active--; reject(init.signal?.reason); }, { once: true });
+    }));
+    const assets = new AssetManager({}, { concurrency: 2 });
+    const requests = Array.from({ length: 8 }, (_, i) => assets.loadJson(`/queued-${i}.json`));
+    const settled = Promise.allSettled(requests);
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(peak).toBe(2);
+    assets.dispose();
+    expect((await settled).every(result => result.status === 'rejected')).toBe(true);
+    expect(active).toBe(0);
+    expect(assets.getStats().json.entries).toBe(0);
+    await expect(assets.loadJson('/after-dispose.json')).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('可选资源失败有独立进度，必需失败拒绝并释放scope', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
+      if (String(url).includes('missing')) throw new Error('missing');
+      return new Response('{"ok":true}');
+    });
+    const assets = new AssetManager();
+    const statuses: string[] = [];
+    const result = await assets.preloadManifest({ scopeId: 'optional', refs: [
+      { type: 'json', path: '/good.json' }, { type: 'json', path: '/missing-optional.json', optional: true },
+    ] }, { onItemProgress: progress => statuses.push(progress.status) });
+    expect(result).toMatchObject({ loaded: 1, optionalFailed: 1, requiredFailed: 0 });
+    expect(statuses).toContain('optional-failed');
+    await expect(assets.preloadManifest({ scopeId: 'required', refs: [
+      { type: 'json', path: '/required-good.json' }, { type: 'json', path: '/missing-required.json' },
+    ] })).rejects.toMatchObject({ name: 'AssetPreloadError' });
+    expect((assets as unknown as { scopeRefs: Map<string, unknown> }).scopeRefs.has('required')).toBe(false);
+    assets.dispose();
   });
 });
 

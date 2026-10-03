@@ -4,6 +4,12 @@ export class InputManager {
   /** 为 true 时不写入按键状态，查询移动/按键视为无输入（如 Debug 侧栏聚焦时避免吃掉快捷键） */
   private gameKeyboardBlocked = false;
   private captureInputHolds = 0;
+  private loadingInputHolds = 0;
+  /** 物理按住与玩法输入分开：加载时按下的键必须先松开，不能在揭幕后自动续走。 */
+  private physicalKeysDown: Set<string> = new Set();
+  private keysAwaitingRelease: Set<string> = new Set();
+  /** 组装层注入加载/失败界面的专用键盘入口；不转发给玩法订阅者或旧 UI。 */
+  private loadingKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   private mousePos: { x: number; y: number } = { x: 0, y: 0 };
   private mouseDown: boolean = false;
   private mouseJustClicked: boolean = false;
@@ -42,7 +48,8 @@ export class InputManager {
       if (document.visibilityState === 'hidden') this.onFocusLost();
     };
 
-    window.addEventListener('keydown', this.onKeyDownBound);
+    // 必须早于 UI 的 window 键盘监听取得加载控制权；仅订阅者锁挡不住直接监听的对话/UI。
+    window.addEventListener('keydown', this.onKeyDownBound, true);
     window.addEventListener('keyup', this.onKeyUpBound);
     window.addEventListener('pointermove', this.onPointerMoveBound);
     window.addEventListener('pointerdown', this.onPointerDownBound);
@@ -54,6 +61,8 @@ export class InputManager {
   /** 失焦/切后台后收不到 keyup/pointerup：清掉按住状态（含 Shift 跑步），
    *  否则 Alt-Tab 回来角色沿旧方向自走（B1）。触屏轴由 TouchMobileControls 自管，不在此清。 */
   private onFocusLost(): void {
+    this.physicalKeysDown.clear();
+    this.keysAwaitingRelease.clear();
     this.keysDown.clear();
     this.keyJustPressed.clear();
     this.mouseDown = false;
@@ -61,6 +70,16 @@ export class InputManager {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
+    this.physicalKeysDown.add(e.code);
+    if (this.loadingInputHolds > 0) {
+      this.keysAwaitingRelease.add(e.code);
+      this.handleLoadingKey(e);
+      return;
+    }
+    if (this.keysAwaitingRelease.has(e.code)) {
+      this.suppressGameKey(e);
+      return;
+    }
     if (this.captureInputHolds > 0) {
       // F2 controls the DOM capture panel; every gameplay subscriber stays frozen.
       if (e.code === 'F2') for (const cb of [...this.keyDownSubscribers]) cb(e);
@@ -69,34 +88,71 @@ export class InputManager {
     // 订阅者分发一律快照遍历（对齐 EventBus.emit 的 [...set]）：回调内退订会 splice
     // 正在遍历的数组，跳过后一个订阅者（B2）
     if (!this.gameKeyboardBlocked) {
+      // 回到窗口时系统可能只补 repeat，而没有一条新的按下。要求真实松开再按。
+      if (e.repeat && !this.keysDown.has(e.code)) {
+        this.keysAwaitingRelease.add(e.code);
+        this.suppressGameKey(e);
+        return;
+      }
       if (!this.keysDown.has(e.code)) {
         this.keyJustPressed.add(e.code);
       }
       this.keysDown.add(e.code);
       // 长按会产生 repeat 的 keydown；过场用 subscribeAnyInput 推进对话时若每次都触发会瞬间连点完所有指令
       if (!e.repeat) {
-        for (const cb of [...this.anyInputSubscribers]) cb();
+        for (const cb of [...this.anyInputSubscribers]) {
+          if (this.loadingInputHolds > 0) break;
+          cb();
+        }
       }
     }
-    for (const cb of [...this.keyDownSubscribers]) cb(e);
+    for (const cb of [...this.keyDownSubscribers]) {
+      if (this.loadingInputHolds > 0) break;
+      cb(e);
+    }
+    if (this.loadingInputHolds > 0) {
+      this.handleLoadingKey(e);
+    }
+  }
+
+  private handleLoadingKey(e: KeyboardEvent): void {
+    this.suppressGameKey(e);
+    if (!e.repeat && this.loadingKeyHandler) {
+      try { this.loadingKeyHandler(e); } catch (error) {
+        console.warn('InputManager: 加载界面键盘入口失败（已隔离）', error);
+      }
+    }
+  }
+
+  private suppressGameKey(e: KeyboardEvent): void {
+    // 加载失败时仍可 Tab 聚焦、F5/Ctrl+R 刷新宿主；旧游戏 UI 一律收不到这条键。
+    const browserDefault = e.code === 'Tab' || e.code === 'F5'
+      || (e.code === 'KeyR' && (e.ctrlKey || e.metaKey));
+    if (!browserDefault) e.preventDefault?.();
+    e.stopImmediatePropagation?.();
+  }
+
+  setLoadingKeyHandler(handler: ((e: KeyboardEvent) => void) | null): void {
+    this.loadingKeyHandler = handler;
   }
 
   private onKeyUp(e: KeyboardEvent): void {
+    this.physicalKeysDown.delete(e.code);
+    this.keysAwaitingRelease.delete(e.code);
     this.keysDown.delete(e.code);
   }
 
   private onPointerMove(e: PointerEvent): void {
-    if (this.captureInputHolds > 0) return;
+    if (this.captureInputHolds > 0 || this.loadingInputHolds > 0) return;
     this.mousePos.x = e.clientX;
     this.mousePos.y = e.clientY;
   }
 
   private onPointerDown(_e: PointerEvent): void {
-    if (this.captureInputHolds > 0) return;
+    if (this.captureInputHolds > 0 || this.loadingInputHolds > 0) return;
     this.mouseDown = true;
     this.mouseJustClicked = true;
-    for (const cb of [...this.anyInputSubscribers]) cb();
-    for (const cb of [...this.pointerDownSubscribers]) cb();
+    this.dispatchPointerInput();
   }
 
   private onPointerUp(_e: PointerEvent): void {
@@ -104,24 +160,24 @@ export class InputManager {
   }
 
   isKeyDown(code: string): boolean {
-    if (this.gameKeyboardBlocked) return false;
+    if (this.gameKeyboardBlocked || this.loadingInputHolds > 0) return false;
     return this.keysDown.has(code) || this.touchHeldKeys.has(code);
   }
 
   /** 触屏「按住」某键（姿态键的 toggle 用）；held=false 松开。 */
   setTouchKeyHeld(code: string, held: boolean): void {
-    if (this.captureInputHolds > 0) return;
+    if ((this.captureInputHolds > 0 || this.loadingInputHolds > 0) && held) return;
     if (held) this.touchHeldKeys.add(code);
     else this.touchHeldKeys.delete(code);
   }
 
   /** 触屏当前按住的键（供 HUD 回读按钮态，避免 UI 与输入层各存一份）。 */
   isTouchKeyHeld(code: string): boolean {
-    return this.touchHeldKeys.has(code);
+    return this.loadingInputHolds === 0 && this.touchHeldKeys.has(code);
   }
 
   wasKeyJustPressed(code: string): boolean {
-    if (this.gameKeyboardBlocked) return false;
+    if (this.gameKeyboardBlocked || this.loadingInputHolds > 0) return false;
     return this.keyJustPressed.has(code);
   }
 
@@ -130,16 +186,16 @@ export class InputManager {
    * 用于同一个键被多个消费者按顺序读的场合（躺着按 E 起身**不该**同时触发身边的热点）。
    */
   consumeKeyJustPressed(code: string): boolean {
-    if (this.gameKeyboardBlocked) return false;
+    if (this.gameKeyboardBlocked || this.loadingInputHolds > 0) return false;
     return this.keyJustPressed.delete(code);
   }
 
   isMouseDown(): boolean {
-    return this.mouseDown;
+    return this.loadingInputHolds === 0 && this.mouseDown;
   }
 
   wasMouseJustClicked(): boolean {
-    return this.mouseJustClicked;
+    return this.loadingInputHolds === 0 && this.mouseJustClicked;
   }
 
   getMousePos(): { x: number; y: number } {
@@ -169,7 +225,7 @@ export class InputManager {
   }
 
   getMovementDirection(): { x: number; y: number } {
-    if (this.gameKeyboardBlocked) return { x: 0, y: 0 };
+    if (this.gameKeyboardBlocked || this.loadingInputHolds > 0) return { x: 0, y: 0 };
     let dx = 0;
     let dy = 0;
 
@@ -191,7 +247,7 @@ export class InputManager {
   }
 
   isRunning(): boolean {
-    if (this.gameKeyboardBlocked) return false;
+    if (this.gameKeyboardBlocked || this.loadingInputHolds > 0) return false;
     return (
       this.keysDown.has('ShiftLeft') ||
       this.keysDown.has('ShiftRight') ||
@@ -201,32 +257,64 @@ export class InputManager {
 
   /** 触屏「互动」：本帧内视为按下 E 一次（供 InteractionSystem 使用） */
   injectKeyJustPressed(code: string): void {
-    if (this.gameKeyboardBlocked || this.captureInputHolds > 0) return;
+    if (this.gameKeyboardBlocked || this.captureInputHolds > 0 || this.loadingInputHolds > 0) return;
     this.keyJustPressed.add(code);
   }
 
   /** 注入一次"点击/继续"（与真实 pointerdown 同效，通知过场/点击继续/任意输入订阅者）。
    *  供玩家同构测试的 playerTap：推进过场、点击继续、对话行等玩家用鼠标点的路径。 */
   injectPointerDown(): void {
-    if (this.captureInputHolds > 0) return;
+    if (this.captureInputHolds > 0 || this.loadingInputHolds > 0) return;
     this.mouseJustClicked = true;
-    for (const cb of [...this.anyInputSubscribers]) cb();
-    for (const cb of [...this.pointerDownSubscribers]) cb();
+    this.dispatchPointerInput();
+  }
+
+  private dispatchPointerInput(): void {
+    for (const cb of [...this.anyInputSubscribers]) {
+      if (this.loadingInputHolds > 0) return;
+      cb();
+    }
+    for (const cb of [...this.pointerDownSubscribers]) {
+      if (this.loadingInputHolds > 0) return;
+      cb();
+    }
   }
 
   setTouchMoveAxes(x: -1 | 0 | 1, y: -1 | 0 | 1): void {
-    if (this.captureInputHolds > 0) return;
+    if ((this.captureInputHolds > 0 || this.loadingInputHolds > 0) && (x !== 0 || y !== 0)) return;
     this.touchMoveX = x;
     this.touchMoveY = y;
   }
 
   setTouchRunHeld(held: boolean): void {
-    if (this.captureInputHolds > 0) return;
+    if ((this.captureInputHolds > 0 || this.loadingInputHolds > 0) && held) return;
     this.touchRunHeld = held;
   }
 
   setGameKeyboardBlocked(blocked: boolean): void {
     this.gameKeyboardBlocked = blocked;
+  }
+
+  /** 加载独占输入，包含订阅者与触屏注入；嵌套持有者全部释放后才还权。 */
+  suspendForLoading(): () => void {
+    this.loadingInputHolds++;
+    for (const code of this.physicalKeysDown) this.keysAwaitingRelease.add(code);
+    const clear = (): void => {
+      this.keysDown.clear();
+      this.clearInputEdges();
+      this.mouseDown = false;
+      this.touchMoveX = this.touchMoveY = 0;
+      this.touchRunHeld = false;
+      this.touchHeldKeys.clear();
+    };
+    clear();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.loadingInputHolds--;
+      clear();
+    };
   }
 
   /** A capture owns input until its final disk acknowledgement; stale held keys never resume. */
@@ -273,7 +361,7 @@ export class InputManager {
   }
 
   destroy(): void {
-    window.removeEventListener('keydown', this.onKeyDownBound);
+    window.removeEventListener('keydown', this.onKeyDownBound, true);
     window.removeEventListener('keyup', this.onKeyUpBound);
     window.removeEventListener('pointermove', this.onPointerMoveBound);
     window.removeEventListener('pointerdown', this.onPointerDownBound);
@@ -281,8 +369,16 @@ export class InputManager {
     window.removeEventListener('blur', this.onWindowBlurBound);
     document.removeEventListener('visibilitychange', this.onVisibilityChangeBound);
     this.touchHeldKeys.clear();
+    this.physicalKeysDown.clear();
+    this.keysAwaitingRelease.clear();
+    this.keysDown.clear();
+    this.clearInputEdges();
+    this.touchMoveX = this.touchMoveY = 0;
+    this.touchRunHeld = false;
+    this.mouseDown = false;
     this.keyDownSubscribers.length = 0;
     this.anyInputSubscribers.length = 0;
     this.pointerDownSubscribers.length = 0;
+    this.loadingKeyHandler = null;
   }
 }

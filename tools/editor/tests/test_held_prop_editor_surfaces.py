@@ -992,13 +992,17 @@ class FlamePresetValidationTests(unittest.TestCase):
         self.assertTrue(any("onEnterActions[0]" in m for m in self._errors(e)))
 
     def test_cutscene_allowlist_gate_is_dormant_while_switch_actions_are_not_allowed(self) -> None:
+        from unittest import mock
+
         from tools.editor import validator as v
-        self.assertFalse(v._CUTSCENE_ACTION_WHITELIST & {"setPropState", "attachToSocket"},
-                         "契约前提：两个切状态动作目前都不在过场白名单里——变了就改这条用例")
+        # This branch is a controlled policy case: the current authority may allow
+        # state switches, so remove only those actions for the dormant-path probe.
+        dormant = v._CUTSCENE_ACTION_WHITELIST - {"setPropState", "attachToSocket"}
         e = copy.deepcopy(FIRE_PRESET)
         e["states"]["out"]["onEnterActions"] = [
             {"type": "giveItem", "params": {"id": "__x__", "count": 1}}]
-        self.assertFalse(any("过场白名单" in m for m in self._errors(e)))
+        with mock.patch.object(v, "_CUTSCENE_ACTION_WHITELIST", dormant):
+            self.assertFalse(any("过场白名单" in m for m in self._errors(e)))
 
     def test_cutscene_allowlist_gate_fires_once_switch_is_allowed(self) -> None:
         from unittest import mock

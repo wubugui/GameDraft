@@ -11,6 +11,9 @@ import { Buffer, BufferUsage } from '../shader/Buffer';
 import { Geometry } from '../shader/Geometry';
 import { GpuProgram } from '../shader/GpuProgram';
 import { WebGPURenderer } from './WebGPURenderer';
+import { Container } from '../scene/Container';
+import { Mesh } from '../mesh/Mesh';
+import { Shader } from '../shader/Shader';
 
 const WGSL = /* wgsl */ `
 struct GlobalUniforms { uProjectionMatrix: mat3x3<f32>, uWorldTransformMatrix: mat3x3<f32>, uWorldColorAlpha: vec4<f32>, uResolution: vec2<f32> }
@@ -45,7 +48,7 @@ function setup(name: string, opts: { pending?: boolean; fail?: boolean } = {}) {
   const program = new GpuProgram({ name, vertex: { source: WGSL, entryPoint: 'mainVertex' }, fragment: { source: WGSL, entryPoint: 'mainFragment' } });
   renderer.prewarmPipelines([{ program, geometry: makeGeometry(), blendModes: ['normal'] }]);
   expect(created.mock.calls.length).toBeGreaterThan(0);
-  return { rhi, renderer };
+  return { rhi, renderer, program };
 }
 
 /** 记下承诺落定没有(不 await,好在不推进计时器时判断「还挂着」) */
@@ -64,6 +67,124 @@ afterEach(() => {
 });
 
 describe('pipelinesReady 揭幕闸(R4-7)', () => {
+  it('实际引用的挂起管线编完后必须重画，最后一帧没有跳过draw才就绪', async () => {
+    const { rhi, renderer, program } = setup('complete-pending', { pending: true });
+    const root = new Container();
+    root.addChild(new Mesh({ geometry: makeGeometry(), shader: new Shader({ gpuProgram: program, resources: {} }) }));
+    const render = vi.spyOn(renderer, 'render');
+    const waiting = renderer.prepareForReveal({ container: root, timeoutMs: 1000 });
+    const state = track(waiting);
+    await Promise.resolve();
+    expect(state.done).toBe(false);
+    rhi.settlePendingPipelines();
+    const ready = await waiting;
+    expect(ready).toMatchObject({ status: 'ready', submitted: true, pending: [], failed: [] });
+    expect(render.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(ready.passes).toBe(render.mock.calls.length);
+    expect(rhi.lastFrameStats.draws).toBeGreaterThan(0);
+    expect(rhi.lastFrameStats.skippedDraws).toBe(0);
+    renderer.destroy();
+  });
+
+  it('真实提交被RHI拒绝时不得报ready，也不等待GPU完成', async () => {
+    const { rhi, renderer } = setup('failed-submit');
+    vi.useFakeTimers();
+    vi.spyOn(rhi, 'runFrame').mockReturnValue(false);
+    const complete = vi.spyOn(rhi, 'waitForSubmittedWork');
+    await expect(renderer.prepareForReveal({ container: new Container(), timeoutMs: 1000 })).rejects.toThrow('Complete first frame submission failed');
+    expect(complete).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    renderer.destroy();
+  });
+
+  it('已提交但遗漏draw的完整帧仍拒绝揭幕', async () => {
+    const { rhi, renderer } = setup('skipped-submit');
+    vi.useFakeTimers();
+    const stats = rhi.lastFrameStats;
+    vi.spyOn(rhi, 'lastFrameStats', 'get').mockImplementation(() => ({ ...stats, skippedDraws: 1 }));
+    const complete = vi.spyOn(rhi, 'waitForSubmittedWork');
+    await expect(renderer.prepareForReveal({ container: new Container(), timeoutMs: 1000 })).rejects.toThrow('Complete first frame contains skipped draws');
+    expect(complete).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    renderer.destroy();
+  });
+
+  it('GPU提交完成永远不返回也受整个首帧watchdog约束', async () => {
+    const { rhi, renderer } = setup('hung-gpu-work');
+    vi.useFakeTimers();
+    const complete = vi.spyOn(rhi, 'waitForSubmittedWork').mockImplementation(() => new Promise<void>(() => {}));
+    const waiting = renderer.prepareForReveal({ container: new Container(), timeoutMs: 100 }).catch(error => error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(complete).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await waiting).toMatchObject({ name: 'TimeoutError' });
+    expect(vi.getTimerCount()).toBe(0);
+    renderer.destroy();
+  });
+
+  it.each(['destroy', 'restore', 'loss'] as const)('等待GPU提交完成时%s必须封口，不留首帧定时器', async (cause) => {
+    const { rhi, renderer } = setup(`gpu-wait-${cause}`);
+    vi.useFakeTimers();
+    const complete = vi.spyOn(rhi, 'waitForSubmittedWork').mockImplementation(() => new Promise<void>(() => {}));
+    const waiting = renderer.prepareForReveal({ container: new Container(), timeoutMs: 60_000 }).catch(error => error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(complete).toHaveBeenCalledTimes(1);
+    if (cause === 'destroy') renderer.destroy();
+    else {
+      const loss = rhi.loseDevice('first frame interrupted', { restore: cause === 'restore' });
+      await vi.advanceTimersByTimeAsync(cause === 'loss' ? 50 : 0);
+      await loss;
+    }
+    const error = await waiting;
+    if (cause === 'destroy') expect(error).toMatchObject({ name: 'AbortError' });
+    else expect(error).toBeInstanceOf(Error);
+    expect(vi.getTimerCount()).toBe(0);
+    renderer.destroy();
+  });
+
+  it.each(['hidden', 'inactive', 'zero-canvas'] as const)('不可绘制的%s目标拒绝揭幕且收齐首帧定时器', async (cause) => {
+    const { renderer } = setup(`undrawable-${cause}`);
+    const root = new Container();
+    if (cause === 'hidden') root.visible = false;
+    else if (cause === 'inactive') root.setActive(false);
+    else renderer.canvas.width = 0;
+    vi.useFakeTimers();
+    await expect(renderer.prepareForReveal({ container: root, timeoutMs: 1000 })).rejects.toThrow('Target frame is not drawable');
+    expect(vi.getTimerCount()).toBe(0);
+    renderer.destroy();
+  });
+
+  it('完整首帧只等实际引用的管线，未使用的历史失败不会污染新场景', async () => {
+    const { renderer } = setup('unused-bad', { fail: true });
+    const root = new Container();
+    const result = await renderer.prepareForReveal({ container: root, timeoutMs: 1000 });
+    expect(result).toMatchObject({ status: 'ready', submitted: true, pending: [], failed: [] });
+    expect(result.passes).toBeGreaterThanOrEqual(2);
+    renderer.destroy();
+  });
+
+  it('完整首帧实际需要的管线失败会拒绝，不能沿用旧boolean的fail-open结果', async () => {
+    const { renderer, program } = setup('required-bad', { fail: true });
+    const root = new Container();
+    root.addChild(new Mesh({ geometry: makeGeometry(), shader: new Shader({ gpuProgram: program, resources: {} }) }));
+    await expect(renderer.prepareForReveal({ container: root, timeoutMs: 1000 })).rejects.toThrow('Required GPU pipelines failed');
+    renderer.destroy();
+  });
+
+  it('完整首帧等待期间取消立即拒绝并回收计时器', async () => {
+    const { renderer, program } = setup('required-pending', { pending: true });
+    const root = new Container();
+    root.addChild(new Mesh({ geometry: makeGeometry(), shader: new Shader({ gpuProgram: program, resources: {} }) }));
+    vi.useFakeTimers();
+    const cancel = new AbortController();
+    const waiting = renderer.prepareForReveal({ container: root, timeoutMs: 60_000, signal: cancel.signal });
+    const rejection = expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+    await Promise.resolve();
+    cancel.abort();
+    await rejection;
+    expect(vi.getTimerCount()).toBe(0);
+    renderer.destroy();
+  });
   it('全部就绪:返回 true,计时器收干净', async () => {
     const { renderer } = setup('ready-prog');
     vi.useFakeTimers();

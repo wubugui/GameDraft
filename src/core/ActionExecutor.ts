@@ -62,6 +62,12 @@ export interface ActionExecutionPolicy {
   label: string;
 }
 
+/** A captured owner remains observable after it settles while Loading holds control. */
+export interface ExploreActionLockOwner {
+  readonly generation: number;
+  readonly settled: boolean;
+}
+
 export class ActionExecutor {
   private handlers: Map<string, ActionHandler> = new Map();
   private scopedHandlers = new Map<string, ScopedActionHandler>();
@@ -77,7 +83,10 @@ export class ActionExecutor {
   private warnedAfterDestroy = false;
   private generation = 0;
   /** 同一次探索锁内的在途动作共同持有；最后一条结束才归还控制权。 */
-  private exploreActionLock: { users: number } | null = null;
+  private exploreActionLock: {
+    users: number;
+    owner: { generation: number; settled: boolean };
+  } | null = null;
 
   /** 死亡/读档使旧批的后续动作失效；已进入的异步系统由各自生命周期闸门收尾。 */
   cancelPending(): void {
@@ -86,6 +95,7 @@ export class ActionExecutor {
     for (const scope of [...this.effectScopes]) scope.close('interrupted');
   }
   getGeneration(): number { return this.generation; }
+  getExploreLockOwner(): ExploreActionLockOwner | null { return this.exploreActionLock?.owner ?? null; }
   /**
    * dev 叙事调试器的动作挂点（见 src/dev/narrativeDebugBridge.ts）。
    * 默认 null——生产环境无任何设置方，行为与从前一致。
@@ -368,9 +378,9 @@ export class ActionExecutor {
     const gen = this.generation;
     const sc = this.gameStateController;
     if (!sc || scope.detached) return work();
-    let lock: { users: number } | null = null;
+    let lock: typeof this.exploreActionLock = null;
     if (sc.currentState === GameState.Exploring) {
-      lock = this.exploreActionLock ?? { users: 0 };
+      lock = this.exploreActionLock ?? { users: 0, owner: { generation: gen, settled: false } };
       lock.users++;
       this.exploreActionLock = lock;
       sc.setState(GameState.ActionSequence);
@@ -381,9 +391,14 @@ export class ActionExecutor {
     try {
       return await work();
     } finally {
-      if (lock && --lock.users === 0 && gen === this.generation && this.exploreActionLock === lock) {
-        this.exploreActionLock = null;
-        if (sc.currentState === GameState.ActionSequence) sc.setState(GameState.Exploring);
+      if (lock && --lock.users === 0) {
+        // Loading observes the shared lock, so an earlier completion cannot resume
+        // exploration while another action still owns the same timeline.
+        lock.owner.settled = true;
+        if (gen === this.generation && this.exploreActionLock === lock) {
+          this.exploreActionLock = null;
+          if (sc.currentState === GameState.ActionSequence) sc.setState(GameState.Exploring);
+        }
       }
     }
   }

@@ -1,0 +1,6 @@
+{
+  "focus": { "label": "由虚到实", "durationMs": 800, "maxBlurPx": 16, "softness": 0.1, "minBrightness": 0.84 },
+  "iris": { "label": "圆形开幕", "durationMs": 800, "softness": 0.1 },
+  "wipe": { "label": "单向擦除", "durationMs": 800, "softness": 0.1 },
+  "fade": { "label": "黑场淡入", "durationMs": 800 }
+}

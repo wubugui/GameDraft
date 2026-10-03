@@ -1689,7 +1689,7 @@ export class HeldPropSystem implements IGameSystem {
    *
    * `followLights` = 新场景里配了 `follow` 的作者灯（组装层从场景数据挑出来给）。
    */
-  onSceneChanged(followLights: readonly LightDef[] = []): void {
+  async onSceneChanged(followLights: readonly LightDef[] = []): Promise<void> {
     /**
      * 留下谁：手持物（入档的）**以及玩家身上的演出挂件**。
      *
@@ -1707,11 +1707,9 @@ export class HeldPropSystem implements IGameSystem {
       this.fades.clear();
       this.pushScales();
     }
-    for (const e of keep) {
-      void this.attach(e.target, e.socket, e.propId, e.state || undefined, e.overrides, {
+    await Promise.all(keep.map((e) => this.attach(e.target, e.socket, e.propId, e.state || undefined, e.overrides, {
         lock: this.effectiveLock(e), vitality: e.vitality, fuel: e.fuelLeft ?? undefined,
-      });
-    }
+      })));
   }
 
   /**

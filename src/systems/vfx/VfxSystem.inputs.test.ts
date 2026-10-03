@@ -13,7 +13,8 @@ function effect(image = '/paper.png'): VfxEffectDef {
 async function harness(loadTexture: (url: string) => Promise<unknown> = async url => ({ width: 16, height: 16, url })) {
   const eventBus = new EventBus(), logs: string[] = [];
   const sys = new VfxSystem({
-    assetManager: { loadJson: async () => ({ scenes: {} }), loadTexture, dropJson: () => true } as unknown as AssetManager,
+    assetManager: { loadJson: async () => ({ scenes: {} }), loadTexture, dropJson: () => true,
+      extendScope: () => {}, releaseScope: () => {} } as unknown as AssetManager,
     getSceneData: () => ({ id: 's' } as SceneData), buildSpace: createPlanarVfxSpace,
     getPlayerContact: () => null, getAppearancePhase: () => '', getActiveLights: () => [],
     conditionContext: () => ({}) as never, hasFieldGeometry: () => false, playSfxAt: () => {}, log: s => logs.push(s),

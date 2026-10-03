@@ -23,6 +23,10 @@ import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { FlagStore } from '../core/FlagStore';
 import type { AssetManager } from '../core/AssetManager';
+import type loadingTransitions from './loadingTransitions.json';
+
+/** 入场揭幕效果的唯一清单在 loadingTransitions.json。 */
+export type LoadingTransitionKind = keyof typeof loadingTransitions;
 import type { HealthProtection, RetryConfig, HealthThreatDef, FireProtectionConfig, FireProtectionDef } from './survival';
 import type { DialogueLayoutStyle, SpeakerSide } from '../utils/dialogueSpeakerSide';
 import type { KeyframeEasing } from '../utils/keyframeSampler';
@@ -37,15 +41,8 @@ import cutsceneActionAllowlist from './cutscene_action_allowlist.json';
 export enum GameState {
   MainMenu = 'MainMenu',
   Exploring = 'Exploring',
-  /**
-   * 切场景/加载遮罩期间的独立状态（2026-08-18 拍板：加载中**绝不能**是 Exploring——
-   * 否则移动/交互/嗅探等探索输入系统在遮罩下全都活着，玩家乱按有实害）。
-   * 入口两处：直调 sceneManager.switchScene 时由 Game 的 scene:transition 钩子从 Exploring
-   * 迁入；switchScene/changeScene 动作通道由 ActionRegistry 从 Exploring/批锁 ActionSequence
-   * 预锁迁入（对话/过场内的跨场景切换沿用 Cutscene 锁，不经此态）。
-   * 揭幕（scene:revealed）即还权回 Exploring，onEnter 的开场演出从 Exploring 正常起跳。
-   */
-  SceneTransition = 'SceneTransition',
+  /** 世界进入、重建与揭幕期间独占控制权；资源/GPU/视图准备继续，玩家与玩法时钟暂停。 */
+  Loading = 'Loading',
   /** 探索中下发的同步/异步指令链在执行中（不接收移动与场景交互），执行完或未占用则回到 Exploring */
   ActionSequence = 'ActionSequence',
   Dialogue = 'Dialogue',
@@ -572,9 +569,9 @@ export interface ContactAoDirectionDef {
 export interface ContactAoDef {
   /** 画不画接触 AO；缺省 true。 */
   enabled?: boolean;
-  /** 动画开启接触 AO 时的淡入时长，毫秒 0..5000；缺省 1000，0 为立即切换。 */
+  /** 动画开启接触 AO 时的淡入时长，毫秒 0..5000；缺省 2000，0 为立即切换。 */
   fadeInMs?: number;
-  /** 动画关闭接触 AO 时的淡出时长，毫秒 0..5000；缺省 1000，0 为立即切换。 */
+  /** 动画关闭接触 AO 时的淡出时长，毫秒 0..5000；缺省 2000，0 为立即切换。 */
   fadeOutMs?: number;
   /** 方向 AO；缺省 true（制作人 2026-09-24：所有 NPC 默认都开，包括主角）。false = 只有简单 AO。 */
   directional?: boolean;
@@ -704,6 +701,8 @@ export interface PerspectiveScaleConfig {
 export interface SceneData {
   id: string;
   name: string;
+  /** 加载结束后的入场转场；省略时每次入场随机选择一种。 */
+  loadingTransition?: LoadingTransitionKind;
   /** 世界单位：场景宽度 */
   worldWidth: number;
   /** 世界单位：场景高度（可从 worldWidth 和背景图比例推导） */
@@ -3957,7 +3956,17 @@ export interface PlayerIdleEntry {
   when?: ConditionExpr;
 }
 
+/** 世界加载与入场表现的全局参数；缺省值、合法范围由运行时统一归一化。 */
+export interface LoadingPresentationConfig {
+  fadeOutMs?: number;
+  revealMs?: number;
+  timeoutMs?: number;
+  resourceConcurrency?: number;
+  resourceTimeoutMs?: number;
+}
+
 export interface GameConfig {
+  loading?: LoadingPresentationConfig;
   initialScene: string;
   initialQuest: string;
   fallbackScene: string;

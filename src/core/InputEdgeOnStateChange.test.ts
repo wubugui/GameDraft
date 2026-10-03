@@ -33,7 +33,16 @@ function createDomStub() {
   };
   /** 与浏览器一致：按登记顺序派发（InputManager 先登记，UI 后登记） */
   const dispatch = (type: string, event: unknown): void => {
-    for (const cb of [...(listeners.get(type) ?? [])]) cb(event);
+    let stopped = false;
+    const source = event as { stopImmediatePropagation?: () => void };
+    const emitted = type === 'keydown' ? {
+      ...source,
+      stopImmediatePropagation: () => { stopped = true; source.stopImmediatePropagation?.(); },
+    } : event;
+    for (const cb of [...(listeners.get(type) ?? [])]) {
+      cb(emitted);
+      if (stopped) break;
+    }
   };
   return { target, dispatch };
 }
@@ -175,5 +184,104 @@ describe('状态切换时丢弃未消费的输入沿', () => {
 
     expect(h.stateController.currentState).toBe(GameState.Dialogue);
     expect(h.inputManager.wasKeyJustPressed('Space')).toBe(false);
+  });
+
+  it('加载前/加载中按住的物理键与触屏键不会在揭幕后续走，必须松开重新按', () => {
+    h.dom.dispatch('keydown', { code: 'KeyW', repeat: false });
+    h.inputManager.setTouchMoveAxes(1, 0);
+    h.inputManager.setTouchKeyHeld('KeyC', true);
+    h.stateController.beginLoading('scene');
+    const key = vi.fn(), any = vi.fn(), pointer = vi.fn();
+    h.inputManager.subscribeKeyDown(key);
+    h.inputManager.subscribeAnyInput(any);
+    h.inputManager.subscribePointerDown(pointer);
+    h.dom.dispatch('keydown', { code: 'KeyD', repeat: false });
+    h.dom.dispatch('keydown', { code: 'F2', repeat: false });
+    h.dom.dispatch('pointerdown', {});
+    h.inputManager.injectPointerDown();
+    h.inputManager.injectKeyJustPressed('Space');
+    h.inputManager.setTouchMoveAxes(-1, 0);
+    h.inputManager.setTouchRunHeld(true);
+    h.inputManager.setTouchKeyHeld('KeyC', true);
+    expect(key).not.toHaveBeenCalled();
+    expect(any).not.toHaveBeenCalled();
+    expect(pointer).not.toHaveBeenCalled();
+    expect(h.inputManager.getMovementDirection()).toEqual({ x: 0, y: 0 });
+    h.stateController.finishLoading('scene');
+    h.dom.dispatch('keydown', { code: 'KeyW', repeat: true });
+    h.dom.dispatch('keydown', { code: 'KeyD', repeat: true });
+    expect(h.inputManager.getMovementDirection()).toEqual({ x: 0, y: 0 });
+    expect(h.inputManager.isTouchKeyHeld('KeyC')).toBe(false);
+    expect(h.inputManager.isRunning()).toBe(false);
+    expect(h.inputManager.wasKeyJustPressed('Space')).toBe(false);
+    h.dom.dispatch('keyup', { code: 'KeyD' });
+    h.dom.dispatch('keydown', { code: 'KeyD', repeat: false });
+    expect(h.inputManager.getMovementDirection()).toEqual({ x: 1, y: 0 });
+  });
+
+  it('加载中先松开可在退出后重新按，失焦后的 repeat 不能伪造新按下', () => {
+    h.dom.dispatch('keydown', { code: 'KeyW', repeat: false });
+    h.stateController.beginLoading('scene');
+    h.dom.dispatch('keyup', { code: 'KeyW' });
+    h.stateController.finishLoading('scene');
+    h.dom.dispatch('keydown', { code: 'KeyW', repeat: false });
+    expect(h.inputManager.isKeyDown('KeyW')).toBe(true);
+    h.dom.dispatch('blur', {});
+    h.dom.dispatch('keydown', { code: 'KeyW', repeat: true });
+    expect(h.inputManager.isKeyDown('KeyW')).toBe(false);
+    h.dom.dispatch('keyup', { code: 'KeyW' });
+    h.dom.dispatch('keydown', { code: 'KeyW', repeat: false });
+    expect(h.inputManager.isKeyDown('KeyW')).toBe(true);
+  });
+
+  it('同一次输入的首个订阅者启动加载，后续游戏订阅者不能再消费', () => {
+    const laterAny = vi.fn(), laterKey = vi.fn(), laterPointer = vi.fn();
+    h.inputManager.subscribeAnyInput(() => h.stateController.beginLoading('from-input'));
+    h.inputManager.subscribeAnyInput(laterAny);
+    h.inputManager.subscribeKeyDown(laterKey);
+    h.inputManager.subscribePointerDown(laterPointer);
+    h.dom.dispatch('keydown', { code: 'Space', repeat: false });
+    expect(h.stateController.currentState).toBe(GameState.Loading);
+    expect(laterAny).not.toHaveBeenCalled();
+    expect(laterKey).not.toHaveBeenCalled();
+    expect(laterPointer).not.toHaveBeenCalled();
+    expect(h.inputManager.wasKeyJustPressed('Space')).toBe(false);
+  });
+
+  it('加载捕获阶段吞按键，直接挂 window 的旧对话/UI 不会收到，keyup 仍可解除隔离', () => {
+    const directUI = vi.fn();
+    h.dom.target.addEventListener('keydown', directUI);
+    h.stateController.beginLoading('scene');
+    const keyboard = { code: 'Space', repeat: false, preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };
+    h.dom.dispatch('keydown', keyboard);
+    expect(keyboard.preventDefault).toHaveBeenCalledOnce();
+    expect(keyboard.stopImmediatePropagation).toHaveBeenCalledOnce();
+    expect(directUI).not.toHaveBeenCalled();
+    h.dom.dispatch('keyup', { code: 'Space' });
+    h.stateController.finishLoading('scene');
+    h.dom.dispatch('keydown', { code: 'Space', repeat: false });
+    expect(directUI).toHaveBeenCalledOnce();
+    expect(h.inputManager.wasKeyJustPressed('Space')).toBe(true);
+  });
+
+  it('加载故障的专用键盘入口独立于玩法，Tab和宿主刷新保留默认行为', () => {
+    const handler = vi.fn(), gameplay = vi.fn();
+    h.inputManager.setLoadingKeyHandler(handler);
+    h.inputManager.subscribeAnyInput(gameplay);
+    h.stateController.beginLoading('failed');
+    for (const code of ['Tab', 'F5', 'KeyR']) {
+      const e = { code, repeat: false, ctrlKey: code === 'KeyR', preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };
+      h.dom.dispatch('keydown', e);
+      expect(e.preventDefault).not.toHaveBeenCalled();
+      expect(e.stopImmediatePropagation).toHaveBeenCalledOnce();
+    }
+    const enter = { code: 'Enter', repeat: false, preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };
+    h.dom.dispatch('keydown', enter);
+    expect(enter.preventDefault).toHaveBeenCalledOnce();
+    expect(handler).toHaveBeenCalledTimes(4);
+    expect(gameplay).not.toHaveBeenCalled();
+    expect(h.inputManager.wasKeyJustPressed('Enter')).toBe(false);
+    h.dom.dispatch('keydown', { code: 'Enter', repeat: true });
+    expect(handler).toHaveBeenCalledTimes(4);
   });
 });

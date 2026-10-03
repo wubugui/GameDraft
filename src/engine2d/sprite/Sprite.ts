@@ -6,6 +6,7 @@ import type { TextureSource } from '../textures/TextureSource';
 import { ViewContainer } from '../scene/ViewContainer';
 import { _registerSpriteClassForMasks, type Container, type ContainerOptions, type DestroyOptions } from '../scene/Container';
 import type { BatchableElement, RenderCollector } from '../core/contracts';
+import { Assets } from '../assets/Assets';
 
 export interface SpriteOptions extends ContainerOptions {
   texture?: Texture;
@@ -41,6 +42,7 @@ interface SpriteBatchHistory {
 export class Sprite extends ViewContainer {
   override renderPipeId = 'sprite';
   private _texture!: Texture;
+  private _leasedTextureSource: TextureSource | null = null;
   private readonly _anchor: ObservablePoint;
   private readonly _visualBounds: QuadBounds = { minX: 0, maxX: 1, minY: 0, maxY: 0 };
   /**
@@ -91,10 +93,11 @@ export class Sprite extends ViewContainer {
   set texture(value: Texture | null | undefined) {
     value ||= Texture.EMPTY;
     const cur = this._texture;
-    if (cur === value) return;
+    if (cur === value) { this.syncTextureSourceLease(); return; }
     if (cur && cur.dynamic) cur.off('update', this.onViewUpdate, this);
     if (value.dynamic) value.on('update', this.onViewUpdate, this);
     this._texture = value;
+    this.syncTextureSourceLease();
     if (this._width) this._setWidth(this._width, value.orig.width);
     if (this._height) this._setHeight(this._height, value.orig.height);
     this.onViewUpdate();
@@ -114,8 +117,19 @@ export class Sprite extends ViewContainer {
   }
 
   override onViewUpdate(): void {
+    this.syncTextureSourceLease();
     super.onViewUpdate();
     this._visualBoundsDirty = true;
+  }
+
+  private syncTextureSourceLease(): void {
+    const source = this._texture?.source ?? null;
+    const previous = this._leasedTextureSource;
+    if (source === previous || this.destroyed) return;
+    // 必须先保新源再放旧源，同一 source 的换帧没有零引用窗口。
+    if (source) Assets.retainTextureView(source, this);
+    this._leasedTextureSource = source;
+    if (previous) Assets.releaseTextureView(previous, this);
   }
 
   protected updateBounds(): void {
@@ -251,11 +265,18 @@ export class Sprite extends ViewContainer {
   }
 
   override destroy(options: boolean | DestroyOptions = false): void {
+    if (this.destroyed) return;
     const tex = this._texture;
+    const source = this._leasedTextureSource;
+    const managed = source ? Assets.isManagedTextureSource(source) : false;
     this._batchHistory = new WeakMap();
     super.destroy(options);
+    if (tex?.dynamic) tex.off('update', this.onViewUpdate, this);
+    this._leasedTextureSource = null;
+    if (source) Assets.releaseTextureView(source, this);
     const destroyTexture = typeof options === 'boolean' ? options : options?.texture;
-    if (destroyTexture && tex) {
+    // 托管源由最后一个 manager/view 租约统一销毁，不能强制破坏其他活绑定。
+    if (destroyTexture && tex && !managed && !tex.destroyed) {
       const destroySource = typeof options === 'boolean' ? options : options?.textureSource;
       tex.destroy(destroySource);
     }

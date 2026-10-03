@@ -1,5 +1,6 @@
 import { Texture, type TextureSource } from '../engine2d';
 import type { AssetManager } from './AssetManager';
+import type { PayloadLoadOptions } from './lightingPayloadFiles';
 import type {
     SceneDepthConfig, IGameSystem, GameContext, RgbColor, CollisionGridMeta, CollisionSidecar,
 } from '../data/types';
@@ -46,6 +47,8 @@ export function decodeCollisionBitmap(bitmap: ImageBitmap): { data: Uint8Array; 
 const LAB_OCCLUSION_BIAS = 0.045;
 
 export class SceneDepthSystem implements IGameSystem {
+    private epoch = 0;
+    private loadController: AbortController | null = null;
     private enabled = false;
     private config: SceneDepthConfig | null = null;
     private depthTexture: Texture | null = null;
@@ -204,69 +207,131 @@ export class SceneDepthSystem implements IGameSystem {
         sceneH: number,
         worldToPixelX: number,
         worldToPixelY: number,
+        options: PayloadLoadOptions = {},
     ): Promise<void> {
         depthLog(T, 'load() scene:', sceneId, 'size:', sceneW, 'x', sceneH);
         depthLog(T, 'depthConfig:', depthConfig);
 
         this.unload();
-        this.config = depthConfig;
-        this.enabled = true;
-        this.sceneId = sceneId;
-        this.sceneW = sceneW;
-        this.sceneH = sceneH;
-        this.worldToPixelX = worldToPixelX;
-        this.worldToPixelY = worldToPixelY;
-
+        const myEpoch = this.epoch;
+        const controller = new AbortController();
+        this.loadController = controller;
+        const cancel = (): void => controller.abort(options.signal?.reason ?? new DOMException('Depth load cancelled', 'AbortError'));
+        options.signal?.addEventListener('abort', cancel, { once: true });
+        if (options.signal?.aborted) cancel();
+        const request = { signal: controller.signal, timeoutMs: options.timeoutMs };
+        const check = (): void => {
+            if (myEpoch !== this.epoch || controller.signal.aborted) {
+                throw controller.signal.reason ?? new DOMException('Depth load superseded', 'AbortError');
+            }
+        };
+        let depthTexture: Texture;
+        let depthShell: DepthShellField | null = null;
+        let collision: { data: Uint8Array; w: number; h: number } | null = null;
+        let collisionTexture: Texture | null = null;
         try {
+          check();
+          try {
             const p = sceneRuntimeAssetUrl(sceneId, depthConfig.depth_map);
             depthLog(T, 'loading depth texture:', p);
-            this.depthTexture = await assetManager.loadTexture(p);
-            depthLog(T, 'depth texture OK:', this.depthTexture.width, 'x', this.depthTexture.height);
-        } catch (e) {
+            depthTexture = await assetManager.loadTexture(p, request);
+            check();
+            depthLog(T, 'depth texture OK:', depthTexture.width, 'x', depthTexture.height);
+          } catch (e) {
+            check();
             depthError(T, 'depth texture FAILED', e);
-            this.enabled = false;
+            if (options.strict) throw e;
             return;
-        }
-        try {
-            this.depthShell = await this.decodeDepthShell(sceneRuntimeAssetUrl(sceneId, depthConfig.depth_map), depthConfig, assetManager, sceneW * worldToPixelX, sceneH * worldToPixelY);
-            depthLog(T, 'depth shell (CPU) OK:', this.depthShell ? `${this.depthShell.w}x${this.depthShell.h}` : 'null');
-        } catch (e) {
+          }
+          try {
+            depthShell = await this.decodeDepthShell(sceneRuntimeAssetUrl(sceneId, depthConfig.depth_map), depthConfig, assetManager, sceneW * worldToPixelX, sceneH * worldToPixelY, request);
+            check();
+            depthLog(T, 'depth shell (CPU) OK:', depthShell ? `${depthShell.w}x${depthShell.h}` : 'null');
+          } catch (e) {
+            check();
             // 壳的 CPU 副本只服务粒子系统；解不出来不拖垮遮挡 / 碰撞
             depthError(T, 'depth shell (CPU) FAILED（粒子撞墙 / 落壳退化为无墙）', e);
-            this.depthShell = null;
-        }
+          }
 
-        if (depthConfig.collision_map) {
+          if (depthConfig.collision_map) {
             try {
                 const cp = sceneRuntimeAssetUrl(sceneId, depthConfig.collision_map);
                 depthLog(T, 'loading collision:', cp);
-                await this.loadCollisionBitmap(cp, assetManager);
-                depthLog(T, 'collision OK:', this.collisionW, 'x', this.collisionH, 'non-zero:', this.collisionData ? Array.from(this.collisionData.slice(0, 20)).filter(v => v > 0).length : 0);
+                const bitmap = await assetManager.loadBitmap(cp, request);
+                check();
+                collision = decodeCollisionBitmap(bitmap);
+                depthLog(T, 'collision OK:', collision.w, 'x', collision.h);
                 // GPU 纹理：供 planar 阴影 shader 做碰撞裁切（PNG 直接得 GPU Texture）
-                try { this.collisionTexture = await assetManager.loadTexture(cp); } catch { this.collisionTexture = null; }
+                collisionTexture = await assetManager.loadTexture(cp, request);
+                check();
             } catch (e) {
+                check();
                 depthError(T, 'collision FAILED', e);
+                if (options.strict) throw e;
+                collision = null;
+                collisionTexture = null;
             }
+          }
+
+          let sidecar: CollisionSidecar | null = null;
+          try {
+            sidecar = await assetManager.loadOptionalJson<CollisionSidecar>(
+              sceneRuntimeAssetUrl(sceneId, COLLISION_SIDECAR_FILE), request);
+            check();
+          } catch (error) {
+            check();
+            depthError(T, 'collision.json 可选旁挂读取失败，使用 depthConfig.collision', error);
+          }
+          const col: CollisionGridMeta | null = sidecar ?? depthConfig.collision ?? null;
+          if (collision && !col) {
+            const error = new Error('Configured collision bitmap has no grid metadata');
+            depthError(T, error.message);
+            if (options.strict) throw error;
+            collision = null;
+            collisionTexture = null;
+          }
+          if (collision && col && (collision.w !== col.grid_width || collision.h !== col.grid_height)) {
+            const error = new Error(`Collision grid ${col.grid_width}x${col.grid_height} does not match bitmap ${collision.w}x${collision.h}`);
+            depthError(T, error.message);
+            if (options.strict) throw error;
+            collision = null;
+            collisionTexture = null;
+          }
+          check();
+          // 全部异步结果先存局部，确认属于本请求后一次发布。
+          this.config = depthConfig;
+          this.depthTexture = depthTexture;
+          this.depthShell = depthShell;
+          this.collisionData = collision?.data ?? null;
+          this.collisionTexture = collisionTexture;
+          this.collisionW = collision?.w ?? 0;
+          this.collisionH = collision?.h ?? 0;
+          this.sceneId = sceneId;
+          this.sceneW = sceneW;
+          this.sceneH = sceneH;
+          this.worldToPixelX = worldToPixelX;
+          this.worldToPixelY = worldToPixelY;
+
+          const M = depthConfig.M;
+          this.R00 = M.R[0][0]; this.R01 = M.R[0][1]; this.R02 = M.R[0][2];
+          this.R10 = M.R[1][0]; this.R11 = M.R[1][1]; this.R12 = M.R[1][2];
+          this.R20 = M.R[2][0]; this.R21 = M.R[2][1]; this.R22 = M.R[2][2];
+          this.ppu = M.ppu; this.cx = M.cx; this.cy = M.cy;
+
+          // 碰撞网格：旁挂 `collision.json` 先（地形工作台唯一写入者，与 collision.png 同一次合成落盘），
+          // 没有才退回场景 JSON 的 `depthConfig.collision`（老场景）。⚠ 网格声明与位图必须是同一次
+          // 写出的：位图尺寸 ≠ 声明就按错误列宽索引，静默错到底——这里直接拒用并出声。
+          this.applyCollisionGrid(col, sidecar ? 'collision.json' : 'depthConfig.collision');
+
+          this._depthTolerance = depthConfig.depth_tolerance;
+          this._floorOffset = depthConfig.floor_offset;
+          this.enabled = true;
+
+          depthLog(T, 'load() done. enabled:', this.enabled, 'depthTex:', !!this.depthTexture, 'collisionData:', !!this.collisionData);
+        } finally {
+          options.signal?.removeEventListener('abort', cancel);
+          if (myEpoch === this.epoch) this.loadController = null;
         }
-
-        const M = depthConfig.M;
-        this.R00 = M.R[0][0]; this.R01 = M.R[0][1]; this.R02 = M.R[0][2];
-        this.R10 = M.R[1][0]; this.R11 = M.R[1][1]; this.R12 = M.R[1][2];
-        this.R20 = M.R[2][0]; this.R21 = M.R[2][1]; this.R22 = M.R[2][2];
-        this.ppu = M.ppu; this.cx = M.cx; this.cy = M.cy;
-
-        // 碰撞网格：旁挂 `collision.json` 先（地形工作台唯一写入者，与 collision.png 同一次合成落盘），
-        // 没有才退回场景 JSON 的 `depthConfig.collision`（老场景）。⚠ 网格声明与位图必须是同一次
-        // 写出的：位图尺寸 ≠ 声明就按错误列宽索引，静默错到底——这里直接拒用并出声。
-        const sidecar = await assetManager.loadOptionalJson<CollisionSidecar>(
-            sceneRuntimeAssetUrl(sceneId, COLLISION_SIDECAR_FILE));
-        const col: CollisionGridMeta | null = sidecar ?? depthConfig.collision ?? null;
-        this.applyCollisionGrid(col, sidecar ? 'collision.json' : 'depthConfig.collision');
-
-        this._depthTolerance = depthConfig.depth_tolerance;
-        this._floorOffset = depthConfig.floor_offset;
-
-        depthLog(T, 'load() done. enabled:', this.enabled, 'depthTex:', !!this.depthTexture, 'collisionData:', !!this.collisionData);
     }
 
     /** 调试：场景 world 尺寸在运行时被修改后，同步深度/光照滤镜与碰撞采样比例（不重载纹理） */
@@ -290,6 +355,9 @@ export class SceneDepthSystem implements IGameSystem {
     }
 
     unload(): void {
+        this.epoch++;
+        this.loadController?.abort(new DOMException('Depth load superseded', 'AbortError'));
+        this.loadController = null;
         // 覆盖图的持有者在场景卸载更早处就拆了(并广播过 null);这里兜底再解绑一次,防有滤镜留着旧引用
         if (this.fgCoverage) this.setForegroundCoverage(null);
         this.depthTexture = null;
@@ -297,8 +365,10 @@ export class SceneDepthSystem implements IGameSystem {
         this.collisionData = null;
         this.collisionTexture = null;
         this.collisionW = 0; this.collisionH = 0;
+        this.colXMin = 0; this.colZMin = 0; this.colCellSize = 1;
         this.config = null;
         this.enabled = false;
+        this.sceneId = '';
         this.filters = [];
         this.blendOverriddenFilters.clear();
         // 阴影实例由 Game 负责注销；此处兜底清空，防跨场景残留引用
@@ -392,10 +462,12 @@ export class SceneDepthSystem implements IGameSystem {
         assetManager: AssetManager,
         nativeW: number,
         nativeH: number,
+        options: PayloadLoadOptions = {},
     ): Promise<DepthShellField | null> {
         const rows = basisRowsFromDepthConfigR(cfg.M?.R);
         if (!rows) return null;
-        const bitmap = await assetManager.loadBitmap(path);
+        const bitmap = await assetManager.loadBitmap(path, options);
+        if (options.signal?.aborted) throw options.signal.reason;
         const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
         const ctx = canvas.getContext('2d')!;
         ctx.drawImage(bitmap, 0, 0);
@@ -405,14 +477,6 @@ export class SceneDepthSystem implements IGameSystem {
             Math.max(1, Math.round(nativeW)), Math.max(1, Math.round(nativeH)),
             cfg.depth_mapping, { ppu: cfg.M.ppu, cx: cfg.M.cx, cy: cfg.M.cy }, rows,
         );
-    }
-
-    private async loadCollisionBitmap(path: string, assetManager: AssetManager): Promise<void> {
-        const bitmap = await assetManager.loadBitmap(path);
-        const { data, w, h } = decodeCollisionBitmap(bitmap);
-        this.collisionData = data;
-        this.collisionW = w;
-        this.collisionH = h;
     }
 
     /**

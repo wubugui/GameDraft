@@ -1340,6 +1340,7 @@ _SUBJECT_BY_KIND: dict[str, tuple[str, str]] = {
     "bubbleLineSet": ("bubbleLineSet", "这组台词说不说"),
     # 挂件预设：读状态的只可能是某个状态进入动作里的 runActionsIf
     "propPreset": ("propPreset", "挂件切到这个状态时做什么"),
+    "gameConfig": ("gameConfig", "全局行为的条件"),
 }
 
 # 主体类别的中文名。界面上说「NPC「庄家来人」」而不是「场景「庄家来人」」——
@@ -1365,6 +1366,7 @@ SUBJECT_KIND_LABELS: dict[str, str] = {
     "item": "物品",
     "bubbleLineSet": "气泡台词",
     "propPreset": "挂件预设",
+    "gameConfig": "全局配置",
 }
 
 
@@ -1395,6 +1397,13 @@ def _fill_subject(row: StateRead, hit: _Hit, container_kind: str, container_id: 
         kind, effect = _SUBJECT_BY_KIND.get(container_kind, ("", ""))
         if not row.subject_id:
             row.subject_id = container_id or row.container_id
+    if kind == "gameConfig":
+        # 全局配置没有条目 id，主体按真实配置路径命名；扫描位置、跳转指针照旧。
+        row.subject_id = row.subject_id or "game_config"
+        row.subject_name = "全局配置"
+        if row.pointer.startswith("/health/tetherCondition/") or row.pointer == "/health/tetherCondition":
+            row.subject_name = "死亡系绳"
+            effect = "自动系绳能不能触发"
     row.subject_kind = kind
     row.subject_kind_label = SUBJECT_KIND_LABELS.get(kind, "")
     row.subject_effect = effect

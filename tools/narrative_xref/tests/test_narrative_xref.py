@@ -1153,6 +1153,33 @@ def test_every_reference_in_the_real_project_resolves_to_something():
     assert not unresolved, f"这些引用落不到具体东西上：{unresolved[:5]}"
 
 
+def test_health_tether_condition_has_a_named_subject_without_changing_the_scan():
+    doc = {"health": {"tetherCondition": {"all": [
+        {"narrative": "flow_main", "state": "s_b", "reached": True},
+        {"not": {"narrative": "flow_main", "state": "s_a"}},
+    ]}}}
+    source = make_source(narrative=narrative_with(), assets=[
+        AssetDoc("game_config", "gameConfig", "", "全局配置",
+                 "public/assets/data/game_config.json", doc, scan_emits=False),
+    ])
+    index = build_index(source)
+    rows = [r for refs in index.state_reads.values() for r in refs]
+    assert len(rows) == 2
+    assert {(r.state_id, r.reached, r.negated) for r in rows} == {
+        ("s_b", True, False), ("s_a", False, True),
+    }
+    assert {r.pointer for r in rows} == {
+        "/health/tetherCondition/all/0", "/health/tetherCondition/all/1/not",
+    }
+    for row in rows:
+        assert row.subject_kind == "gameConfig" and row.subject_kind_label == "全局配置"
+        assert row.subject_id == "game_config" and row.subject_display == "死亡系绳"
+        assert row.subject_effect == "自动系绳能不能触发"
+        assert row.file == "public/assets/data/game_config.json"
+        assert not row.readonly
+    assert index.emitters == {}
+
+
 # --------------------------------------------------------------------------- #
 # 状态维度审查打回的（2026-08-08）
 # --------------------------------------------------------------------------- #

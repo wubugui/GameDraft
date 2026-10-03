@@ -44,6 +44,7 @@ function fullConfig(): Required<Omit<GameConfig, 'startupFlags'>> & Pick<GameCon
     health: { maxHealth: 7 },
     textPalette: [{ id: 'warn', label: '警', color: '#f00' }],
     dayNight: { startAt: '09:00' } as GameConfig['dayNight'] & object,
+    loading: { fadeOutMs: 180, revealMs: 420, timeoutMs: 120000, resourceConcurrency: 6, resourceTimeoutMs: 30000 },
   };
 }
 

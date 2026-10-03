@@ -19,7 +19,8 @@ async function harness(effect: VfxEffectDef, count = 1) {
   const sys = new VfxSystem({
     assetManager: { loadJson: async (url: string) => url.endsWith('vfx_placements.json')
       ? { scenes: { scene: { base: Array.from({ length: count }, (_, i) => ({ id: `placed${i}`, effect: effect.id, anchor: { x: 0, y: 0 }, seed: 119 })) } } }
-      : effect, loadTexture: async () => { throw Error('No renderer needed'); } } as unknown as AssetManager,
+      : effect, loadTexture: async () => { throw Error('No renderer needed'); },
+      extendScope: () => {}, releaseScope: () => {} } as unknown as AssetManager,
     getSceneData: () => ({ id: 'scene' }) as SceneData,
     buildSpace: () => createPlanarVfxSpace(), getPlayerContact: () => ({ x: 0, y: 0 }),
     getAppearancePhase: () => '', getActiveLights: () => [], conditionContext: () => ({}) as never,

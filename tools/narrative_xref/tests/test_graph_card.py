@@ -173,6 +173,17 @@ def test_target_resolution_shapes():
     assert [(r.universe, r.label, r.file) for r in rows] == [("scenes", "乙场景", "public/assets/scenes/scene_b.json")]
 
 
+def test_follower_footsteps_target_resolves_to_the_authored_set():
+    ctx = TargetContext(labels={"footstep_sets": {"stone/a~b": "石路脚步"}})
+    rows = resolve_action_targets("setFollowerFootsteps", {"footstepSet": "stone/a~b"}, ctx)
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row.universe, row.kind_label, row.label) == ("footstep_sets", "脚步集", "石路脚步")
+    assert row.file == "public/assets/data/footstep_sets.json"
+    assert row.pointer == "/sets/stone~1a~0b"
+    assert not row.readonly and not row.note
+
+
 def test_real_project_ridge_graph_has_all_three_groups():
     """跑马梁那张图是本功能的标本：区域推它、场景实体读它、状态动作调说明卡与对话图。"""
     index = build_index(from_disk(REPO_ROOT))
