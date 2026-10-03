@@ -155,5 +155,25 @@
       "animFile": "/resources/runtime/animation/player_anim/anim.json",
       "initialAnimState": "idle"
     }
-  ]
+  ],
+  "timeVariants": {
+    "午": {
+      "lighting": {
+        "lightFactors": {
+          "character": {
+            "indirectFactor": 0.3183098861837907,
+            "directFactor": 1,
+            "totalFactor": 1,
+            "eChroma": 0
+          },
+          "particles": {
+            "indirectFactor": 1,
+            "directFactor": 1,
+            "totalFactor": 0.3183098861837907,
+            "eChroma": 0
+          }
+        }
+      }
+    }
+  }
 }
