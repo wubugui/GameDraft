@@ -394,7 +394,7 @@
     "shadeTitle": "隐约觉着不对"
   },
   "systemNote": {
-    "closeHint": "点一下继续",
+    "closeHint": "按 E 继续",
     "archived": "已记入见闻录·民俗"
   },
   "teahouseAtmosphere": {
@@ -446,5 +446,8 @@
     "failCancel": "停了手，{name}白费了",
     "locked": "火把点不着",
     "spent": "这根烧完了，点不着了"
+  },
+  "tutorial": {
+    "torchGuardRecovery": "按住 Q 护火，等火苗恢复到安全线以上。"
   }
 }

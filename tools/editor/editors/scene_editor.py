@@ -148,7 +148,7 @@ from ..shared.numeric_roundtrip import preserve_numeric_repr
 from . import scene_lights
 from .light_follow_ui import LightFollowEditor
 from .shadow_bindings_ui import ShadowBindingsEditor
-from .contact_ao_ui import ContactAoEditor
+from .contact_ao_ui import ContactAoDirectionEditor, ContactAoEditor
 
 def _assert_path_within(path: Path, base: Path) -> Path:
     """安全闸：确保 path 落在 base 目录内，否则抛错。
@@ -7939,6 +7939,11 @@ class ScenePropertyPanel(QScrollArea):
         response_fold.add_body(self._light_response_form)
         lay.addWidget(response_fold)
 
+        ao_direction_fold = CollapsibleSection("场景角色 AO 方向", start_open=False)
+        self._scene_contact_ao_direction = ContactAoDirectionEditor(self._emit_props_changed, self)
+        ao_direction_fold.add_body(self._scene_contact_ao_direction)
+        lay.addWidget(ao_direction_fold)
+
         # 玩家的阴影绑定。玩家不在场景数据里有自己的 def，所以挂在场景上——
         # 本来就该逐场景配（这条街有路灯，那间屋子只有烛火）。
         lay.addWidget(QLabel("玩家阴影绑定"))
@@ -9472,6 +9477,7 @@ class ScenePropertyPanel(QScrollArea):
         self._player_shadow_bind.load(st.get("playerShadowBindings"))
         self._player_contact_ao.set_scene_defaults(*self._scene_contact_ao_defaults(st))
         self._player_contact_ao.load(st.get("playerContactAo"))
+        self._scene_contact_ao_direction.load(st.get("contactAoDirection"))
 
     def _scene_contact_ao_defaults(self, sc: dict | None = None) -> tuple[float | None, float | None, str]:
         """接触 AO「跟随场景」那一档此刻跟到的浓度 / 大小。
@@ -9711,6 +9717,7 @@ class ScenePropertyPanel(QScrollArea):
     def _writeback_player_shadow(self, sc: dict) -> None:
         """玩家阴影绑定。None = 不写字段（回落手调单影），不是「不投影」。
         玩家接触 AO 同处写回：全缺省（开、简单 AO、参数缺省）时不写字段。"""
+        self._scene_contact_ao_direction.writeback(sc, "contactAoDirection")
         b = self._player_shadow_bind.dump()
         if b:
             sc["playerShadowBindings"] = b
@@ -12167,7 +12174,7 @@ class ScenePropertyPanel(QScrollArea):
         )
         self._npc_cast_shadow.stateChanged.connect(lambda _s: self._emit_props_changed())
         form.addRow("castShadow", self._npc_cast_shadow)
-        # 脚底接触 AO（胶囊 AO）：勾接触 AO 缺省简单 AO，勾方向 AO 才启用方向部分，参数都可调（制作人 2026-09-24）
+        # 角色 AO：接触/方向缺省开，方向继承场景或由角色自动/手动覆盖。
         self._npc_contact_ao = ContactAoEditor(self._emit_props_changed, self)
         form.addRow("脚底 AO", self._npc_contact_ao)
         # 阴影绑定：**手动指定光源**，系统不自动 resolve（制作人 2026-08-20）

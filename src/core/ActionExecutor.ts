@@ -7,6 +7,7 @@ import type { FlagStore, FlagValue } from './FlagStore';
 import type { GameStateController } from './GameStateController';
 import { reportDevError } from './devErrorOverlay';
 import { makeOwnerOrigin } from './actionOrigin';
+import { ActionEffectScope, type ActionEffect } from './ActionEffectScope';
 
 /**
  * 所有 action 统一走 executeAwait：顺序 await handler 返回的 Promise。
@@ -17,6 +18,11 @@ export type ActionHandler = (
   originContext: ActionOriginContext | null,
   scope: ActionExecScope,
 ) => void | Promise<void>;
+
+/** Opt-in lifecycle implementation of an action (params.lifetime = scope). */
+export type ScopedActionHandler = (
+  params: Record<string, unknown>, originContext: ActionOriginContext | null, scope: ActionExecScope,
+) => ActionEffect | void | Promise<ActionEffect | void>;
 
 /**
  * 执行作用域。与 originContext 同一个理由**显式线程化**（不用共享栈/计数器）：不同来源的批
@@ -29,6 +35,9 @@ export type ActionHandler = (
  */
 export interface ActionExecScope {
   detached: boolean;
+  effects?: ActionEffectScope;
+  /** Cutscenes accept lifecycle-capable actions only through their temporary implementation. */
+  temporaryOnly?: boolean;
   /**
    * 这一批属于哪段脱手演出会话。
    * 有会话才谈得上"被打断"与"归位账本"——演出 handler 据此登记自己动过的旋钮
@@ -55,6 +64,8 @@ export interface ActionExecutionPolicy {
 
 export class ActionExecutor {
   private handlers: Map<string, ActionHandler> = new Map();
+  private scopedHandlers = new Map<string, ScopedActionHandler>();
+  private effectScopes = new Set<ActionEffectScope>();
   private paramNamesMap: Map<string, string[]> = new Map();
   private eventBus: EventBus;
   private flagStore: FlagStore;
@@ -65,9 +76,15 @@ export class ActionExecutor {
   private destroyed = false;
   private warnedAfterDestroy = false;
   private generation = 0;
+  /** 同一次探索锁内的在途动作共同持有；最后一条结束才归还控制权。 */
+  private exploreActionLock: { users: number } | null = null;
 
   /** 死亡/读档使旧批的后续动作失效；已进入的异步系统由各自生命周期闸门收尾。 */
-  cancelPending(): void { this.generation++; }
+  cancelPending(): void {
+    this.generation++;
+    this.exploreActionLock = null;
+    for (const scope of [...this.effectScopes]) scope.close('interrupted');
+  }
   getGeneration(): number { return this.generation; }
   /**
    * dev 叙事调试器的动作挂点（见 src/dev/narrativeDebugBridge.ts）。
@@ -136,6 +153,17 @@ export class ActionExecutor {
     if (paramNames) this.paramNamesMap.set(type, paramNames);
   }
 
+  registerScoped(type: string, handler: ScopedActionHandler): void {
+    this.scopedHandlers.set(type, handler);
+  }
+
+  /** Hosts keep this scope across their whole timeline and close it in every exit path. */
+  createScope(base: ActionExecScope = SCOPE_ATTACHED): ActionExecScope {
+    const effects = new ActionEffectScope(() => this.effectScopes.delete(effects));
+    this.effectScopes.add(effects);
+    return { ...base, effects };
+  }
+
   getParamNames(type: string): string[] | undefined {
     const k = ActionExecutor.normalizeActionTypeKey(type);
     return k === '' ? undefined : this.paramNamesMap.get(k);
@@ -197,6 +225,18 @@ export class ActionExecutor {
     originContext: ActionOriginContext | null = null,
     scope: ActionExecScope = SCOPE_ATTACHED,
   ): Promise<void> {
+    const effects = scope.effects ?? scope.session?.effects;
+    if (!effects) {
+      const owned = this.createScope(scope);
+      try { await this.executeAwait(action, originContext, owned); }
+      catch (error) { owned.effects!.close('error'); throw error; }
+      finally { owned.effects!.close(); }
+      return;
+    }
+    if (!scope.effects) scope = { ...scope, effects };
+    // Interrupted background performances still owe their permanent settlement.
+    if (effects.closed && !scope.session?.hurried) return;
+    if (scope.session?.hurried && action.params.lifetime === 'scope') return;
     if (this.destroyed) {
       if (!this.warnedAfterDestroy) {
         this.warnedAfterDestroy = true;
@@ -240,7 +280,20 @@ export class ActionExecutor {
         );
         return;
       }
-      await Promise.resolve(handler(action.params, originContext, scope));
+      const scoped = this.scopedHandlers.get(typeKey);
+      const lifetime = action.params.lifetime;
+      if (scoped && lifetime !== undefined && lifetime !== 'scope' && lifetime !== 'persistent') {
+        throw new Error(`${typeKey}: invalid lifetime ${String(lifetime)}`);
+      }
+      if (scoped && scope.temporaryOnly && lifetime !== 'scope') {
+        throw new Error(`${typeKey}: this host requires lifetime=scope`);
+      }
+      if (lifetime === 'scope') {
+        if (!scoped) throw new Error(`${typeKey}: no scoped action implementation`);
+        const result = scoped(action.params, originContext, scope);
+        const effect = result instanceof Promise ? await result : result;
+        if (effect) effects.add(effect);
+      } else await Promise.resolve(handler(action.params, originContext, scope));
     });
   }
 
@@ -250,9 +303,18 @@ export class ActionExecutor {
     originContext: ActionOriginContext | null = null,
     scope: ActionExecScope = SCOPE_ATTACHED,
   ): Promise<void> {
+    const effects = scope.effects ?? scope.session?.effects;
+    if (!effects) {
+      const owned = this.createScope(scope);
+      try { await this.executeBatchAwait(actions, originContext, owned); }
+      catch (error) { owned.effects!.close('error'); throw error; }
+      finally { owned.effects!.close(); }
+      return;
+    }
+    if (!scope.effects) scope = { ...scope, effects };
     const gen = this.generation;
     for (const action of actions) {
-      if (gen !== this.generation || this.destroyed) return;
+      if (gen !== this.generation || this.destroyed || (effects.closed && !scope.session?.hurried)) return;
       /**
        * 所属会话已被打断 ⇒ 本批剩下的按**快进**跑：纯演出整条跳过，结算照做。
        *
@@ -288,13 +350,16 @@ export class ActionExecutor {
     this.cancelPending();
     this.destroyed = true;
     this.handlers.clear();
+    this.scopedHandlers.clear();
     this.paramNamesMap.clear();
     this.actionPolicyStack = [];
   }
 
   /**
    * 仅在当前为 Exploring 时切入 ActionSequence（对话/遭遇/演出等不参与，避免与子状态抢占）。
-   * 若在动作内部切到 Dialogue 等后再回到 Exploring，下一条 executeAwait 会再次加锁。
+   * 当前 ActionSequence 由本执行器持有时，新动作加入同一把锁；不能让上一条的 finally
+   * 释放仍在运行的下一条（说明卡关闭触发 reactive 教学时会在微任务间重入）。
+   * 动作内部切场/对话后回到 Exploring，同一时间线仍沿用在途锁，不能遗失外层的持有者。
    *
    * **脱手作用域整条跳过加锁**：那一批是背景演出，玩家全程该能走。跳过的是「加锁」本身，
    * 不是「判断」——脱手批里若有动作自己切了状态（对话、小游戏），那是它自己的事，与此无关。
@@ -303,16 +368,22 @@ export class ActionExecutor {
     const gen = this.generation;
     const sc = this.gameStateController;
     if (!sc || scope.detached) return work();
-    let appliedExploreLock = false;
+    let lock: { users: number } | null = null;
     if (sc.currentState === GameState.Exploring) {
+      lock = this.exploreActionLock ?? { users: 0 };
+      lock.users++;
+      this.exploreActionLock = lock;
       sc.setState(GameState.ActionSequence);
-      appliedExploreLock = true;
+    } else if (sc.currentState === GameState.ActionSequence && this.exploreActionLock) {
+      lock = this.exploreActionLock;
+      lock.users++;
     }
     try {
       return await work();
     } finally {
-      if (gen === this.generation && appliedExploreLock && sc.currentState === GameState.ActionSequence) {
-        sc.setState(GameState.Exploring);
+      if (lock && --lock.users === 0 && gen === this.generation && this.exploreActionLock === lock) {
+        this.exploreActionLock = null;
+        if (sc.currentState === GameState.ActionSequence) sc.setState(GameState.Exploring);
       }
     }
   }

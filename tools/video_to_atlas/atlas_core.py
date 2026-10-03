@@ -804,7 +804,7 @@ def _dump_json_text(data: dict[str, Any]) -> str:
 
 #: 人工在 anim 编辑器里填、导出器算不出来的 per-state 字段。
 #: 重导出必须原样保留，否则"更新一次角色动画"就把手调值全抹了。
-PRESERVED_STATE_FIELDS = ("referenceSpeed", "bubbleAnchor", "footOffset")
+PRESERVED_STATE_FIELDS = ("referenceSpeed", "bubbleAnchor", "footOffset", "contactAoEnabled")
 
 #: 导出器**自己算得出来**的顶层键——重导出时必须以新导出结果为准。
 #: 这张表之外的顶层键一律视为人工/旁路工具写的，原样并回（见 merge_preserved_anim_fields）。
@@ -832,7 +832,8 @@ def merge_preserved_anim_fields(
 
     - **per-state**（按 state 名对齐，白名单 ``PRESERVED_STATE_FIELDS``）：
       ``referenceSpeed``（步速匹配基准）、``bubbleAnchor``（授权头顶锚）与
-      ``footOffset``（脚底偏移：脚底线高于格底几成，运行时据此把画往下挪）。
+      ``footOffset``（脚底偏移：脚底线高于格底几成，运行时据此把画往下挪）、
+      ``contactAoEnabled``（本动画是否渲染接触 AO）。
       ⚠ 脚底偏移是按**这一版像素**量出来的；重导出改了格子或对位，要在动画面板「按图测」重测。
       states 本身是导出产物（frames/frameRate/loop 全由导出决定），所以这里用白名单，
       不能整个 state dict 并回来。

@@ -66,6 +66,25 @@ describe('showSpeechBubble(/AndWait) 的 pinOnScreen', () => {
 });
 
 describe('setPropState 的 onlyIfBurning', () => {
+  it('临时锁提前释放不改持久锁，过场拒绝持久模式', async () => {
+    const h = harness(), cleanup = vi.fn(), lockPropState = vi.fn();
+    const acquirePropLock = vi.fn(() => cleanup);
+    registerActionHandlers(h.executor, { lockPropState, acquirePropLock } as unknown as ActionRegistryDeps);
+    const scope = h.executor.createScope({ detached: false, temporaryOnly: true });
+    const params = { target: 'player', socket: 'right_hand', lock: 'lit', lifetime: 'scope' };
+    await h.executor.executeAwait({ type: 'lockPropState', params }, null, scope);
+    expect(acquirePropLock).toHaveBeenCalledWith('player', 'right_hand', 'lit');
+    expect(cleanup).not.toHaveBeenCalled();
+    await h.executor.executeAwait({ type: 'lockPropState', params: { ...params, lock: 'none' } }, null, scope);
+    scope.effects!.close();
+    expect(cleanup).toHaveBeenCalledOnce(); expect(lockPropState).not.toHaveBeenCalled();
+    const other = h.executor.createScope({ detached: false, temporaryOnly: true });
+    await expect(h.executor.executeAwait({ type: 'lockPropState', params: { ...params, lifetime: 'persistent' } }, null, other))
+      .rejects.toThrow('requires lifetime=scope');
+    other.effects!.close();
+    await h.executor.executeAwait({ type: 'lockPropState', params: { target: 'player', socket: 'right_hand', lock: 'lit' } });
+    expect(lockPropState).toHaveBeenCalledWith('player', 'right_hand', 'lit');
+  });
   it('显式 true 才透传 true；缺省为 false；fadeMs 非法按 0', async () => {
     const h = harness();
     await h.executor.executeBatchAwait([

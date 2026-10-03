@@ -209,6 +209,7 @@ export const REPLAY_SILENCED_ACTION_TYPES: ReadonlySet<string> = new Set([
   'waitMs',
   // 玩法会话：非玩不能过
   'startPressureHold',
+  'teachPropGuard',
   'startEncounter',
   'startWaterMinigame',
   'startSugarWheelMinigame',

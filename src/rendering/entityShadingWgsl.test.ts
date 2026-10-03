@@ -11,10 +11,12 @@
  *   运行时换图集时采样器跟着换。
  * 绑定表用 engine2d 解析 WGSL 的结果(`gpuProgram.structsAndGroups`,按变量名绑定,与渲染核心同一口径)。
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { samplerOf } from './legacy/gpuSampler';
 import { BufferImageSource, Container, DOMAdapter, Texture, TextureSource, UniformGroup, type Shader } from '../engine2d';
 import { PlanarEntityShadow } from './EntityShadow';
+import * as footprints from './footprintExtent';
+import { resolveContactAo } from './contactAo';
 import type { ShadowSceneContext, ShadowSource } from './entityShadowTypes';
 import { DepthOcclusionFilter } from './DepthOcclusionFilter';
 import { EntityLightingFilter } from './EntityLightingFilter';
@@ -120,6 +122,55 @@ describe('实体受光三件的 WGSL 与 JS 资源对齐', () => {
     expect((cast.resources as Record<string, unknown>).uTexture).toBe(atlas.source);
     checkShader(cast, 'cast(换图集后)');
     shadow.destroy();
+  });
+
+  it('动画过渡的空脚印不截断 AO，胶囊跟着脚点移动，淡到零后不复用残留', () => {
+    const current = vi.spyOn(footprints, 'footprintOf').mockReturnValue({ lo: 0.4, hi: 0.6 });
+    const body = vi.spyOn(footprints, 'bodyFootprintOf').mockReturnValue({ lo: 0.3, hi: 0.7 });
+    const shadow = new PlanarEntityShadow(new Container(), sceneCtx());
+    const atlas = dataTex(48, 40, 'nearest');
+    let x = 72;
+    const src: ShadowSource = {
+      getFootX: () => x, getFootY: () => 84, getWorldWidth: () => 24, getWorldHeight: () => 40,
+      getTexture: () => atlas, getFacing: () => 1, isVisible: () => true,
+    };
+    const state = shadow as unknown as {
+      contactMesh: { visible: boolean }; contactShader: Shader;
+      contactPositions: Float32Array; contactFootprint: footprints.FootprintExtent | null;
+    };
+    const params = {
+      ao: resolveContactAo({ darkness: 0.8 }, ENV.shadow), sources: [], wuPerQUnit: 1,
+      animationTransition: false,
+    };
+    try {
+      shadow.update(src, ENV, null, null, params);
+      expect(state.contactMesh.visible).toBe(true);
+      const before = [...state.contactPositions];
+      current.mockReturnValue(null);
+      body.mockReturnValue({ lo: 0.1, hi: 0.9 });
+      params.animationTransition = true;
+      params.ao.darkness = 0.4;
+      x += 20;
+      shadow.update(src, ENV, null, null, params);
+      expect(state.contactMesh.visible).toBe(true);
+      expect(state.contactFootprint).toEqual({ lo: 0.3, hi: 0.7 });
+      for (let i = 0; i < before.length; i++) {
+        expect(state.contactPositions[i]).toBeCloseTo(before[i] + (i % 2 === 0 ? 20 : 0), 4);
+      }
+      params.ao.darkness = 0;
+      params.ao.enabled = false;
+      shadow.update(src, ENV, null, null, params);
+      expect(state.contactMesh.visible).toBe(false);
+      expect(state.contactFootprint).toBeNull();
+      params.ao.enabled = true;
+      params.ao.darkness = 0.4;
+      shadow.update(src, ENV, null, null, params);
+      expect(state.contactMesh.visible).toBe(false);
+    } finally {
+      shadow.destroy();
+      current.mockRestore();
+      body.mockRestore();
+    }
   });
 
   it('深度遮挡滤镜', () => {

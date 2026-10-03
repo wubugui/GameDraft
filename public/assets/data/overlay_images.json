@@ -42,15 +42,15 @@
     "playSfx": false
   },
   "崖墓_栈道口": {
-    "image": "/resources/runtime/scenes/崖墓前段/background_night.png",
+    "image": "/resources/runtime/images/illustrations/2.png",
     "playSfx": false
   },
   "崖墓_牛头凼口": {
-    "image": "/resources/runtime/scenes/牛头凼/牛头凼－深夜.png",
+    "image": "/resources/runtime/images/illustrations/4.png",
     "playSfx": false
   },
   "牛头凼_远眺": {
-    "image": "/resources/runtime/scenes/牛头凼/background.png",
-    "sfx": "reveal_sting"
+    "image": "/resources/runtime/images/illustrations/1.png",
+    "sfx": "sfx_well_cry_childdog_a"
   }
 }

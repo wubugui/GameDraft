@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebGpuCaptureClient, type WebGpuCaptureJob } from './webgpuCaptureClient';
 import type { RhiDevice, RhiFrameDebugCapture } from '../rendering/rhi/RhiDevice';
 import type { CapturedFrameDiagnostics } from './webgpuFrameDiagnostics';
+import { WebGpuCapturePngEncoder } from './webgpuCapturePngEncoder';
 
 const job = (state: WebGpuCaptureJob['state'], frames = 2): WebGpuCaptureJob => ({
   id: 'job-1', targetBootId: 'boot-1', state, requestedFrames: frames,
@@ -298,7 +299,7 @@ describe('WebGPU 真帧抓取', () => {
     expect(client.status.frozen).toBe(true);
     expect(order.filter(item => item === 'begin' || item === 'end' || /^(draw|offscreen)-/.test(item)))
       .toEqual(['begin', 'offscreen-1', 'draw-1', 'end', 'begin', 'offscreen-2', 'draw-2', 'end']);
-    expect(inspector.beginFrameCapture).toHaveBeenCalledWith({ maxBufferSize: 0, maxTextureSize: 0 });
+    expect(inspector.beginFrameCapture).toHaveBeenCalledWith({ maxBufferSize: 0, maxTextureSize: 0, resetValidationErrors: true });
     expect(inspector.disableRecording).toHaveBeenCalledTimes(24);
     expect(inspector.enableRecording).toHaveBeenCalledTimes(24);
     for (let index = 0; index < order.length; index++) {
@@ -316,7 +317,9 @@ describe('WebGPU 真帧抓取', () => {
     }
     expect(suspended).toBe(0);
     expect(client.status.frozen).toBe(false);
-    expect(inspector.saveCaptureData).toHaveBeenCalledWith('job-1.wgpuc', { download: false });
+    expect(inspector.saveCaptureData).toHaveBeenCalledWith('job-1.wgpuc', {
+      download: false, resourceIds: [], externalResourceSnapshots: true,
+    });
     expect(stream.metadata).toEqual({ gamedraftCapture: { version: 1, frameSubmissionCounts: [3, 3] } });
     const upload = fetchMock.mock.calls.find(([, init]) => init.method === 'PUT');
     expect(upload?.[0]).toContain('actualFrames=2');
@@ -328,12 +331,14 @@ describe('WebGPU 真帧抓取', () => {
   it('每帧的 RT、输入贴图、深度与 Buffer 原始数据使用各自 frameIndex 上传', async () => {
     installBrowser({});
     const uploads: Array<{ action: string | null; frameIndex: string | null }> = [];
+    const bufferBatches: Blob[] = [];
     const reports: number[] = [];
     vi.stubGlobal('fetch', vi.fn((_input: string, init: RequestInit) => {
       const url = new URL(_input, location.href);
       if (init.method === 'PUT') uploads.push({
         action: url.searchParams.get('action'), frameIndex: url.searchParams.get('frameIndex'),
       });
+      if (url.searchParams.get('action') === 'buffer-batch') bufferBatches.push(init.body as Blob);
       if (init.method === 'POST') {
         const body = JSON.parse(String(init.body)) as { action: string; frameIndex?: number };
         if (body.action === 'diagnostics') reports.push(body.frameIndex!);
@@ -345,8 +350,8 @@ describe('WebGPU 真帧抓取', () => {
       setFrameHook: () => {}, onChange: () => {},
     });
     (client as unknown as { latestJob: WebGpuCaptureJob }).latestJob = job('capturing');
-    (client as unknown as { encodeFrameImage: () => Promise<Blob> }).encodeFrameImage =
-      async () => new Blob(['PNG'], { type: 'image/png' });
+    vi.spyOn(WebGpuCapturePngEncoder.prototype, 'encode').mockImplementation(
+      async () => new Blob(['PNG'], { type: 'image/png' }));
     const sample = (): CapturedFrameDiagnostics => ({
       submissionCount: 1,
       passes: [{ passOrdinal: 0, label: 'Pass', targetLabel: 'RT', colorIndex: 0,
@@ -362,8 +367,11 @@ describe('WebGPU 真帧抓取', () => {
         rawBytesPerRow: 4, rawPixels: new Uint8Array(new Float32Array([0.5]).buffer) }],
       buffers: [{ passOrdinal: 0, role: 'uniform', bufferId: 5, bufferLabel: 'Uniform',
         totalSize: 4, offset: 0, size: 4, copiedOffset: 0, copiedSize: 4,
-        rangeScope: 'binding', rawBytes: new Uint8Array([1, 2, 3, 4]) }],
-      resourceInventory: { textureCount: 1, bufferCount: 1, textureSubresourceCount: 1 },
+        rangeScope: 'binding', rawBytes: new Uint8Array([1, 2, 3, 4]) },
+      { passOrdinal: 0, role: 'uniform', bufferId: 8, bufferLabel: 'Other',
+        totalSize: 4, offset: 0, size: 4, copiedOffset: 0, copiedSize: 4,
+        rangeScope: 'binding', rawBytes: new Uint8Array([9, 10, 11, 12]) }],
+      resourceInventory: { textureCount: 1, bufferCount: 2, textureSubresourceCount: 1 },
       resourceTextures: [{ textureOrdinal: 0, textureId: 6, label: 'Atlas',
         width: 1, height: 1, sourceFormat: 'rgba8unorm', rawFormat: 'rgba8unorm',
         mipLevel: 0, arrayLayer: 0, aspect: 'color', sampleCount: 1,
@@ -371,7 +379,10 @@ describe('WebGPU 真帧抓取', () => {
         rawPixels: new Uint8Array(256) }],
       resourceBuffers: [{ bufferId: 7, label: 'All bytes', totalSize: 4,
         copiedOffset: 0, copiedSize: 4, captureMoment: 'frame-end',
-        rawBytes: new Uint8Array([5, 6, 7, 8]) }],
+        rawBytes: new Uint8Array([5, 6, 7, 8]) },
+      { bufferId: 8, label: 'Other bytes', totalSize: 4,
+        copiedOffset: 0, copiedSize: 4, captureMoment: 'frame-end',
+        rawBytes: new Uint8Array([13, 14, 15, 16]) }],
       gpuPasses: [], gpuProfilerStatus: { state: 'unsupported', reason: '测试设备' },
     });
     const exportFrame = (client as unknown as { exportDiagnostics: (
@@ -383,13 +394,24 @@ describe('WebGPU 真帧抓取', () => {
     for (const frameIndex of ['1', '2']) {
       expect(uploads.filter(upload => upload.frameIndex === frameIndex).map(upload => upload.action))
         .toEqual(['pass-image', 'pass-raw', 'input-image', 'input-raw',
-          'aspect-image', 'aspect-raw', 'buffer-raw',
-          'resource-texture-image', 'resource-texture-raw', 'resource-buffer-raw']);
+          'aspect-image', 'aspect-raw', 'buffer-batch',
+          'resource-texture-image', 'resource-texture-raw', 'buffer-batch']);
+    }
+    expect(bufferBatches).toHaveLength(4);
+    for (const [index, batch] of bufferBatches.entries()) {
+      const encoded = await batch.arrayBuffer();
+      const headerBytes = new DataView(encoded).getUint32(0, true);
+      const header = JSON.parse(new TextDecoder().decode(new Uint8Array(encoded, 4, headerBytes)));
+      expect(header.entries).toEqual([0, 1].map(ordinal => ({
+        kind: index % 2 ? 'resource-buffer' : 'buffer', ordinal, byteLength: 4,
+      })));
+      expect([...new Uint8Array(encoded, 4 + headerBytes)])
+        .toEqual(index % 2 ? [5, 6, 7, 8, 13, 14, 15, 16] : [1, 2, 3, 4, 9, 10, 11, 12]);
     }
     client.dispose();
   });
 
-  it('同纹理同版本的多个 Draw 保留各自绑定记录并复用已上传的原始输入', async () => {
+  it('PNG 不可用时同版本 Draw 仍复用原始输入并保留各自绑定', async () => {
     installBrowser({});
     const uploads: string[] = [];
     const reports: Array<{ inputs: Array<Record<string, unknown>> }> = [];
@@ -407,8 +429,7 @@ describe('WebGPU 真帧抓取', () => {
       setFrameHook: () => {}, onChange: () => {},
     });
     (client as unknown as { latestJob: WebGpuCaptureJob }).latestJob = job('capturing', 1);
-    (client as unknown as { encodeFrameImage: () => Promise<Blob> }).encodeFrameImage =
-      async () => new Blob(['PNG'], { type: 'image/png' });
+    vi.spyOn(WebGpuCapturePngEncoder.prototype, 'encode').mockRejectedValue(new Error('PNG 测试失败'));
     const sharedPixels = new Uint8Array(256);
     const input = (passOrdinal: number, bindingName: string) => ({
       passOrdinal, bindingName, groupSlot: 0, binding: 0,
@@ -425,12 +446,14 @@ describe('WebGPU 真帧抓取', () => {
     };
     await (client as unknown as { exportDiagnostics(job: WebGpuCaptureJob, frame: number,
       diagnostics: CapturedFrameDiagnostics): Promise<void> }).exportDiagnostics(job('capturing', 1), 1, diagnostics);
-    expect(uploads).toEqual(['input-image', 'input-raw']);
+    expect(uploads).toEqual(['input-raw']);
     expect(reports[0]?.inputs).toHaveLength(2);
     expect(reports[0]?.inputs[0]).toMatchObject({ inputOrdinal: 0, contentVersion: 4,
       rawBytesPerRow: 256, rawByteLength: 256 });
     expect(reports[0]?.inputs[1]).toMatchObject({ inputOrdinal: 1, contentVersion: 4,
       rawAliasInputOrdinal: 0, rawBytesPerRow: 256, rawByteLength: 256 });
+    expect(reports[0]?.inputs[0].reason).toContain('PNG 测试失败');
+    expect(reports[0]?.inputs[1].reason).toBeUndefined();
     client.dispose();
   });
 

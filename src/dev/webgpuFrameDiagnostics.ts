@@ -4,7 +4,9 @@ import type { RhiDepthStencilAspectCapture, RhiDevice, RhiDrawBufferCapture, Rhi
 
 const MAX_RAW_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_PASS_RECORDS = 512;
-const MAX_INPUT_RECORDS = 1024;
+// These are per-Draw bindings, not unique textures. Budget 16 sampled bindings
+// per supported Pass; the separate raw byte budget still bounds GPU memory.
+const MAX_INPUT_RECORDS = MAX_PASS_RECORDS * 16;
 const MAX_INPUT_RAW_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ASPECT_RECORDS = 1024;
 const MAX_ASPECT_RAW_BYTES = 512 * 1024 * 1024;
@@ -204,6 +206,10 @@ function halfFloat(bits: number): number {
 function visualize(raw: Uint8Array, width: number, height: number, bytesPerRow: number,
     format: string): Uint8ClampedArray {
   const rgba = new Uint8ClampedArray(width * height * 4);
+  if (format === 'rgba8unorm' || format === 'rgba8unorm-srgb') {
+    for (let y = 0; y < height; y++) rgba.set(raw.subarray(y * bytesPerRow, y * bytesPerRow + width * 4), y * width * 4);
+    return rgba;
+  }
   const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -347,7 +353,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
 export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
   disableRecording(): void;
   enableRecording(): void;
-}): {
+}, onProgress?: (completed: number, total: number, bytes: number) => void): {
   finish: () => Promise<CapturedFrameDiagnostics>;
   cancel: () => void;
 } {
@@ -867,21 +873,46 @@ export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
       await withTimeout(submitted, MAP_TIMEOUT_MS, 'GPU 帧提交超时');
       if (!resourceInventory && !cancelled) throw new Error('RHI 未返回帧末活资源清单');
       if (!cancelled) {
-        for (const record of pendingInputs) {
-          const buffer = record.buffer;
-          if (!buffer || record.info.reason) continue;
-          try {
-            await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU Draw 输入回读超时');
-            if (cancelled) continue;
-            record.info.rawPixels = new Uint8Array(buffer.getMappedRange()).slice();
-            record.info.rawBytesPerRow = record.bytesPerRow;
-          } catch (error) {
-            record.info.reason = `GPU Draw 输入回读失败：${String(error)}`;
-          } finally {
-            try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
-            buffer.destroy();
-            record.buffer = undefined;
-          }
+        type Readback = {
+          buffer?: GPUBuffer;
+          bytesPerRow?: number;
+          info: { reason?: string; rawPixels?: Uint8Array; rawBytes?: Uint8Array; rawBytesPerRow?: number };
+        };
+        const readbacks: Array<{ record: Readback; texture: boolean }> = [
+          ...[...pendingInputs, ...pending, ...pendingAspects, ...pendingResourceTextures]
+            .map(record => ({ record, texture: true })),
+          ...[...pendingBuffers, ...pendingResourceBuffers].map(record => ({ record, texture: false })),
+        ].filter(({ record }) => record.buffer && !record.info.reason);
+        let completed = 0;
+        let bytes = 0;
+        onProgress?.(completed, readbacks.length, bytes);
+        // Issue bounded groups of maps together: one GPU/browser round trip per
+        // group, not thousands of sequential round trips. Never advance a frame.
+        for (let start = 0; start < readbacks.length && !cancelled; start += 32) {
+          await Promise.all(readbacks.slice(start, start + 32).map(async ({ record, texture }) => {
+            const buffer = record.buffer!;
+            try {
+              await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU 资源回读超时');
+              if (cancelled) return;
+              const raw = new Uint8Array(buffer.getMappedRange()).slice();
+              if (texture) {
+                record.info.rawPixels = raw;
+                record.info.rawBytesPerRow = record.bytesPerRow;
+              } else record.info.rawBytes = raw;
+              bytes += raw.byteLength;
+            } catch (error) {
+              record.info.reason = `GPU 资源回读失败：${String(error)}`;
+            } finally {
+              try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
+              buffer.destroy();
+              record.buffer = undefined;
+              completed++;
+              if (!cancelled) onProgress?.(completed, readbacks.length, bytes);
+            }
+          }));
+          // Give progress rendering and cancellation a task boundary even when
+          // every mapping in the next group is already ready.
+          if (!cancelled) await new Promise(resolve => window.setTimeout(resolve, 0));
         }
         for (const record of pendingInputs) {
           if (!record.sharedFrom) continue;
@@ -890,85 +921,6 @@ export function captureFrameDiagnostics(rhi: RhiDevice, recordingControl?: {
             record.info.rawPixels = source.rawPixels;
             record.info.rawBytesPerRow = source.rawBytesPerRow;
           } else record.info.reason = source.reason ?? '共享 Draw 输入回读失败';
-        }
-        for (const record of pending) {
-          const buffer = record.buffer;
-          if (!buffer || record.info.reason) continue;
-          try {
-            await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU 画面回读超时');
-            if (cancelled) continue;
-            const raw = new Uint8Array(buffer.getMappedRange()).slice();
-            record.info.rawPixels = raw;
-            record.info.rawBytesPerRow = record.bytesPerRow;
-          } catch (error) {
-            record.info.reason = `GPU 画面回读失败：${String(error)}`;
-          } finally {
-            try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
-            buffer.destroy();
-            record.buffer = undefined;
-          }
-        }
-        for (const record of pendingAspects) {
-          const buffer = record.buffer;
-          if (!buffer || record.info.reason) continue;
-          try {
-            await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU 深度 / 模板回读超时');
-            if (cancelled) continue;
-            record.info.rawPixels = new Uint8Array(buffer.getMappedRange()).slice();
-            record.info.rawBytesPerRow = record.bytesPerRow;
-          } catch (error) {
-            record.info.reason = `GPU 深度 / 模板回读失败：${String(error)}`;
-          } finally {
-            try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
-            buffer.destroy();
-            record.buffer = undefined;
-          }
-        }
-        for (const record of pendingBuffers) {
-          const buffer = record.buffer;
-          if (!buffer || record.info.reason) continue;
-          try {
-            await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU Draw Buffer 回读超时');
-            if (cancelled) continue;
-            record.info.rawBytes = new Uint8Array(buffer.getMappedRange()).slice();
-          } catch (error) {
-            record.info.reason = `GPU Draw Buffer 回读失败：${String(error)}`;
-          } finally {
-            try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
-            buffer.destroy();
-            record.buffer = undefined;
-          }
-        }
-        for (const record of pendingResourceTextures) {
-          const buffer = record.buffer;
-          if (!buffer || record.info.reason) continue;
-          try {
-            await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU 资源纹理回读超时');
-            if (cancelled) continue;
-            record.info.rawPixels = new Uint8Array(buffer.getMappedRange()).slice();
-            record.info.rawBytesPerRow = record.bytesPerRow;
-          } catch (error) {
-            record.info.reason = `GPU 资源纹理回读失败：${String(error)}`;
-          } finally {
-            try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
-            buffer.destroy();
-            record.buffer = undefined;
-          }
-        }
-        for (const record of pendingResourceBuffers) {
-          const buffer = record.buffer;
-          if (!buffer || record.info.reason) continue;
-          try {
-            await withTimeout(buffer.mapAsync(GPUMapMode.READ), MAP_TIMEOUT_MS, 'GPU 资源 Buffer 回读超时');
-            if (cancelled) continue;
-            record.info.rawBytes = new Uint8Array(buffer.getMappedRange()).slice();
-          } catch (error) {
-            record.info.reason = `GPU 资源 Buffer 回读失败：${String(error)}`;
-          } finally {
-            try { buffer.unmap(); } catch { /* A failed map has no mapping to release. */ }
-            buffer.destroy();
-            record.buffer = undefined;
-          }
         }
       }
       if (status.state !== 'unsupported' && !cancelled) {

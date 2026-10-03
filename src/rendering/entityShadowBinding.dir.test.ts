@@ -54,6 +54,12 @@ describe('lightDirFromShadowScreenAngle：屏幕约定 → 指向光的世界方
     expect(L[2]).toBeGreaterThan(0.5);
     expect(Math.abs(L[0])).toBeLessThan(1e-9);
   });
+
+  it.each([1, 5, 24, 45, 90])('手动仰角 %i° 不被自动档 25° 下限改写', (el) => {
+    const L = lightDirFromShadowScreenAngle(37, el, M_PITCH45, 1)!;
+    expect(elevDeg(L)).toBeCloseTo(el, 6);
+    if (el < 90) expect(angDiff(shadowScreenDegOf(L, M_PITCH45), 37)).toBeLessThan(1e-6);
+  });
 });
 
 describe('resolveBindingLightDir：一条绑定 → 方向', () => {

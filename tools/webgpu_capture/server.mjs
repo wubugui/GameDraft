@@ -16,11 +16,16 @@ const MAX_FRAME_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_FRAME_IMAGES_BYTES = 16 * 1024 * 1024 * 1024;
 const MAX_PASS_RAW_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_DIAGNOSTIC_ENTRIES = 512;
-const MAX_INPUT_ENTRIES = 1024;
+const MAX_INPUT_ENTRIES = MAX_DIAGNOSTIC_ENTRIES * 16;
 const MAX_ASPECT_ENTRIES = 1024;
 const MAX_BUFFER_ENTRIES = 8192;
 const MAX_BUFFER_ITEM_BYTES = 256 * 1024 * 1024;
 const MAX_BUFFER_RAW_BYTES = 256 * 1024 * 1024;
+const MAX_BUFFER_BATCH_ENTRIES = 64;
+const MAX_BUFFER_BATCH_ITEM_BYTES = 64 * 1024;
+const MAX_BUFFER_BATCH_HEADER_BYTES = 16 * 1024;
+const MAX_BUFFER_BATCH_BYTES = 4 + MAX_BUFFER_BATCH_HEADER_BYTES +
+  MAX_BUFFER_BATCH_ENTRIES * MAX_BUFFER_BATCH_ITEM_BYTES;
 const MAX_INPUT_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_INPUT_IMAGES_BYTES = 512 * 1024 * 1024;
 const MAX_INPUT_RAW_BYTES = 2 * 1024 * 1024 * 1024;
@@ -274,6 +279,7 @@ function publicJob(job) {
     resourceFrames: job.resourceFrames ??
       (job.diagnostics instanceof Map ? [...job.diagnostics.keys()].sort((a, b) => a - b) : []),
     bytes: job.bytes ?? 0,
+    progress: job.progress,
     sha256: job.sha256 ?? null,
     outputDir: job.state === 'completed' ? job.outputDir : null,
     captureFile: job.state === 'completed' ? job.file : null,
@@ -687,10 +693,16 @@ export function createWebGpuCaptureController(projectRoot, { writeManifest = wri
   }
 
   async function analyzedWithIndex(job, strictSidecars = false) {
-    const analysis = await analyzeCapture(job.file, { strictSidecars, preferHardLinks: true });
+    const onProgress = (phase, completed = 0, total = 0, unit = '') => {
+      job.progress = { phase, completed, total, unit };
+      job.updatedAt = Date.now();
+    };
+    const analysis = await analyzeCapture(job.file, { strictSidecars, preferHardLinks: true, onProgress });
     const files = {};
     const base = await realpath(analysis.outputDir);
-    for (const name of viewerFiles(analysis.report)) {
+    const names = [...viewerFiles(analysis.report)];
+    onProgress('校验查看器文件索引', 0, names.length, '文件');
+    for (const name of names) {
       if (!validViewerPath(name)) throw new Error('analysis report lists an invalid file');
       const { physical, info } = await checkedFile(base, resolve(base, name), MAX_VIEWER_FILE_BYTES);
       const verified = analysis.verifiedSidecarFiles?.get(name);
@@ -703,6 +715,7 @@ export function createWebGpuCaptureController(projectRoot, { writeManifest = wri
         linkedInfo.ctimeNs === verified.ctimeNs;
       files[name] = { bytes: info.size,
         sha256: sameVerifiedInode ? verified.sha256 : await fileSha256(physical) };
+      onProgress('校验查看器文件索引', Object.keys(files).length, names.length, '文件');
     }
     const index = { schemaVersion: 1, jobId: job.id, captureSha256: job.sha256, files };
     const encoded = JSON.stringify(index) + '\n';
@@ -1151,6 +1164,106 @@ export function createWebGpuCaptureController(projectRoot, { writeManifest = wri
 
   function uploadBufferRaw(args = {}) { return uploadBufferRawKind(args, 'buffer'); }
   function uploadResourceBufferRaw(args = {}) { return uploadBufferRawKind(args, 'resource-buffer'); }
+
+  async function uploadBufferBatch({ jobId, targetBootId, frameIndex, stream, contentLength } = {}) {
+    if (closed) throw new Error('capture controller is closed');
+    const job = getJob(jobId, targetBootId);
+    const frame = diagnosticFrameIndex(job, frameIndex);
+    if (!['pending', 'capturing'].includes(job.state) || job.uploadInProgress) {
+      throw new Error('capture job is not accepting raw Draw buffers');
+    }
+    if (job.diagnostics.has(frame)) throw new Error('frame diagnostics already uploaded');
+    if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') {
+      throw new Error('buffer batch stream is required');
+    }
+    if (contentLength != null && (!Number.isSafeInteger(Number(contentLength)) ||
+        Number(contentLength) < 4 || Number(contentLength) > MAX_BUFFER_BATCH_BYTES)) {
+      throw new Error('buffer batch content length exceeds limit');
+    }
+    // Validate the entire bounded envelope before opening any sidecar file. A bad
+    // final entry must not leave earlier entries from the same request on disk.
+    const chunks = [];
+    let received = 0;
+    for await (const part of stream) {
+      if (closed || !['pending', 'capturing'].includes(job.state) || job.uploadInProgress) {
+        throw new Error('capture stopped while receiving buffer batch');
+      }
+      const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
+      received += chunk.length;
+      if (received > MAX_BUFFER_BATCH_BYTES) throw new Error('buffer batch body exceeds limit');
+      chunks.push(chunk);
+    }
+    if (received < 4 || (contentLength != null && received !== Number(contentLength))) {
+      throw new Error('buffer batch length differs from declared bytes');
+    }
+    const body = Buffer.concat(chunks, received);
+    const headerBytes = body.readUInt32LE(0);
+    if (headerBytes < 2 || headerBytes > MAX_BUFFER_BATCH_HEADER_BYTES || 4 + headerBytes > body.length) {
+      throw new Error('buffer batch header length is invalid');
+    }
+    let header;
+    try { header = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body.subarray(4, 4 + headerBytes))); }
+    catch { throw new Error('buffer batch header is not valid UTF-8 JSON'); }
+    if (!header || typeof header !== 'object' || Array.isArray(header) ||
+        !Array.isArray(header.entries) || header.entries.length < 1 ||
+        header.entries.length > MAX_BUFFER_BATCH_ENTRIES) {
+      throw new Error('buffer batch requires 1 to 64 entries');
+    }
+    const entries = [];
+    const seen = new Set();
+    let offset = 4 + headerBytes;
+    let rawBytes = 0;
+    for (const entry of header.entries) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry) ||
+          !['buffer', 'resource-buffer'].includes(entry.kind)) {
+        throw new Error('buffer batch entry kind is invalid');
+      }
+      const resource = entry.kind === 'resource-buffer';
+      if (!Number.isInteger(entry.ordinal) || entry.ordinal < 0 ||
+          entry.ordinal >= (resource ? MAX_RESOURCE_BUFFER_ENTRIES : MAX_BUFFER_ENTRIES)) {
+        throw new Error('buffer batch entry ordinal is invalid');
+      }
+      if (!Number.isSafeInteger(entry.byteLength) || entry.byteLength < 4 ||
+          entry.byteLength > MAX_BUFFER_BATCH_ITEM_BYTES || entry.byteLength % 4 !== 0) {
+        throw new Error('buffer batch entry length must be 4 to 65536 aligned bytes');
+      }
+      const duplicateKey = `${entry.kind}:${entry.ordinal}`;
+      if (seen.has(duplicateKey)) throw new Error('buffer batch contains a duplicate entry');
+      seen.add(duplicateKey);
+      const key = diagnosticKey(frame, entry.ordinal);
+      const raw = resource ? job.resourceBufferRaw : job.bufferRaw;
+      const inProgress = resource ? job.resourceBufferRawInProgress : job.bufferRawInProgress;
+      if (raw.has(key) || inProgress.has(key)) throw new Error('raw Draw buffer already uploaded');
+      if (offset + entry.byteLength > body.length) throw new Error('buffer batch payload is truncated');
+      entries.push({ ...entry, offset });
+      offset += entry.byteLength;
+      rawBytes += entry.byteLength;
+    }
+    if (offset !== body.length) throw new Error('buffer batch has trailing payload bytes');
+
+    // Reuse individual writers: names, SHA256, fsync, reservations, boot/frame
+    // ownership and stop checks remain identical to single-buffer uploads.
+    let next = 0;
+    let failed = false;
+    let failure;
+    await Promise.all(Array.from({ length: Math.min(8, entries.length) }, async () => {
+      while (!failed && next < entries.length) {
+        const entry = entries[next++];
+        try {
+          await uploadBufferRawKind({ jobId, targetBootId, frameIndex: frame,
+            ...(entry.kind === 'buffer' ? { bufferOrdinal: entry.ordinal } : { resourceOrdinal: entry.ordinal }),
+            contentLength: entry.byteLength,
+            stream: (async function* () { yield body.subarray(entry.offset, entry.offset + entry.byteLength); })(),
+          }, entry.kind);
+        } catch (error) {
+          if (!failed) failure = error;
+          failed = true;
+        }
+      }
+    }));
+    if (failed) throw failure;
+    return { files: entries.length, bytes: rawBytes };
+  }
 
   function diagnostics({ jobId, targetBootId, frameIndex, passes, inputs = [], aspects = [], buffers = [],
     resourceInventory, resourceTextures, resourceBuffers,
@@ -1976,6 +2089,7 @@ export function createWebGpuCaptureController(projectRoot, { writeManifest = wri
     }
     job.uploadInProgress = true;
     job.state = 'uploading';
+    job.progress = { phase: '写入抓帧文件', completed: 0, total: Number(contentLength) || 0, unit: '字节' };
     job.updatedAt = Date.now();
     let handle;
     let bytes = 0;
@@ -1995,6 +2109,8 @@ export function createWebGpuCaptureController(projectRoot, { writeManifest = wri
           if (result.bytesWritten < 1) throw new Error('capture file write stopped');
           offset += result.bytesWritten;
         }
+        job.progress.completed = bytes;
+        job.updatedAt = Date.now();
       }
       if (bytes < MIN_CAPTURE_BYTES) throw new Error('capture file is empty or truncated');
       if (contentLength != null && bytes !== Number(contentLength)) throw new Error('capture upload length mismatch');
@@ -2002,10 +2118,12 @@ export function createWebGpuCaptureController(projectRoot, { writeManifest = wri
       await handle.close();
       handle = null;
       if (job.state !== 'uploading' || closed) throw new Error('capture stopped or timed out');
+      job.progress = { phase: '校验抓帧文件', completed: 0, total: 0, unit: '' };
       const captureSummary = await validateCaptureBinary(job.file, bytes);
       validatedCapture = true;
       if (job.state !== 'uploading' || closed) throw new Error('capture stopped or timed out');
       const digest = sha.digest('hex');
+      job.progress = { phase: '关联逐帧资源与 GPU 命令', completed: 0, total: 0, unit: '' };
       const diagnosticsSummary = await writeSidecars(job, count);
       job.bytes = bytes;
       job.sha256 = digest;
@@ -2047,6 +2165,7 @@ export function createWebGpuCaptureController(projectRoot, { writeManifest = wri
       job.resourceFrames = diagnosticsSummary.resourceFrames;
       job.analysisPromise = Promise.resolve(verifiedAnalysis);
       job.state = 'completed';
+      job.progress = { phase: '全部写盘与分析完成', completed: count, total: count, unit: '帧' };
       job.updatedAt = Date.now();
       if (activeJobId === job.id) activeJobId = null;
       capHistory();
@@ -2118,7 +2237,7 @@ export function createWebGpuCaptureController(projectRoot, { writeManifest = wri
 
   return { register, list, getSettings, setSettings, request, poll, status, viewerFile, uploadFrameImage, uploadPassImage,
     uploadPassRaw, uploadInputImage, uploadInputRaw,
-    uploadAspectImage, uploadAspectRaw, uploadBufferRaw,
+    uploadAspectImage, uploadAspectRaw, uploadBufferRaw, uploadBufferBatch,
     uploadResourceTextureImage, uploadResourceTextureRaw, uploadResourceBufferRaw, history,
     diagnostics, upload, fail, stop, close };
 }

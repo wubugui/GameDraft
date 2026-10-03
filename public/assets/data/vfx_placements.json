@@ -30,8 +30,8 @@
           "id": "pml_atmo_cliff_mist_1",
           "effect": "pml_cliff_mist_streak",
           "anchor": {
-            "x": 41.77,
-            "y": 132.43,
+            "x": 250.0,
+            "y": 650.0,
             "h": 37.0,
             "surface": "shell"
           },
@@ -42,8 +42,8 @@
           "id": "pml_atmo_cliff_mist_2",
           "effect": "pml_cliff_mist",
           "anchor": {
-            "x": 98.73,
-            "y": 256.32,
+            "x": 340.0,
+            "y": 1430.0,
             "h": 47.3,
             "surface": "shell"
           },
@@ -54,8 +54,8 @@
           "id": "pml_atmo_ground_mist_1",
           "effect": "pml_ground_mist_streak",
           "anchor": {
-            "x": 387.32,
-            "y": 401.57,
+            "x": 330.0,
+            "y": 1410.0,
             "h": 12.9,
             "surface": "shell"
           },
@@ -66,8 +66,8 @@
           "id": "pml_atmo_ground_mist_2",
           "effect": "pml_ground_mist",
           "anchor": {
-            "x": 364.54,
-            "y": 316.13,
+            "x": 645.0,
+            "y": 1170.0,
             "h": 14.9,
             "surface": "shell"
           },
@@ -78,8 +78,8 @@
           "id": "pml_atmo_ground_mist_3",
           "effect": "pml_ground_mist_broad",
           "anchor": {
-            "x": 341.76,
-            "y": 213.6,
+            "x": 620.0,
+            "y": 895.0,
             "h": 25.5,
             "surface": "shell"
           },
@@ -90,8 +90,8 @@
           "id": "pml_atmo_ground_mist_4",
           "effect": "pml_ground_mist_streak",
           "anchor": {
-            "x": 349.35,
-            "y": 119.62,
+            "x": 655.0,
+            "y": 670.0,
             "h": 20.7,
             "surface": "shell"
           },
@@ -102,8 +102,8 @@
           "id": "pml_atmo_ground_mist_5",
           "effect": "pml_ground_mist",
           "anchor": {
-            "x": 417.7,
-            "y": 46.99,
+            "x": 800.0,
+            "y": 440.0,
             "h": 12.4,
             "surface": "shell"
           },
@@ -114,8 +114,8 @@
           "id": "pml_atmo_ledge_mist_1",
           "effect": "pml_ledge_mist_streak",
           "anchor": {
-            "x": 174.68,
-            "y": 273.41,
+            "x": 310.0,
+            "y": 930.0,
             "h": 17.0,
             "surface": "shell"
           },
@@ -126,8 +126,8 @@
           "id": "pml_atmo_ledge_mist_2",
           "effect": "pml_ledge_mist",
           "anchor": {
-            "x": 546.81,
-            "y": 367.39,
+            "x": 1020.0,
+            "y": 1250.0,
             "h": 23.6,
             "surface": "shell"
           },
@@ -138,8 +138,8 @@
           "id": "pml_atmo_dust_1",
           "effect": "pml_dust",
           "anchor": {
-            "x": 372.14,
-            "y": 273.41,
+            "x": 680.0,
+            "y": 1030.0,
             "h": 33.4,
             "surface": "shell"
           },
@@ -150,8 +150,8 @@
           "id": "pml_atmo_dust_2",
           "effect": "pml_dust",
           "anchor": {
-            "x": 356.95,
-            "y": 149.52,
+            "x": 650.0,
+            "y": 770.0,
             "h": 46.0,
             "surface": "shell"
           },
@@ -162,8 +162,8 @@
           "id": "pml_atmo_dry_leaves_1",
           "effect": "pml_dry_leaves",
           "anchor": {
-            "x": 334.16,
-            "y": 333.22,
+            "x": 610.0,
+            "y": 1280.0,
             "h": 55.2,
             "surface": "shell"
           },
@@ -174,8 +174,8 @@
           "id": "pml_atmo_dry_leaves_2",
           "effect": "pml_dry_leaves",
           "anchor": {
-            "x": 394.92,
-            "y": 93.98,
+            "x": 740.0,
+            "y": 520.0,
             "h": 35.7,
             "surface": "shell"
           },
@@ -186,8 +186,8 @@
           "id": "pml_atmo_sparse_drip_1",
           "effect": "pml_sparse_drip",
           "anchor": {
-            "x": 546.81,
-            "y": 106.8,
+            "x": 1050.0,
+            "y": 715.0,
             "h": 22.0,
             "surface": "shell"
           },
@@ -198,8 +198,8 @@
           "id": "pml_atmo_sparse_drip_2",
           "effect": "pml_sparse_drip",
           "anchor": {
-            "x": 615.16,
-            "y": 170.88,
+            "x": 1220.0,
+            "y": 1000.0,
             "h": 55.4,
             "surface": "shell"
           },
@@ -213,8 +213,8 @@
             "id": "vfx_fireflies",
             "effect": "fireflies",
             "anchor": {
-              "x": 352,
-              "y": 299,
+              "x": 720.0,
+              "y": 1090.0,
               "h": 40
             }
           },
@@ -222,8 +222,8 @@
             "id": "pml_atmo_cliff_mist_1",
             "effect": "pml_cliff_mist_streak_night",
             "anchor": {
-              "x": 41.77,
-              "y": 132.43,
+              "x": 250.0,
+              "y": 650.0,
               "h": 37.0,
               "surface": "shell"
             },
@@ -234,8 +234,8 @@
             "id": "pml_atmo_cliff_mist_2",
             "effect": "pml_cliff_mist_night",
             "anchor": {
-              "x": 98.73,
-              "y": 256.32,
+              "x": 340.0,
+              "y": 1430.0,
               "h": 47.3,
               "surface": "shell"
             },
@@ -246,8 +246,8 @@
             "id": "pml_atmo_ground_mist_1",
             "effect": "pml_ground_mist_streak_night",
             "anchor": {
-              "x": 387.32,
-              "y": 401.57,
+              "x": 330.0,
+              "y": 1410.0,
               "h": 12.9,
               "surface": "shell"
             },
@@ -258,8 +258,8 @@
             "id": "pml_atmo_ground_mist_2",
             "effect": "pml_ground_mist_night",
             "anchor": {
-              "x": 364.54,
-              "y": 316.13,
+              "x": 645.0,
+              "y": 1170.0,
               "h": 14.9,
               "surface": "shell"
             },
@@ -270,8 +270,8 @@
             "id": "pml_atmo_ground_mist_3",
             "effect": "pml_ground_mist_broad_night",
             "anchor": {
-              "x": 341.76,
-              "y": 213.6,
+              "x": 620.0,
+              "y": 895.0,
               "h": 25.5,
               "surface": "shell"
             },
@@ -282,8 +282,8 @@
             "id": "pml_atmo_ground_mist_4",
             "effect": "pml_ground_mist_streak_night",
             "anchor": {
-              "x": 349.35,
-              "y": 119.62,
+              "x": 655.0,
+              "y": 670.0,
               "h": 20.7,
               "surface": "shell"
             },
@@ -294,8 +294,8 @@
             "id": "pml_atmo_ground_mist_5",
             "effect": "pml_ground_mist_night",
             "anchor": {
-              "x": 417.7,
-              "y": 46.99,
+              "x": 800.0,
+              "y": 440.0,
               "h": 12.4,
               "surface": "shell"
             },
@@ -306,8 +306,8 @@
             "id": "pml_atmo_ledge_mist_1",
             "effect": "pml_ledge_mist_streak_night",
             "anchor": {
-              "x": 174.68,
-              "y": 273.41,
+              "x": 310.0,
+              "y": 930.0,
               "h": 17.0,
               "surface": "shell"
             },
@@ -318,8 +318,8 @@
             "id": "pml_atmo_ledge_mist_2",
             "effect": "pml_ledge_mist_night",
             "anchor": {
-              "x": 546.81,
-              "y": 367.39,
+              "x": 1020.0,
+              "y": 1250.0,
               "h": 23.6,
               "surface": "shell"
             },
@@ -330,8 +330,8 @@
             "id": "pml_atmo_dust_1",
             "effect": "pml_dust_night",
             "anchor": {
-              "x": 372.14,
-              "y": 273.41,
+              "x": 680.0,
+              "y": 1030.0,
               "h": 33.4,
               "surface": "shell"
             },
@@ -342,8 +342,8 @@
             "id": "pml_atmo_dust_2",
             "effect": "pml_dust_night",
             "anchor": {
-              "x": 356.95,
-              "y": 149.52,
+              "x": 650.0,
+              "y": 770.0,
               "h": 46.0,
               "surface": "shell"
             },
@@ -354,8 +354,8 @@
             "id": "pml_atmo_dry_leaves_1",
             "effect": "pml_dry_leaves_night",
             "anchor": {
-              "x": 334.16,
-              "y": 333.22,
+              "x": 610.0,
+              "y": 1280.0,
               "h": 55.2,
               "surface": "shell"
             },
@@ -366,8 +366,8 @@
             "id": "pml_atmo_dry_leaves_2",
             "effect": "pml_dry_leaves_night",
             "anchor": {
-              "x": 394.92,
-              "y": 93.98,
+              "x": 740.0,
+              "y": 520.0,
               "h": 35.7,
               "surface": "shell"
             },
@@ -378,8 +378,8 @@
             "id": "pml_atmo_sparse_drip_1",
             "effect": "pml_sparse_drip",
             "anchor": {
-              "x": 546.81,
-              "y": 106.8,
+              "x": 1050.0,
+              "y": 715.0,
               "h": 22.0,
               "surface": "shell"
             },
@@ -390,8 +390,8 @@
             "id": "pml_atmo_sparse_drip_2",
             "effect": "pml_sparse_drip",
             "anchor": {
-              "x": 615.16,
-              "y": 170.88,
+              "x": 1220.0,
+              "y": 1000.0,
               "h": 55.4,
               "surface": "shell"
             },
@@ -404,8 +404,8 @@
             "id": "pml_atmo_cliff_mist_1",
             "effect": "pml_cliff_mist_streak",
             "anchor": {
-              "x": 41.77,
-              "y": 132.43,
+              "x": 250.0,
+              "y": 650.0,
               "h": 37.0,
               "surface": "shell"
             },
@@ -416,8 +416,8 @@
             "id": "pml_atmo_cliff_mist_2",
             "effect": "pml_cliff_mist",
             "anchor": {
-              "x": 98.73,
-              "y": 256.32,
+              "x": 340.0,
+              "y": 1430.0,
               "h": 47.3,
               "surface": "shell"
             },
@@ -428,8 +428,8 @@
             "id": "pml_atmo_ground_mist_1",
             "effect": "pml_ground_mist_streak",
             "anchor": {
-              "x": 387.32,
-              "y": 401.57,
+              "x": 330.0,
+              "y": 1410.0,
               "h": 12.9,
               "surface": "shell"
             },
@@ -440,8 +440,8 @@
             "id": "pml_atmo_ground_mist_2",
             "effect": "pml_ground_mist",
             "anchor": {
-              "x": 364.54,
-              "y": 316.13,
+              "x": 645.0,
+              "y": 1170.0,
               "h": 14.9,
               "surface": "shell"
             },
@@ -452,8 +452,8 @@
             "id": "pml_atmo_ground_mist_3",
             "effect": "pml_ground_mist_broad",
             "anchor": {
-              "x": 341.76,
-              "y": 213.6,
+              "x": 620.0,
+              "y": 895.0,
               "h": 25.5,
               "surface": "shell"
             },
@@ -464,8 +464,8 @@
             "id": "pml_atmo_ground_mist_4",
             "effect": "pml_ground_mist_streak",
             "anchor": {
-              "x": 349.35,
-              "y": 119.62,
+              "x": 655.0,
+              "y": 670.0,
               "h": 20.7,
               "surface": "shell"
             },
@@ -476,8 +476,8 @@
             "id": "pml_atmo_ground_mist_5",
             "effect": "pml_ground_mist",
             "anchor": {
-              "x": 417.7,
-              "y": 46.99,
+              "x": 800.0,
+              "y": 440.0,
               "h": 12.4,
               "surface": "shell"
             },
@@ -488,8 +488,8 @@
             "id": "pml_atmo_ledge_mist_1",
             "effect": "pml_ledge_mist_streak",
             "anchor": {
-              "x": 174.68,
-              "y": 273.41,
+              "x": 310.0,
+              "y": 930.0,
               "h": 17.0,
               "surface": "shell"
             },
@@ -500,8 +500,8 @@
             "id": "pml_atmo_ledge_mist_2",
             "effect": "pml_ledge_mist",
             "anchor": {
-              "x": 546.81,
-              "y": 367.39,
+              "x": 1020.0,
+              "y": 1250.0,
               "h": 23.6,
               "surface": "shell"
             },
@@ -512,8 +512,8 @@
             "id": "pml_atmo_dust_1",
             "effect": "pml_dust",
             "anchor": {
-              "x": 372.14,
-              "y": 273.41,
+              "x": 680.0,
+              "y": 1030.0,
               "h": 33.4,
               "surface": "shell"
             },
@@ -524,8 +524,8 @@
             "id": "pml_atmo_dust_2",
             "effect": "pml_dust",
             "anchor": {
-              "x": 356.95,
-              "y": 149.52,
+              "x": 650.0,
+              "y": 770.0,
               "h": 46.0,
               "surface": "shell"
             },
@@ -536,8 +536,8 @@
             "id": "pml_atmo_dry_leaves_1",
             "effect": "pml_dry_leaves",
             "anchor": {
-              "x": 334.16,
-              "y": 333.22,
+              "x": 610.0,
+              "y": 1280.0,
               "h": 55.2,
               "surface": "shell"
             },
@@ -548,8 +548,8 @@
             "id": "pml_atmo_dry_leaves_2",
             "effect": "pml_dry_leaves",
             "anchor": {
-              "x": 394.92,
-              "y": 93.98,
+              "x": 740.0,
+              "y": 520.0,
               "h": 35.7,
               "surface": "shell"
             },
@@ -560,8 +560,8 @@
             "id": "pml_atmo_sparse_drip_1",
             "effect": "pml_sparse_drip",
             "anchor": {
-              "x": 546.81,
-              "y": 106.8,
+              "x": 1050.0,
+              "y": 715.0,
               "h": 22.0,
               "surface": "shell"
             },
@@ -572,8 +572,8 @@
             "id": "pml_atmo_sparse_drip_2",
             "effect": "pml_sparse_drip",
             "anchor": {
-              "x": 615.16,
-              "y": 170.88,
+              "x": 1220.0,
+              "y": 1000.0,
               "h": 55.4,
               "surface": "shell"
             },

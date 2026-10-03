@@ -1362,7 +1362,7 @@
                     }
                   }
                 ],
-                "description": "举着燃着的火上梁：起一阵风。往前走几步进 Zone_跑马梁_护火（风口之前）弹护火说明；站着不动的，火势被风压到六成也弹（兜底）。护好了才往前走、进风口过场。"
+                "description": "举着燃着的火上梁：起一阵风。走到护火处或火势降到六成时弹首次护火说明；说明后自由前行，低于预设安全线才强制护火。风口过场仍在原位置触发。"
               },
               "护火教学": {
                 "id": "护火教学",
@@ -1390,7 +1390,7 @@
                     }
                   }
                 ],
-                "description": "弹护火说明（按住 Q 护火，再往前走）。护住了 → 护好；火灭了 → 往前走；没护火就往前走进风口的，一样进风口过场，火在过场里被那阵风吹灭（护火课没过）。"
+                "description": "弹护火说明后自由往前走；火势低于手持挂件预设的护火教学安全线才强制介入，按住 Q 护到高于同一安全线即恢复行走。火势足够时照常走进原定风口过场。"
               },
               "护好": {
                 "id": "护好",
@@ -1409,7 +1409,8 @@
                       "type": "info"
                     }
                   }
-                ]
+                ],
+                "description": "玩家已尝试护火，继续自由行走；风口过场前仍检测火势，低于预设安全线才再次接入护火教学。"
               },
               "往前走": {
                 "id": "往前走",
@@ -1694,6 +1695,26 @@
                     "params": {}
                   }
                 ]
+              },
+              "低火护火": {
+                "id": "低火护火",
+                "label": "低火护火",
+                "meta": {
+                  "editor": {
+                    "x": 420,
+                    "y": -310
+                  }
+                },
+                "description": "仅在说明后的行走间隙、火势低于预设安全线时介入。停步提示按住 Q，实际火势高于同一安全线就交回控制，不要求满火；不改变风口区域与过场。",
+                "onEnterActions": [
+                  {
+                    "type": "teachPropGuard",
+                    "params": {
+                      "vitality": "guardSafety",
+                      "text": "[tag:string:tutorial:torchGuardRecovery]"
+                    }
+                  }
+                ]
               }
             },
             "transitions": [
@@ -1767,6 +1788,36 @@
                     "not": {
                       "heldProp": "player"
                     }
+                  }
+                ]
+              },
+              {
+                "id": "护火教学_到_低火护火",
+                "from": "护火教学",
+                "to": "低火护火",
+                "signal": "__draft__",
+                "trigger": "reactive",
+                "conditions": [
+                  {
+                    "heldProp": "player",
+                    "burning": true,
+                    "vitalityOp": "<",
+                    "vitality": "guardSafety"
+                  }
+                ]
+              },
+              {
+                "id": "护好_到_低火护火",
+                "from": "护好",
+                "to": "低火护火",
+                "signal": "__draft__",
+                "trigger": "reactive",
+                "conditions": [
+                  {
+                    "heldProp": "player",
+                    "burning": true,
+                    "vitalityOp": "<",
+                    "vitality": "guardSafety"
                   }
                 ]
               },
@@ -1864,6 +1915,21 @@
                 "from": "闻到香火",
                 "to": "下梁",
                 "signal": "跑马梁_下梁"
+              },
+              {
+                "id": "低火护火_到_护好",
+                "from": "低火护火",
+                "to": "护好",
+                "signal": "__draft__",
+                "trigger": "reactive",
+                "conditions": [
+                  {
+                    "heldProp": "player",
+                    "propState": "guarding",
+                    "vitalityOp": ">",
+                    "vitality": "guardSafety"
+                  }
+                ]
               }
             ]
           },

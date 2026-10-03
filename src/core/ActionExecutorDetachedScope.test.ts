@@ -5,6 +5,8 @@ import { FlagStore } from './FlagStore';
 import { GameStateController } from './GameStateController';
 import { InputManager } from './InputManager';
 import { GameState } from '../data/types';
+import { ActionEffectScope } from './ActionEffectScope';
+import { PerformanceSession } from '../systems/performanceSession';
 
 /**
  * 「脱手执行」＝ 演出在背景跑、玩家照常走。
@@ -47,6 +49,115 @@ function makeExecutor() {
 }
 
 describe('动作批的执行作用域', () => {
+  it('嵌套批共享作用域，外层结束才逆序释放', async () => {
+    const { actions } = makeExecutor(), seen: string[] = [];
+    actions.register('effect', () => { seen.push('persistent'); });
+    actions.registerScoped('effect', p => {
+      seen.push(`take:${p.id}`);
+      return { cleanup: reason => { seen.push(`release:${p.id}:${reason}`); } };
+    });
+    actions.register('check', () => { expect(seen).toEqual(['take:a', 'take:b', 'persistent']); });
+    await actions.executeBatchAwait([
+      { type: 'effect', params: { lifetime: 'scope', id: 'a' } },
+      { type: 'wrap', params: { actions: [{ type: 'effect', params: { lifetime: 'scope', id: 'b' } }] } },
+      { type: 'effect', params: {} }, { type: 'check', params: {} },
+    ]);
+    expect(seen).toEqual(['take:a', 'take:b', 'persistent', 'release:b:done', 'release:a:done']);
+  });
+
+  it.each(['error', 'cancel'] as const)('%s 清理一次，包括取消后才返回的异步资源', async how => {
+    const { actions } = makeExecutor(), release = vi.fn();
+    let resume!: () => void;
+    actions.register('effect', () => {});
+    actions.registerScoped('effect', async () => {
+      await new Promise<void>(resolve => { resume = resolve; });
+      return { cleanup: release };
+    });
+    actions.register('fail', () => { throw new Error('boom'); });
+    const pending = actions.executeBatchAwait([
+      { type: 'effect', params: { lifetime: 'scope' } },
+      ...(how === 'error' ? [{ type: 'fail', params: {} }] : []),
+    ]);
+    if (how === 'cancel') actions.cancelPending();
+    resume();
+    if (how === 'error') await expect(pending).rejects.toThrow('boom');
+    else await pending;
+    actions.cancelPending();
+    expect(release).toHaveBeenCalledExactlyOnceWith(how === 'error' ? 'error' : 'interrupted');
+  });
+
+  it('作用域隔离、提前释放幂等、坏清理不挡其他清理', () => {
+    const a = new ActionEffectScope(), b = new ActionEffectScope();
+    const first = vi.fn(), other = vi.fn(), last = vi.fn();
+    a.add({ key: 'same', cleanup: first }); b.add({ key: 'same', cleanup: other });
+    a.release('same'); a.release('same'); a.add({ cleanup: last });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    a.add({ cleanup: () => { throw new Error('bad cleanup'); } });
+    a.close(); a.close();
+    expect(first).toHaveBeenCalledExactlyOnceWith('released');
+    expect(last).toHaveBeenCalledExactlyOnceWith('done'); expect(other).not.toHaveBeenCalled();
+    b.close(); expect(other).toHaveBeenCalledOnce(); warn.mockRestore();
+  });
+
+  it('替换回调重入关闭时，新取得的资源也归还', () => {
+    const scope = new ActionEffectScope(), cleanup = vi.fn();
+    scope.add({ key: 'x', cleanup: () => scope.close('interrupted') });
+    scope.add({ key: 'x', cleanup });
+    expect(cleanup).toHaveBeenCalledExactlyOnceWith('interrupted');
+  });
+
+  it('背景演出清理后仍补跑嵌套结算，不再取得临时效果', async () => {
+    const { actions } = makeExecutor(), session = new PerformanceSession('test', [], null);
+    session.hurried = true; session.effects.close('interrupted');
+    const settle = vi.fn(), acquire = vi.fn();
+    actions.register('settle', settle); actions.register('effect', () => {}); actions.registerScoped('effect', acquire);
+    await actions.executeBatchAwait([
+      { type: 'effect', params: { lifetime: 'scope' } }, { type: 'settle', params: {} },
+    ], null, { detached: true, session });
+    expect(settle).toHaveBeenCalledOnce(); expect(acquire).not.toHaveBeenCalled();
+  });
+  it('切场临时回探索并触发入场动作后，仍保留外层动作的锁直到收尾', async () => {
+    const { actions, sc } = makeExecutor();
+    actions.register('travel', async () => {
+      sc.setState(GameState.SceneTransition);
+      sc.setState(GameState.Exploring);
+      await actions.executeAwait({ type: 'probe', params: {} });
+      sc.setState(GameState.ActionSequence);
+    });
+    await actions.executeAwait({ type: 'travel', params: {} });
+    expect(sc.currentState).toBe(GameState.Exploring);
+  });
+
+  it.each([false, true])('重叠动作持有同一探索锁，最后一条才释放（后开先结束=%s）', async (laterFirst) => {
+    const { actions, sc } = makeExecutor();
+    const done: Array<() => void> = [];
+    actions.register('hold', () => new Promise<void>((resolve) => done.push(resolve)));
+    const first = actions.executeAwait({ type: 'hold', params: {} });
+    const later = actions.executeAwait({ type: 'hold', params: {} });
+    done[laterFirst ? 1 : 0]();
+    await (laterFirst ? later : first);
+    expect(sc.currentState).toBe(GameState.ActionSequence);
+    done[laterFirst ? 0 : 1]();
+    await Promise.all([first, later]);
+    expect(sc.currentState).toBe(GameState.Exploring);
+  });
+
+  it('读档后旧动作归还旧锁，不得释放新时间线的探索锁', async () => {
+    const { actions, sc } = makeExecutor();
+    const done: Array<() => void> = [];
+    actions.register('hold', () => new Promise<void>((resolve) => done.push(resolve)));
+    const old = actions.executeAwait({ type: 'hold', params: {} });
+    actions.cancelPending();
+    sc.setState(GameState.Exploring);
+    const current = actions.executeAwait({ type: 'hold', params: {} });
+    done[0]();
+    await old;
+    expect(sc.currentState).toBe(GameState.ActionSequence);
+    done[1]();
+    await current;
+    expect(sc.currentState).toBe(GameState.Exploring);
+  });
+
   it('缺省批把 Exploring 锁成 ActionSequence，跑完还回去', async () => {
     const { actions, sc, seen } = makeExecutor();
     sc.setState(GameState.Exploring);

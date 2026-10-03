@@ -99,7 +99,7 @@ def held_prop_leaf_text(expr: dict[str, Any]) -> str:
         parts.append("燃着" if burning else "没燃")
     op = expr.get("vitalityOp")
     if isinstance(op, str) and op.strip():
-        parts.append(f"火势{op.strip()}{_value_text(expr.get('vitality'))}")
+        parts.append(f"火势{op.strip()}{('预设安全线' if expr.get('vitality') == 'guardSafety' else _value_text(expr.get('vitality')))}")
     elif "vitality" in expr:
         parts.append(f"火势?{_value_text(expr.get('vitality'))}")
     fop = expr.get("fuelOp")

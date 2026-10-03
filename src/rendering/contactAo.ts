@@ -9,7 +9,7 @@
  * ⚠ 缺省值的编辑器镜像在 `tools/editor/shared/contact_ao.py`，对账测试逐字比对这几个常量
  *   （test_npc_contact_shadow_form.py）。改这里要一起改那边。
  */
-import type { ContactAoDef } from '../data/types';
+import type { ContactAoDef, ContactAoDirectionDef } from '../data/types';
 
 /** 简单 AO 的晕开范围：无方向部分的遮挡高度占身高的比例。 */
 export const CONTACT_AO_SPREAD_DEFAULT = 0.25;
@@ -30,10 +30,45 @@ export type ContactAoDirSource = (typeof CONTACT_AO_DIR_SOURCES)[number];
 export const CONTACT_AO_DIR_SOURCE_DEFAULT: ContactAoDirSource = 'lighting';
 /** 方向 AO 缺省开（制作人 2026-09-24：所有 NPC 默认都开方向 AO，包括主角）。 */
 export const CONTACT_AO_DIRECTIONAL_DEFAULT = true;
+/** 手动方向为 AO 拖尾的屏幕方向，与虚拟阴影方向同口径。 */
+export const CONTACT_AO_AZIMUTH_DEG_DEFAULT = 0;
+export const CONTACT_AO_ELEVATION_DEG_DEFAULT = 45;
+/** 动画开关 AO 的淡入 / 淡出时长，毫秒；0 为立即切换。 */
+export const CONTACT_AO_FADE_IN_MS_DEFAULT = 2000;
+export const CONTACT_AO_FADE_OUT_MS_DEFAULT = 2000;
+export const CONTACT_AO_FADE_MS_MAX = 5000;
+
+export type ResolvedContactAoDirection =
+  | { source: ContactAoDirSource }
+  | { source: 'manual'; azimuthDeg: number; elevationDeg: number };
+
+/** 角色显式设置 > 场景默认 > 自动；保留旧角色 dirSource 的覆盖语义。 */
+export function resolveContactAoDirection(
+  def: ContactAoDef | null | undefined,
+  sceneDirection?: ContactAoDirectionDef | null,
+): ResolvedContactAoDirection {
+  let direction = def?.direction;
+  if (!direction || (direction.mode !== 'auto' && direction.mode !== 'manual')) {
+    if ((CONTACT_AO_DIR_SOURCES as readonly unknown[]).includes(def?.dirSource)) {
+      return { source: def!.dirSource! };
+    }
+    direction = sceneDirection ?? undefined;
+  }
+  if (direction?.mode === 'manual') {
+    return {
+      source: 'manual',
+      azimuthDeg: num(direction.azimuthDeg, CONTACT_AO_AZIMUTH_DEG_DEFAULT, 0, 360),
+      elevationDeg: num(direction.elevationDeg, CONTACT_AO_ELEVATION_DEG_DEFAULT, 1, 90),
+    };
+  }
+  return { source: CONTACT_AO_DIR_SOURCE_DEFAULT };
+}
 
 /** 解好的一份接触 AO 参数。 */
 export interface ResolvedContactAo {
   enabled: boolean;
+  fadeInMs: number;
+  fadeOutMs: number;
   directional: boolean;
   /** 方向 AO 的方向来源。 */
   dirSource: ContactAoDirSource;
@@ -70,6 +105,8 @@ export function resolveContactAo(
   const d = def ?? {};
   return {
     enabled: d.enabled !== false,
+    fadeInMs: num(d.fadeInMs, CONTACT_AO_FADE_IN_MS_DEFAULT, 0, CONTACT_AO_FADE_MS_MAX),
+    fadeOutMs: num(d.fadeOutMs, CONTACT_AO_FADE_OUT_MS_DEFAULT, 0, CONTACT_AO_FADE_MS_MAX),
     directional: typeof d.directional === 'boolean' ? d.directional : CONTACT_AO_DIRECTIONAL_DEFAULT,
     dirSource: (CONTACT_AO_DIR_SOURCES as readonly string[]).includes(d.dirSource as string)
       ? d.dirSource as ContactAoDirSource

@@ -6,8 +6,8 @@
 - 明暗 / 大小有一档「场景值」（数值框拉到最小就是它）：不写字段，跟随场景光环境的
   `shadow.contact` / `contactSize`（光照曲线里还能按位置变）。框里直接显示此刻跟到的是多少。
 - 其余参数框里显示的就是缺省值；**等于缺省就不写字段**，JSON 保持干净。
-- 方向 AO 的方向来源是一个下拉（制作人 2026-09-24：是个选项；缺省「ao 方向本来就和间接光强度要一致」）：
-  按光照 / 跟阴影绑定（上面「阴影绑定」绑的灯或虚拟灯）/ 场景主光。缺省那档不写字段。
+- 场景方向为自动 / 手动；角色方向为继承场景 / 自动 / 手动，未设置的角色继承场景。
+  旧 dirSource 原样保值，明确切换新档才替换。
 
 往返保真：载入时记住原值，没动过的数按原值写回（显示精度不会把 0.333 改成 0.33）；
 `contactAo` 里不认识的键原样保留。
@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from typing import Callable
 
 from PySide6.QtWidgets import (
@@ -32,6 +33,8 @@ _FIELDS: dict[str, tuple[str, float, float, float, int, float | None]] = {
     "darkness": ("明暗", 0.0, 1.0, 0.05, 2, None),
     "size": ("大小", 0.0, 10.0, 0.1, 2, None),
     "spread": ("晕开", 0.01, 3.0, 0.05, 2, cao.SPREAD_DEFAULT),
+    "fadeInMs": ("淡入 ms", 0.0, cao.FADE_MS_MAX, 25.0, 0, cao.FADE_IN_MS_DEFAULT),
+    "fadeOutMs": ("淡出 ms", 0.0, cao.FADE_MS_MAX, 25.0, 0, cao.FADE_OUT_MS_DEFAULT),
     "dirStrength": ("浓度", 0.0, 1.0, 0.05, 2, cao.DIR_STRENGTH_DEFAULT),
     "dirLength": ("拖尾", 0.01, 10.0, 0.1, 2, cao.DIR_LENGTH_DEFAULT),
     "dirConeDeg": ("锥角°", 1.0, 85.0, 1.0, 0, cao.DIR_CONE_DEG_DEFAULT),
@@ -40,10 +43,136 @@ _TIPS = {
     "darkness": "脚边最暗处的浓度 0~1。拉到最小 =「场景值」：跟随场景光环境的「接触」浓度（不写字段）。",
     "size": "胶囊半径 = 剪影贴地那一截（脚、鞋、衣摆）的半宽 × 它。拉到最小 =「场景值」：跟随场景光环境的「大小」。",
     "spread": "简单 AO 往外晕开多远：遮挡高度占身高的比例。越大晕得越开、越淡越宽。",
+    "fadeInMs": f"切换到开启 AO 的动画时，接触与方向 AO 一起平滑恢复的时长。默认 {cao.FADE_IN_MS_DEFAULT} 毫秒；0 = 立即切换。",
+    "fadeOutMs": f"切换到关闭 AO 的动画时，接触与方向 AO 一起平滑消失的时长。默认 {cao.FADE_OUT_MS_DEFAULT} 毫秒；0 = 立即切换。",
     "dirStrength": "方向 AO 的浓度 0~1（在明暗之上再乘）。",
     "dirLength": "方向 AO 沿影子方向拖多长就淡完（× 身高）。",
     "dirConeDeg": "方向 AO 的半影锥角。越大边越软、越糊；越小越像一道实影。",
 }
+
+_ABSENT = object()
+
+
+class ContactAoDirectionEditor(QWidget):
+    """共用场景自动/手动与角色继承/自动/手动；未编辑的旧字段完整保值。"""
+
+    def __init__(self, on_changed: Callable[[], None] | None = None,
+                 parent: QWidget | None = None, *, allow_inherit: bool = False) -> None:
+        super().__init__(parent)
+        self._on_changed = on_changed
+        self._allow_inherit = allow_inherit
+        self._loading = False
+        self._changed = False
+        self._edited_numbers: set[str] = set()
+        self._orig: object = _ABSENT
+        self._legacy: object = _ABSENT
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(6)
+        self._mode = QComboBox(self)
+        self._mode.setToolTip("角色未单独设置时继承场景。自动沿用间接光与实体灯计算；手动只改变 AO 拖尾，不改变实际光照。")
+        self._mode.currentIndexChanged.connect(self._mode_changed)
+        grid.addWidget(QLabel("方向", self), 0, 0)
+        grid.addWidget(self._mode, 0, 1, 1, 3)
+        self._spins: dict[str, QDoubleSpinBox] = {}
+        for key, title, default, col in (
+            ("azimuthDeg", "拖尾方向°", cao.AZIMUTH_DEG_DEFAULT, 0),
+            ("elevationDeg", "仰角°", cao.ELEVATION_DEG_DEFAULT, 2),
+        ):
+            sb = QDoubleSpinBox(self)
+            sb.setRange(*cao.DIRECTION_PARAM_RANGES[key])
+            sb.setDecimals(1)
+            sb.setSingleStep(1)
+            sb.setValue(default)
+            sb.setToolTip("AO 拖尾在画面上的方向：0° 右、90° 下、180° 左、270° 上。" if key == "azimuthDeg" else "AO 来光仰角；越高，拖尾越短。与真实灯光无关。")
+            sb.valueChanged.connect(lambda _v, k=key: self._number_changed(k))
+            grid.addWidget(QLabel(title, self), 1, col)
+            grid.addWidget(sb, 1, col + 1)
+            fit_width_cap(sb, 90)
+            self._spins[key] = sb
+        grid.setColumnStretch(4, 1)
+        self.load(None)
+
+    def _sync_enabled(self) -> None:
+        manual = self._mode.currentData() == "manual"
+        for sb in self._spins.values():
+            sb.setEnabled(manual)
+
+    def _emit(self) -> None:
+        if not self._loading:
+            self._changed = True
+            if self._on_changed:
+                self._on_changed()
+
+    def _mode_changed(self, *_args: object) -> None:
+        self._sync_enabled()
+        self._emit()
+
+    def _number_changed(self, key: str) -> None:
+        if not self._loading:
+            self._edited_numbers.add(key)
+        self._emit()
+
+    def load(self, value: object, legacy_source: object = _ABSENT) -> None:
+        self._loading = True
+        try:
+            self._orig = copy.deepcopy(value) if value is not None else _ABSENT
+            self._legacy = legacy_source
+            self._mode.clear()
+            if self._allow_inherit:
+                self._mode.addItem("继承场景", "inherit")
+            self._mode.addItem("自动计算", "auto")
+            self._mode.addItem("手动方向", "manual")
+            d = value if isinstance(value, dict) else {}
+            mode = d.get("mode", "inherit" if self._allow_inherit else "auto")
+            if not d and legacy_source is not _ABSENT:
+                mode = legacy_source
+                label = cao.DIR_SOURCE_LABELS.get(mode) if isinstance(mode, str) else None
+                self._mode.addItem(f"旧设置：{label}" if label else f"（未知：{mode!r}）", mode)
+            index = self._mode.findData(mode)
+            if index < 0:
+                self._mode.addItem(f"（未知：{mode!r}）", mode)
+                index = self._mode.count() - 1
+            self._mode.setCurrentIndex(index)
+            for key, default in (("azimuthDeg", cao.AZIMUTH_DEG_DEFAULT), ("elevationDeg", cao.ELEVATION_DEG_DEFAULT)):
+                v = d.get(key, default)
+                valid = isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+                self._spins[key].setValue(float(v) if valid else default)
+            self._sync_enabled()
+            self._changed = False
+            self._edited_numbers.clear()
+        finally:
+            self._loading = False
+
+    def writeback(self, out: dict, key: str, legacy_key: str | None = None) -> None:
+        if not self._changed:
+            if self._orig is _ABSENT:
+                out.pop(key, None)
+            else:
+                out[key] = copy.deepcopy(self._orig)
+            if legacy_key and self._legacy is not _ABSENT:
+                out[legacy_key] = copy.deepcopy(self._legacy)
+            return
+        mode = self._mode.currentData()
+        if mode == "inherit":
+            out.pop(key, None)
+            if legacy_key:
+                out.pop(legacy_key, None)
+            return
+        if mode not in cao.DIRECTION_MODES:
+            # 旧设置只在载入时出现；改回来仍保留原值。
+            if legacy_key:
+                out.pop(key, None)
+                out[legacy_key] = copy.deepcopy(mode)
+            return
+        direction = copy.deepcopy(self._orig) if isinstance(self._orig, dict) else {}
+        direction["mode"] = mode
+        for field, sb in self._spins.items():
+            if field in self._edited_numbers or (mode == "manual" and field not in direction):
+                direction[field] = sb.value()
+        out[key] = direction
+        if legacy_key:
+            out.pop(legacy_key, None)
 
 
 class ContactAoEditor(QWidget):
@@ -84,34 +213,22 @@ class ContactAoEditor(QWidget):
         self._add_spin(grid, "darkness", 1, 0)
         self._add_spin(grid, "size", 1, 2)
         self._add_spin(grid, "spread", 2, 0)
+        self._add_spin(grid, "fadeInMs", 3, 0)
+        self._add_spin(grid, "fadeOutMs", 3, 2)
 
         self._directional = QCheckBox("方向 AO", self)
         self._directional.setToolTip(
             "缺省开：再加沿光方向的锥形软影（胶囊体 AO 的方向部分）。取消就只剩简单 AO。\n"
-            "光从哪来见下面的「方向」（缺省按光照：跟角色身上的光一致）。"
+            "光从哪来见下面的「方向」（缺省继承场景；场景缺省自动计算）。"
         )
         self._directional.stateChanged.connect(self._on_toggle)
-        grid.addWidget(self._directional, 3, 0, 1, 4)
-        self._add_spin(grid, "dirStrength", 4, 0)
-        self._add_spin(grid, "dirLength", 4, 2)
-        self._add_spin(grid, "dirConeDeg", 5, 0)
-        # 方向来源：很短的枚举，用下拉（选择器铁律允许）
-        self._dir_source = QComboBox(self)
-        for key in cao.DIR_SOURCES:
-            self._dir_source.addItem(cao.DIR_SOURCE_LABELS[key], key)
-        self._dir_source.setToolTip(
-            "方向 AO 往哪边拖：\n"
-            "· 按光照（缺省）：跟角色身上的光一致。间接光（原画烘出的环境光，角色被照亮用的同一份）一路，\n"
-            "  每盏亮着的灯（含手持火把）各一路，各投各的影、按各自照到脚下地面的量分浓淡：\n"
-            "  离得远的灯照得少、影子自然淡；两盏灯就是两道影；四面一样亮时间接光那路是脚下一团\n"
-            "· 跟阴影绑定：上面「阴影绑定」绑的灯 / 虚拟灯；没绑就用场景主光\n"
-            "· 场景主光：场景光环境 / 光照曲线里的主光方向"
-        )
-        self._dir_source.currentIndexChanged.connect(self._emit)
-        dir_lab = QLabel("方向", self)
-        dir_lab.setToolTip(self._dir_source.toolTip())
-        grid.addWidget(dir_lab, 5, 2)
-        grid.addWidget(self._dir_source, 5, 3)
+        grid.addWidget(self._directional, 4, 0, 1, 4)
+        self._add_spin(grid, "dirStrength", 5, 0)
+        self._add_spin(grid, "dirLength", 5, 2)
+        self._add_spin(grid, "dirConeDeg", 6, 0)
+        self._direction = ContactAoDirectionEditor(self._emit, self, allow_inherit=True)
+        self._dir_source = self._direction._mode
+        grid.addWidget(self._direction, 7, 0, 1, 4)
         grid.setColumnStretch(4, 1)
 
         self.set_scene_defaults(None, None)
@@ -145,12 +262,12 @@ class ContactAoEditor(QWidget):
     def _apply_enabled(self) -> None:
         on = self._enabled.isChecked()
         self._directional.setEnabled(on)
-        for k in ("darkness", "size", "spread"):
+        for k in ("darkness", "size", "spread", "fadeInMs", "fadeOutMs"):
             self._spins[k].setEnabled(on)
         dir_on = on and self._directional.isChecked()
         for k in ("dirStrength", "dirLength", "dirConeDeg"):
             self._spins[k].setEnabled(dir_on)
-        self._dir_source.setEnabled(dir_on)
+        self._direction.setEnabled(dir_on)
 
     @staticmethod
     def _keep(orig: object, v: float, dec: int) -> float | int:
@@ -159,17 +276,6 @@ class ContactAoEditor(QWidget):
             if round(float(orig), dec) == round(v, dec):
                 return orig
         return round(v, dec) if dec > 0 else int(round(v))
-
-    def _load_dir_source(self, value: object) -> None:
-        """选中数据里的方向来源；不认识的值**保值展示**（加一项「未知：…」），不悄悄换成缺省。"""
-        # 先删掉上次载入加的「未知」项
-        for i in range(self._dir_source.count() - 1, len(cao.DIR_SOURCES) - 1, -1):
-            self._dir_source.removeItem(i)
-        i = self._dir_source.findData(value)
-        if i < 0:
-            self._dir_source.addItem(f"（未知：{value!r}）", value)
-            i = self._dir_source.count() - 1
-        self._dir_source.setCurrentIndex(i)
 
     # ------------------------------------------------------------------ 公开
     def set_scene_defaults(self, darkness: float | None, size: float | None, note: str = "") -> None:
@@ -184,7 +290,7 @@ class ContactAoEditor(QWidget):
             sb.setSpecialValueText(txt)
             sb.ensurePolished()
             fit_width_cap(sb, sb.fontMetrics().horizontalAdvance(txt) + 48)
-        for key in ("spread", "dirStrength", "dirLength", "dirConeDeg"):
+        for key in ("spread", "dirStrength", "dirLength", "dirConeDeg", "fadeInMs", "fadeOutMs"):
             fit_width_cap(self._spins[key], 76)
 
     def load(self, value: object) -> None:
@@ -195,7 +301,7 @@ class ContactAoEditor(QWidget):
             self._enabled.setChecked(d.get("enabled", True) is not False)
             dv = d.get("directional")
             self._directional.setChecked(dv if isinstance(dv, bool) else cao.DIRECTIONAL_DEFAULT)
-            self._load_dir_source(d.get("dirSource", cao.DIR_SOURCE_DEFAULT))
+            self._direction.load(d.get("direction"), d.get("dirSource", _ABSENT))
             for key, (_l, lo, hi, _s, _d, default) in _FIELDS.items():
                 v = d.get(key)
                 num = isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -219,11 +325,7 @@ class ContactAoEditor(QWidget):
             out.pop("directional", None)          # 等于缺省且原来没写：不写
         else:
             out["directional"] = on
-        src = self._dir_source.currentData()
-        if src == cao.DIR_SOURCE_DEFAULT and "dirSource" not in self._orig:
-            out.pop("dirSource", None)
-        else:
-            out["dirSource"] = src
+        self._direction.writeback(out, "direction", "dirSource")
         for key, (_l, _lo, _hi, _s, dec, default) in _FIELDS.items():
             v = self._spins[key].value()
             if default is None:

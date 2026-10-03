@@ -6,8 +6,8 @@
 
 - 明暗 `darkness` / 大小 `size` 不写 = 跟随场景光环境（`lightEnv.shadow.contact` / `contactSize`）；
 - 方向 AO `directional` 不写 = 开（写 false 才关）；
-- 方向来源 `dirSource` 不写 = 按光照（跟角色身上的光一致：间接光一路 + 每盏实体灯一路，按各自照到地面的量
-  加权；另两档：跟阴影绑定 / 场景主光）；
+- 方向 `direction` 未设置就继承场景 `contactAoDirection`，两层都可自动/手动；
+  旧 `dirSource` 保留为角色显式设置，仍高于场景默认；
 - 其余参数不写 = 用下面的缺省。
 
 ⚠ 缺省值是运行时 `src/rendering/contactAo.ts` 的**镜像**，对账测试逐字比对
@@ -21,6 +21,9 @@ __all__ = [
     "SPREAD_DEFAULT", "DIR_STRENGTH_DEFAULT", "DIR_LENGTH_DEFAULT", "DIR_CONE_DEG_DEFAULT",
     "DIRECTIONAL_DEFAULT", "DIR_SOURCES", "DIR_SOURCE_DEFAULT", "DIR_SOURCE_LABELS",
     "PARAM_RANGES", "contact_ao_issues",
+    "DIRECTION_MODES", "DIRECTION_PARAM_RANGES", "AZIMUTH_DEG_DEFAULT", "ELEVATION_DEG_DEFAULT",
+    "contact_ao_direction_issues",
+    "FADE_IN_MS_DEFAULT", "FADE_OUT_MS_DEFAULT", "FADE_MS_MAX",
 ]
 
 #: 简单 AO 的晕开范围：无方向部分的遮挡高度占身高的比例。
@@ -42,9 +45,38 @@ DIR_SOURCE_LABELS: dict[str, str] = {
     "binding": "跟阴影绑定",
     "scene": "场景主光",
 }
+DIRECTION_MODES = ("auto", "manual")
+AZIMUTH_DEG_DEFAULT = 0.0
+ELEVATION_DEG_DEFAULT = 45.0
+FADE_IN_MS_DEFAULT = 2000
+FADE_OUT_MS_DEFAULT = 2000
+FADE_MS_MAX = 5000
+DIRECTION_PARAM_RANGES = {"azimuthDeg": (0.0, 360.0), "elevationDeg": (1.0, 90.0)}
+
+
+def contact_ao_direction_issues(value: object, who: str) -> list[str]:
+    """场景 contactAoDirection 或角色 contactAo.direction；who 是完整字段路径。"""
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return [f"{who} 必须是对象（当前 {value!r}）"]
+    out = []
+    if value.get("mode") not in DIRECTION_MODES:
+        out.append(f"{who}.mode 只能是 auto/manual（当前 {value.get('mode')!r}）")
+    for key, (lo, hi) in DIRECTION_PARAM_RANGES.items():
+        if key not in value:
+            continue
+        v = value[key]
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            out.append(f"{who}.{key} 必须是数字（当前 {v!r}）")
+        elif not lo <= v <= hi:
+            out.append(f"{who}.{key} 超出范围 {lo}~{hi}（当前 {v}）")
+    return out
 
 #: 数值字段的合法区间（闭区间）。与运行时 `resolveContactAo` 的钳位同口径。
 PARAM_RANGES: dict[str, tuple[float, float]] = {
+    "fadeInMs": (0.0, FADE_MS_MAX),
+    "fadeOutMs": (0.0, FADE_MS_MAX),
     "darkness": (0.0, 1.0),
     "size": (0.0, 10.0),
     "spread": (0.01, 3.0),
@@ -66,6 +98,7 @@ def contact_ao_issues(value: object, who: str) -> list[str]:
     if not isinstance(value, dict):
         return [f"{who} contactAo 必须是对象（当前 {value!r}）"]
     out: list[str] = []
+    out.extend(contact_ao_direction_issues(value.get("direction"), f"{who} contactAo.direction"))
     for k in _BOOL_KEYS:
         if k in value and not isinstance(value[k], bool):
             out.append(f"{who} contactAo.{k} 必须是 true/false（当前 {value[k]!r}）")

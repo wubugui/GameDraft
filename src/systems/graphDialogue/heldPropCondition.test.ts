@@ -22,6 +22,23 @@ function ctxWith(held: Record<string, HeldPropConditionStatus[]>): ConditionEval
 }
 
 describe('heldProp 条件叶：手持挂件是全局玩法状态', () => {
+  it('预设安全线按当前挂件取值：两侧严格比较，缺配置时不放行', () => {
+    const status = torch({ vitality: 0.637, guardSafety: 0.637 });
+    const ctx = ctxWith({ player: [status] });
+    const below = { heldProp: 'player', vitalityOp: '<', vitality: 'guardSafety' } as const;
+    const above = { ...below, vitalityOp: '>' } as const;
+    expect(evaluateConditionExpr(below, ctx)).toBe(false);
+    expect(evaluateConditionExpr(above, ctx)).toBe(false);
+    status.vitality -= 0.001;
+    expect(evaluateConditionExpr(below, ctx)).toBe(true);
+    status.guardSafety = 0.5;
+    expect(evaluateConditionExpr(below, ctx)).toBe(false);
+    expect(evaluateConditionExpr(above, ctx)).toBe(true);
+    delete status.guardSafety;
+    expect(evaluateConditionExpr(below, ctx)).toBe(false);
+    expect(evaluateConditionExpr(above, ctx)).toBe(false);
+  });
+
   it('写了的每一项都要满足，没写的不限；手上没东西为假；not 表示"没拿着这样一件"', () => {
     const ctx = ctxWith({ player: [torch({ vitality: 0.4 })] });
     expect(evaluateConditionExpr({ heldProp: 'player' }, ctx)).toBe(true);

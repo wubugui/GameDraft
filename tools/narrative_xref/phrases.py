@@ -216,7 +216,7 @@ def _held_prop_phrase(cond: dict) -> str:
         bits.append("燃着" if cond["burning"] else "没燃")
     op = cond.get("vitalityOp")
     if isinstance(op, str) and op.strip():
-        bits.append(f"火势{op.strip()}{cond.get('vitality')}")
+        bits.append(f"火势{op.strip()}{'预设安全线' if cond.get('vitality') == 'guardSafety' else cond.get('vitality')}")
     fop = cond.get("fuelOp")
     if isinstance(fop, str) and fop.strip():
         bits.append(f"燃料{fop.strip()}{cond.get('fuel')}")

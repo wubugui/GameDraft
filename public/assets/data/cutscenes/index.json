@@ -7266,6 +7266,16 @@
     "restoreState": false,
     "steps": [
       {
+        "kind": "action",
+        "type": "lockPropState",
+        "params": {
+          "target": "player",
+          "socket": "right_hand",
+          "lock": "lit",
+          "lifetime": "scope"
+        }
+      },
+      {
         "kind": "present",
         "type": "showMovieBar"
       },
@@ -7327,6 +7337,16 @@
         "kind": "present",
         "type": "waitTime",
         "duration": 450
+      },
+      {
+        "kind": "action",
+        "type": "lockPropState",
+        "params": {
+          "target": "player",
+          "socket": "right_hand",
+          "lock": "none",
+          "lifetime": "scope"
+        }
       },
       {
         "kind": "action",

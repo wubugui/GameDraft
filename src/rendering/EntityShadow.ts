@@ -1,7 +1,7 @@
 import { BlurFilter, Container, Mesh, MeshGeometry, Shader, Texture, type TextureSource } from '../engine2d';
 import type { ResolvedLightEnv } from './lightEnv';
 import type { ShadowProjectionField } from './shadowField';
-import { bodyFootprintOf, footprintOf, mirrorFootprint } from './footprintExtent';
+import { bodyFootprintOf, footprintOf, mirrorFootprint, type FootprintExtent } from './footprintExtent';
 import {
   CONTACT_AO_DIR_CONE_DEG_DEFAULT, CONTACT_AO_DIR_LENGTH_DEFAULT, CONTACT_AO_DIR_STRENGTH_DEFAULT,
   CONTACT_AO_SPREAD_DEFAULT, coneKFromDeg, resolveContactAo,
@@ -337,6 +337,7 @@ struct ContactUniforms {
     uConeK: f32,
     uDirReach: f32,
     uDirWeight: f32,
+    uMinElevation: f32,
     uGroundFeather: f32,
     uS0X: f32,
     uS0Y: f32,
@@ -507,13 +508,11 @@ fn capsuleDirOcc(ro: vec3<f32>, rd: vec3<f32>, ca: vec3<f32>, cb: vec3<f32>, r: 
     return occ;
 }
 
-const MIN_EL: f32 = ${((CONTACT_AO_MIN_ELEVATION_DEG * Math.PI) / 180).toFixed(6)};
-
 // 指向光的向量到单位向量,仰角只钳下限(与 contactAoSources.clampAoElevation 同式,正上方原样)
 fn aoLightDir(v: vec3<f32>) -> vec3<f32> {
     let hn = length(v.xz);
     if (hn < 1e-6) { return vec3<f32>(0.0, 1.0, 0.0); }
-    let el = max(MIN_EL, atan2(v.y, hn));
+    let el = max(shadowUniforms.uMinElevation, atan2(v.y, hn));
     return vec3<f32>(v.x / hn * cos(el), sin(el), v.z / hn * cos(el));
 }
 
@@ -615,6 +614,7 @@ function makeContactShader(ctx: ShadowSceneContext | null): Shader {
         uConeK: f32(coneKFromDeg(CONTACT_AO_DIR_CONE_DEG_DEFAULT)),
         uDirReach: f32(CONTACT_AO_DIR_LENGTH_DEFAULT),
         uDirWeight: f32(CONTACT_AO_DIR_STRENGTH_DEFAULT),
+        uMinElevation: f32((CONTACT_AO_MIN_ELEVATION_DEG * Math.PI) / 180),
         uGroundFeather: f32(CONTACT_GROUND_FEATHER),
         ...sourceUniformDefaults(),
         uInvert: f32(ctx?.invert ?? 0),
@@ -738,6 +738,8 @@ export class PlanarEntityShadow implements IEntityShadow {
   private blur: BlurFilter | null = null;
   private lastSoftness = -1;
   private boundSource: TextureSource | null = null;
+  private contactSource: ShadowSource | null = null;
+  private contactFootprint: FootprintExtent | null = null;
 
   constructor(layer: Container, ctx?: ShadowSceneContext | null) {
     this.ctx = ctx ?? null;
@@ -768,10 +770,15 @@ export class PlanarEntityShadow implements IEntityShadow {
     shape?: ShadowShapeParams | null,
     contactAo?: ContactAoParams | null,
   ): void {
+    if (src !== this.contactSource) {
+      this.contactSource = src;
+      this.contactFootprint = null;
+    }
     const tex = src.getTexture();
     if (!tex || !src.isVisible() || !env.shadow.enabled) {
       this.castMesh.visible = false;
       this.contactMesh.visible = false;
+      this.contactFootprint = null;
       return;
     }
 
@@ -880,15 +887,25 @@ export class PlanarEntityShadow implements IEntityShadow {
     const ctx = this.ctx;
     // 作者参数:没传(非主实例的调用方)就按场景光环境解一份缺省(简单 AO)
     const p = ao?.ao ?? resolveContactAo(null, env.shadow);
-    if (!ctx || !p.enabled || p.darkness <= 0 || p.size <= 0) return false;
+    if (!ctx || !p.enabled || p.darkness <= 0 || p.size <= 0) {
+      this.contactFootprint = null;
+      return false;
+    }
     const fp = footprintOf(tex, CONTACT_BAND, CONTACT_SEARCH);
-    if (fp === null) return false;                       // 这一帧底部没东西挨地
+    // 动画刚转入抬脚帧时，已显示的 AO 仍要完成淡出；只保留横截面，脚点照常跟角色走。
+    // 没有画过 AO 或过渡已经结束时，仍保留原本的悬空帧判据。
+    if (fp === null && !(ao?.animationTransition && this.contactFootprint)) {
+      this.contactFootprint = null;
+      return false;
+    }
     // 胶囊宽度 / 中心按角色定(站立片段的中位数),不跟走 / 跑每帧的步幅变——按当前帧量时一跳一跳
     // (制作人 2026-09-25 真机)。定不下来(没有参照帧 / 像素还没到)才按当前帧;
     // 当前帧也是 undefined = 读不到像素,footprintOf 已出声,退回整帧宽
     const refs = src.getBodyReferenceFrames?.() ?? [];
     const body = bodyFootprintOf(refs, CONTACT_BAND, CONTACT_SEARCH);
-    const ext = mirrorFootprint(body ?? fp ?? { lo: 0, hi: 1 }, src.getFacing() < 0);
+    this.contactFootprint = (ao?.animationTransition ? this.contactFootprint : null)
+      ?? body ?? fp ?? { lo: 0, hi: 1 };
+    const ext = mirrorFootprint(this.contactFootprint, src.getFacing() < 0);
 
     const wpq = ao && ao.wuPerQUnit > 0 ? ao.wuPerQUnit : 1;
     const { ppu, worldToPixelX: w2px, worldToPixelY: w2py } = ctx;
@@ -948,6 +965,7 @@ export class PlanarEntityShadow implements IEntityShadow {
     setU(sh, 'uConeK', p.coneK);
     setU(sh, 'uDirReach', p.dirLength);
     setU(sh, 'uDirWeight', p.dirStrength);
+    setU(sh, 'uMinElevation', ((ao?.minElevationDeg ?? CONTACT_AO_MIN_ELEVATION_DEG) * Math.PI) / 180);
     setU(sh, 'uFootX', fx);
     setU(sh, 'uFootY', fy);
     setU(sh, 'uAxisOffX', axisOffX);

@@ -555,21 +555,34 @@ export interface SceneLightingDef {
   shadowBias?: { bias?: number; thickness?: number };
 }
 
+/** AO 方向设置：场景默认一层、角色可选覆盖一层，两层都支持自动 / 手动。 */
+export interface ContactAoDirectionDef {
+  /** 自动沿用角色受光计算；手动只控制 AO，不改真实光照。 */
+  mode: 'auto' | 'manual';
+  /** 手动 AO 拖尾的屏幕方向：0° 向右、90° 向下。缺省 0。 */
+  azimuthDeg?: number;
+  /** 手动 AO 来光仰角（1~90°）；缺省 45。 */
+  elevationDeg?: number;
+}
+
 /**
- * 脚底接触 AO（胶囊 AO）的作者面（制作人 2026-09-24 定）：
- * 勾「接触 AO」就有；**方向 AO 缺省也开**（沿光方向的锥形软影，所有 NPC 与主角都是，同日改口），取消就只剩简单 AO。
- * 方向来源是个选项（`dirSource`）：缺省跟角色身上的光一致（间接光一路 + 每盏实体灯各一路，按各自照到地面的量加权），也可跟阴影绑定或用场景主光。
- * 所有字段可缺：明暗 / 大小缺省跟随场景光环境（`shadow.contact` / `contactSize`），其余用
- * `src/rendering/contactAo.ts` 的缺省。解析见 `resolveContactAo`。
+ * 脚底接触 AO 的角色作者面。接触 / 方向 AO 缺省开，最终显示还与当前动画开关做 AND。
+ * 明暗 / 大小缺省跟随场景光环境，方向缺省继承场景；解析见 rendering/contactAo.ts。
  */
 export interface ContactAoDef {
   /** 画不画接触 AO；缺省 true。 */
   enabled?: boolean;
+  /** 动画开启接触 AO 时的淡入时长，毫秒 0..5000；缺省 1000，0 为立即切换。 */
+  fadeInMs?: number;
+  /** 动画关闭接触 AO 时的淡出时长，毫秒 0..5000；缺省 1000，0 为立即切换。 */
+  fadeOutMs?: number;
   /** 方向 AO；缺省 true（制作人 2026-09-24：所有 NPC 默认都开，包括主角）。false = 只有简单 AO。 */
   directional?: boolean;
+  /** 角色方向覆盖；不写则继承场景 contactAoDirection（旧 dirSource 仍视为显式覆盖）。 */
+  direction?: ContactAoDirectionDef;
   /**
-   * 方向 AO 的方向从哪来（制作人 2026-09-24：是个选项；缺省「ao 方向本来就和间接光强度要一致」）：
-   * `'lighting'`（缺省）跟角色身上的光一致——间接光一路（probe）+ 每盏亮着的实体灯各一路，各投各的影、
+   * 旧方向来源兼容字段；新配置使用 direction。旧显式字段视为角色覆盖，direction 优先。
+   * `'lighting'` 跟角色身上的光一致——间接光一路（probe）+ 每盏亮着的实体灯各一路，各投各的影、
    * 按各自照到脚下地面的量加权（见 `rendering/contactAoSources.ts`）｜`'binding'` 跟阴影绑定（绑灯朝灯、
    * 虚拟灯朝它，没绑用场景主光）｜`'scene'` 场景光环境主光方向。后两档只有一路。
    */
@@ -768,6 +781,8 @@ export interface SceneData {
    * 有自己的 def，所以挂在场景上——本来就该逐场景配（这条街有路灯，那间屋子只有烛火）。
    */
   playerShadowBindings?: EntityShadowBinding[];
+  /** 全场角色共用的 AO 方向；缺省自动计算，角色 contactAo.direction 可单独覆盖。 */
+  contactAoDirection?: ContactAoDirectionDef;
   /** 玩家的脚底接触 AO。与 NPC 的 `contactAo` 同语义；挂在场景上的理由同 `playerShadowBindings`。 */
   playerContactAo?: ContactAoDef;
   /**
@@ -1382,7 +1397,8 @@ export interface HeldPropConditionLeaf {
   propState?: string;
   burning?: boolean;
   vitalityOp?: '<' | '<=' | '>' | '>=';
-  vitality?: number;
+  /** 数值或当前挂件 playerControl.guardSafety；引用未配置时条件为假。 */
+  vitality?: number | 'guardSafety';
   fuelOp?: '<' | '<=' | '>' | '>=';
   fuel?: number;
   effect?: string;
@@ -1407,6 +1423,7 @@ export interface HeldPropConditionStatus {
   state: string;
   burning: boolean;
   vitality: number;
+  guardSafety?: number;
   /** 第几级（1 起；没有等级表的恒 1） */
   level: number;
   /** 还剩几成燃料 0..1；没有耐久（烧不完）的恒 1 */
@@ -2490,6 +2507,8 @@ export interface AnimationStateDef {
   frames: number[];
   frameRate: number;
   loop: boolean;
+  /** 是否渲染接触 AO；缺省按 animationContactAoDefaults.json（仅 idle/crouch 开启）。 */
+  contactAoEnabled?: boolean;
   /**
    * 步速匹配基准（世界单位/秒）：该循环在此移动速度下步频与位移吻合（不滑步）。
    * 仅对移动类状态有意义；配置后移动驱动方按 实际速度/referenceSpeed 缩放播放倍率（夹取见
@@ -2862,7 +2881,7 @@ export interface CutsceneStepDisableFlag {
 
 /**
  * Action 步骤——通过 ActionExecutor.executeAwait 执行。
- * Cutscene 中仅允许无副作用的 Action 子集（白名单）。
+ * Cutscene 使用白名单 Action；具备临时生命周期的动作只接受 lifetime=scope，由本次过场清理。
  */
 export interface ActionStep extends CutsceneStepDisableFlag {
   kind: 'action';
@@ -3548,7 +3567,7 @@ export interface LoreEntry {
 
 /**
  * 系统说明卡（玩法需求清单 K4「系统说明卡」；`system_notes.json`）。
- * 动作 `showSystemNote{noteId}` 发起：压暗 + 小图 + 两三行有重点的字，点一下关；
+ * 动作 `showSystemNote{noteId}` 发起：压暗 + 小图 + 两三行有重点的字，仅按 E 关闭；
  * 关的同时落 flag `sysnote_<id>`，对应见闻录条目的 `unlockConditions` 引用该 flag 即解锁。
  */
 export interface SystemNoteDef {

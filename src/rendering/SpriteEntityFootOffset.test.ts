@@ -112,6 +112,56 @@ describe('脚底偏移：挪画不挪接地点', () => {
   });
 });
 
+describe('逐动画接触 AO 开关', () => {
+  function makeAo(states: AnimationSetDef['states']): SpriteEntity {
+    const e = new SpriteEntity();
+    e.loadFromDef(new Texture({ source: new TextureSource({ width: CELL_W * 2, height: CELL_H }) }),
+      { ...animDef(), states });
+    return e;
+  }
+
+  it('旧包仅实际 idle/crouch 缺省开启，其余与新动作关闭', () => {
+    const state = { frames: [0], frameRate: 8, loop: true };
+    const e = makeAo({ idle: state, crouch: state, walk: state, crouchWalk: state, custom: state });
+    expect(e.getContactAoEnabled()).toBe(false);
+    for (const [name, want] of [['idle', true], ['crouch', true], ['walk', false], ['crouchWalk', false], ['custom', false]] as const) {
+      e.playAnimation(name);
+      expect(e.getContactAoEnabled()).toBe(want);
+    }
+    e.destroy();
+  });
+
+  it('显式开关优先；定格、播完与无效播放请求仍保持当前片段设置', () => {
+    const state = { frames: [0, 1], frameRate: 8, loop: false };
+    const e = makeAo({ idle: { ...state, contactAoEnabled: false }, custom: { ...state, contactAoEnabled: true } });
+    e.playAnimation('idle');
+    expect(e.getContactAoEnabled()).toBe(false);
+    e.playAnimation('custom', undefined, { holdFrame: 1 });
+    expect(e.getContactAoEnabled()).toBe(true);
+    e.playAnimation('missing');
+    expect(e.getContactAoEnabled()).toBe(true);
+    e.playAnimation('custom');
+    e.update(1);
+    expect(e.getContactAoEnabled()).toBe(true);
+    e.playAnimation('custom', undefined, { thenState: 'idle' });
+    e.update(1);
+    expect(e.getContactAoEnabled()).toBe(false);
+    e.destroy();
+  });
+
+  it('逻辑 idle 回退到跑动片段不会误开；换包不会保留旧开关', () => {
+    const { e } = make();
+    e.setLogicalStateMap({ idle: 'run', stand: 'idle' });
+    e.playAnimation('idle');
+    expect(e.getContactAoEnabled()).toBe(false);
+    e.playAnimation('stand');
+    expect(e.getContactAoEnabled()).toBe(true);
+    e.loadFromDef(new Texture({ source: new TextureSource({ width: CELL_W * 2, height: CELL_H }) }), animDef());
+    expect(e.getContactAoEnabled()).toBe(false);
+    e.destroy();
+  });
+});
+
 describe('接触 AO 身体胶囊的参照帧：站立片段，按它自己的脚底偏移裁底', () => {
   it('跑着也给站立片段的帧，裁底用站立的偏移（与站着时 getDisplayTexture 同一块像素）', () => {
     const { e } = make();

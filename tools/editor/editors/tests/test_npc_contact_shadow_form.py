@@ -125,6 +125,32 @@ class TestNpcContactAoForm:
         panel._write_npc_widgets_to_dict(out)
         assert out['contactAo'] == {'directional': True}
 
+    def test_动画AO渐变缺省不物化_改时长写回_改回缺省移除(self, panel, scene) -> None:
+        npc = _cast_off_npc(scene)
+        panel.load_npc_props(copy.deepcopy(npc))
+        w = panel._npc_contact_ao
+        assert w._spins['fadeInMs'].value() == 1000
+        assert w._spins['fadeOutMs'].value() == 1000
+        out = copy.deepcopy(npc)
+        panel._write_npc_widgets_to_dict(out)
+        assert 'contactAo' not in out
+        w._spins['fadeInMs'].setValue(0)
+        w._spins['fadeOutMs'].setValue(5000)
+        panel._write_npc_widgets_to_dict(out)
+        assert out['contactAo'] == {'fadeInMs': 0, 'fadeOutMs': 5000}
+        w._spins['fadeInMs'].setValue(1000)
+        w._spins['fadeOutMs'].setValue(1000)
+        panel._write_npc_widgets_to_dict(out)
+        assert 'contactAo' not in out
+
+    def test_动画AO渐变显式默认及小数往返保真(self, panel, scene) -> None:
+        src = copy.deepcopy(scene['npcs'][0])
+        src['contactAo'] = {'fadeInMs': 1000, 'fadeOutMs': 123.456, 'futureKey': 7}
+        panel.load_npc_props(src)
+        out = copy.deepcopy(src)
+        panel._write_npc_widgets_to_dict(out)
+        assert json.dumps(out['contactAo']) == json.dumps(src['contactAo'])
+
     def test_没动过的数按原值写回_未知键保留(self, panel, scene) -> None:
         src = copy.deepcopy(scene['npcs'][0])
         src['contactAo'] = {'enabled': False, 'spread': 0.333, 'darkness': 0.4, 'futureKey': 7}
@@ -135,20 +161,19 @@ class TestNpcContactAoForm:
         panel._write_npc_widgets_to_dict(out)
         assert out['contactAo'] == src['contactAo']
 
-    def test_方向来源缺省按光照_不写字段_改了才写(self, panel, scene) -> None:
-        """制作人 2026-09-24：方向来源是个选项；缺省「ao 方向本来就和间接光强度要一致」。"""
+    def test_方向缺省继承场景_自动必须是显式角色覆盖(self, panel, scene) -> None:
         npc = _cast_off_npc(scene)
         panel.load_npc_props(copy.deepcopy(npc))
         w = panel._npc_contact_ao
-        assert w._dir_source.currentData() == 'lighting'
-        assert w._dir_source.currentText() == '按光照'
+        assert w._dir_source.currentData() == 'inherit'
+        assert w._dir_source.currentText() == '继承场景'
         out = copy.deepcopy(npc)
         panel._write_npc_widgets_to_dict(out)
-        assert 'contactAo' not in out, '缺省档不写 dirSource'
-        w._dir_source.setCurrentIndex(w._dir_source.findData('binding'))
+        assert 'contactAo' not in out, '继承档不写 direction'
+        w._dir_source.setCurrentIndex(w._dir_source.findData('auto'))
         panel._write_npc_widgets_to_dict(out)
-        assert out['contactAo'] == {'dirSource': 'binding'}
-        w._dir_source.setCurrentIndex(w._dir_source.findData('lighting'))
+        assert out['contactAo'] == {'direction': {'mode': 'auto'}}
+        w._dir_source.setCurrentIndex(w._dir_source.findData('inherit'))
         panel._write_npc_widgets_to_dict(out)
         assert 'contactAo' not in out
 
@@ -164,7 +189,39 @@ class TestNpcContactAoForm:
         assert out['contactAo'] == src['contactAo']
         # 换一个 NPC 再载入，上一次的「未知」项不许残留在下拉里
         panel.load_npc_props(copy.deepcopy(_cast_off_npc(scene)))
-        assert w._dir_source.count() == len(cao.DIR_SOURCES)
+        assert w._dir_source.count() == 3
+
+    @pytest.mark.parametrize('source', ['lighting', 'binding', 'scene'])
+    def test_旧方向显式配置保值_选继承才清除(self, panel, scene, source) -> None:
+        src = copy.deepcopy(scene['npcs'][0])
+        src['contactAo'] = {'dirSource': source, 'size': 1.8, 'futureKey': 7}
+        panel.load_npc_props(src)
+        w = panel._npc_contact_ao
+        out = copy.deepcopy(src)
+        panel._write_npc_widgets_to_dict(out)
+        assert out['contactAo'] == src['contactAo']
+        assert '旧设置' in w._dir_source.currentText()
+        w._dir_source.setCurrentIndex(w._dir_source.findData('inherit'))
+        panel._write_npc_widgets_to_dict(out)
+        assert out['contactAo'] == {'size': 1.8, 'futureKey': 7}
+
+    def test_角色手动数值精度和未知键保留_自动往返不清角度(self, panel, scene) -> None:
+        src = copy.deepcopy(scene['npcs'][0])
+        direction = {'mode': 'manual', 'azimuthDeg': 123.456, 'elevationDeg': 5.678, 'future': {'z': 1, 'a': 2}}
+        src['contactAo'] = {'direction': direction}
+        panel.load_npc_props(src)
+        w = panel._npc_contact_ao
+        out = copy.deepcopy(src)
+        panel._write_npc_widgets_to_dict(out)
+        assert out['contactAo']['direction'] == direction
+        w._dir_source.setCurrentIndex(w._dir_source.findData('auto'))
+        panel._write_npc_widgets_to_dict(out)
+        assert out['contactAo']['direction'] == {**direction, 'mode': 'auto'}
+        assert not w._direction._spins['azimuthDeg'].isEnabled()
+        w._dir_source.setCurrentIndex(w._dir_source.findData('manual'))
+        w._direction._spins['azimuthDeg'].setValue(270)
+        panel._write_npc_widgets_to_dict(out)
+        assert out['contactAo']['direction'] == {**direction, 'azimuthDeg': 270}
 
     def test_关了接触AO时参数框不可点_方向参数只在勾方向AO时可点(self, panel, scene) -> None:
         panel.load_npc_props(copy.deepcopy(_cast_off_npc(scene)))
@@ -193,17 +250,39 @@ class TestPlayerContactAo:
 
     def test_玩家那一块载入已有配置(self, panel, scene) -> None:
         sc = copy.deepcopy(scene)
-        sc['playerContactAo'] = {'size': 1.5, 'dirConeDeg': 20}
+        sc['playerContactAo'] = {'size': 1.5, 'dirConeDeg': 20, 'fadeInMs': 0, 'fadeOutMs': 600}
         panel._load_scene_lights(sc)
         w = panel._player_contact_ao
         assert w._spins['size'].value() == pytest.approx(1.5)
         assert w._spins['dirConeDeg'].value() == pytest.approx(20)
+        assert w._spins['fadeInMs'].value() == 0
+        assert w._spins['fadeOutMs'].value() == 600
         out: dict = {}
         panel._writeback_scene_lights(out)
-        assert out['playerContactAo'] == {'size': 1.5, 'dirConeDeg': 20}
+        assert out['playerContactAo'] == sc['playerContactAo']
 
 
 class TestSceneDefaults:
+    def test_场景方向和主角覆盖分别写回_没有lighting也能保存(self, panel, scene) -> None:
+        sc = copy.deepcopy(scene)
+        sc.pop('lighting', None)
+        sc['contactAoDirection'] = {'mode': 'manual', 'azimuthDeg': 270.123, 'elevationDeg': 5, 'future': 1}
+        sc['playerContactAo'] = {'direction': {'mode': 'auto'}}
+        panel._load_scene_lights(sc)
+        out: dict = {}
+        panel._writeback_scene_lights(out)
+        assert out['contactAoDirection'] == sc['contactAoDirection']
+        assert out['playerContactAo'] == sc['playerContactAo']
+        assert panel._scene_contact_ao_direction._mode.count() == 2
+        assert panel._player_contact_ao._dir_source.currentData() == 'auto'
+        panel._scene_contact_ao_direction._spins['elevationDeg'].setValue(1)
+        panel._writeback_scene_lights(out)
+        assert out['contactAoDirection'] == {**sc['contactAoDirection'], 'elevationDeg': 1}
+        # 切换场景之后不能把上场的方向带过去。
+        panel._load_scene_lights(scene)
+        panel._writeback_scene_lights(out)
+        assert 'contactAoDirection' not in out
+
     def test_跟随场景显示的值走运行时同一条链(self, panel, scene) -> None:
         d, s, note = panel._scene_contact_ao_defaults(scene)
         # 雾津街头没配 lightEnv、全局也没写 contact → 落到基线（与 lightEnv.ts BASELINE 同值，另有对账测试）
@@ -218,6 +297,31 @@ class TestSceneDefaults:
 
 
 class TestContactAoValidation:
+    @pytest.mark.parametrize('value', [-1, 5001, True, '250', float('nan'), float('inf')])
+    def test_动画AO渐变时长校验覆盖玩家及NPC(self, value) -> None:
+        issues = _npc_contact_ao_issues({
+            'playerContactAo': {'fadeInMs': value},
+            'npcs': [{'id': 'a', 'contactAo': {'fadeOutMs': value}}],
+        })
+        assert len(issues) == 2
+        assert any('玩家' in issue and 'fadeInMs' in issue for issue in issues)
+        assert any('NPC a' in issue and 'fadeOutMs' in issue for issue in issues)
+        assert _npc_contact_ao_issues({
+            'playerContactAo': {'fadeInMs': 0, 'fadeOutMs': 5000},
+            'npcs': [{'id': 'a', 'contactAo': {'fadeInMs': 250.125, 'fadeOutMs': 150}}],
+        }) == []
+
+    def test_方向两层枚举和数值校验(self) -> None:
+        issues = _npc_contact_ao_issues({
+            'contactAoDirection': {'mode': 'bad', 'azimuthDeg': False},
+            'playerContactAo': {'direction': {'mode': 'manual', 'elevationDeg': 0}},
+            'npcs': [{'id': 'a', 'contactAo': {'direction': 'manual'}}],
+        })
+        assert len(issues) == 4
+        assert any('contactAoDirection.mode' in s for s in issues)
+        assert any('玩家' in s and 'elevationDeg' in s for s in issues)
+        assert _npc_contact_ao_issues({'contactAoDirection': {'mode': 'manual', 'azimuthDeg': 360, 'elevationDeg': 90}}) == []
+
     def test_类型与越界报错(self) -> None:
         sc = {
             'playerContactAo': {'enabled': 'false'},
@@ -263,6 +367,13 @@ class TestDefaultsParity:
         assert cao.DIR_STRENGTH_DEFAULT == self._ts_const(ts, 'CONTACT_AO_DIR_STRENGTH_DEFAULT')
         assert cao.DIR_LENGTH_DEFAULT == self._ts_const(ts, 'CONTACT_AO_DIR_LENGTH_DEFAULT')
         assert cao.DIR_CONE_DEG_DEFAULT == self._ts_const(ts, 'CONTACT_AO_DIR_CONE_DEG_DEFAULT')
+        assert cao.AZIMUTH_DEG_DEFAULT == self._ts_const(ts, 'CONTACT_AO_AZIMUTH_DEG_DEFAULT')
+        assert cao.ELEVATION_DEG_DEFAULT == self._ts_const(ts, 'CONTACT_AO_ELEVATION_DEG_DEFAULT')
+        assert cao.FADE_IN_MS_DEFAULT == self._ts_const(ts, 'CONTACT_AO_FADE_IN_MS_DEFAULT')
+        assert cao.FADE_OUT_MS_DEFAULT == self._ts_const(ts, 'CONTACT_AO_FADE_OUT_MS_DEFAULT')
+        assert cao.FADE_MS_MAX == self._ts_const(ts, 'CONTACT_AO_FADE_MS_MAX')
+        for key in ('fadeInMs', 'fadeOutMs'):
+            assert cao.PARAM_RANGES[key] == (0, cao.FADE_MS_MAX)
 
     def test_方向AO缺省开与运行时一致(self) -> None:
         src = (_ROOT / 'src' / 'rendering' / 'contactAo.ts').read_text(encoding='utf-8')

@@ -332,11 +332,11 @@ export function resolveBoundShadow(
  * 与 `contactAoSources.clampAoElevation` 同式（那边管缺省档「按光照」的几路光）。
  * 下限那一侧是凸锥，钳它不破坏连续。
  */
-function clampedLightDir(lx: number, ly: number, lz: number): [number, number, number] | null {
+function clampedLightDir(lx: number, ly: number, lz: number, minElevationDeg = MIN_ELEVATION_DEG): [number, number, number] | null {
   const hn = Math.hypot(lx, lz);
   if (hn < 1e-9 && Math.abs(ly) < 1e-9) return null;
   if (hn < 1e-9) return ly > 0 ? [0, 1, 0] : null;          // 正上方：脚下一团；正下方无从谈起
-  const el = Math.max(MIN_ELEVATION_DEG, (Math.atan2(ly, hn) * 180) / Math.PI) * (Math.PI / 180);
+  const el = Math.max(minElevationDeg, (Math.atan2(ly, hn) * 180) / Math.PI) * (Math.PI / 180);
   return [(lx / hn) * Math.cos(el), Math.sin(el), (lz / hn) * Math.cos(el)];
 }
 
@@ -346,11 +346,13 @@ function clampedLightDir(lx: number, ly: number, lz: number): [number, number, n
  * 场景光环境的主光（`env.key`，影朝 az+180）与虚拟灯（方位就是影子的屏幕朝向）都是**屏幕约定**；
  * 胶囊 AO 在世界里算，要先翻回世界：地面上哪个水平方向投到屏幕正好是这个朝向，
  * 光就在它的反方向、抬起这个仰角。是 `shadowScreenAngle` 的逆（同一套 world → q 投屏）。
+ * minElevationDeg 缺省保留旧自动 / 绑定下限，手动 AO 明确传 1°，不被旧下限改写。
  */
 export function lightDirFromShadowScreenAngle(
   shadowScreenDeg: number,
   elevationDeg: number,
   mRows: ArrayLike<number>,
+  minElevationDeg = MIN_ELEVATION_DEG,
 ): [number, number, number] | null {
   const phi = (shadowScreenDeg * Math.PI) / 180;
   // 屏幕 (x, y) = (q.x, -q.y)；地面水平向量 (hx, 0, hz) 的 q.x = r00·hx + r20·hz，q.y = r01·hx + r21·hz
@@ -364,7 +366,7 @@ export function lightDirFromShadowScreenAngle(
   if (hn < 1e-9) return null;
   const el = (elevationDeg * Math.PI) / 180;
   // 光在影子的反方向
-  return clampedLightDir((-hx / hn) * Math.cos(el), Math.sin(el), (-hz / hn) * Math.cos(el));
+  return clampedLightDir((-hx / hn) * Math.cos(el), Math.sin(el), (-hz / hn) * Math.cos(el), minElevationDeg);
 }
 
 /**

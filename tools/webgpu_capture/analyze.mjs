@@ -121,7 +121,7 @@ function requireCompleteSidecars(sidecars) {
     const verified = new Map(attached.filter(item => item.rawFile).map(item => [key(item), item]));
     for (const item of source.filter(item => item.rawFile)) {
       if (!verified.has(key(item))) {
-        throw new Error(`required raw sidecar was not exported: ${item.rawFile}`);
+        throw new Error(`required raw sidecar was not exported: ${item.rawFile} (snapshot ${key(item)})`);
       }
     }
   }
@@ -355,6 +355,7 @@ async function exportBufferPayloads(capture, outputDir, report) {
 }
 
 export async function analyzeCapture(path, options = {}) {
+  options.onProgress?.('分析 GPU 命令');
   const capture = await readCapture(path);
   const report = summarizeCapture(capture);
   report.sha256 = await sha256File(capture.captureFile);
@@ -371,6 +372,7 @@ export async function analyzeCapture(path, options = {}) {
   // Check the realized directory too; a junction in an existing parent cannot move output into Git.
   await outsideWorktrees(await realpath(outputDir));
   const exports = [];
+  options.onProgress?.('导出 Buffer 与着色器');
   exports.push(...await exportBufferPayloads(capture, outputDir, report));
   if (options.exportMetadata) {
     const metadataFile = join(outputDir, 'metadata.json');
@@ -401,10 +403,12 @@ export async function analyzeCapture(path, options = {}) {
       exports.push(shaderFile);
     }
   }
+  options.onProgress?.('导出纹理预览');
   const images = await exportTextureImages(capture, outputDir, report.resources.textures, report.frames);
+  options.onProgress?.('校验并关联全部资源文件');
   const sidecars = await attachFrameSidecars(capture.captureFile, outputDir,
     report.frames, report.passes, report.events, report.resources,
-    { preferHardLinks: options.preferHardLinks === true });
+    { preferHardLinks: options.preferHardLinks === true, onProgress: options.onProgress });
   if (options.strictSidecars || Array.isArray(sidecars.sourceManifest?.diagnosticFrames)) {
     requireCompleteSidecars(sidecars);
   }

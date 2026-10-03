@@ -57,6 +57,7 @@ from ..shared.anim_atlas_preview import (
 )
 from ..shared.bubble_anchor_field import BubbleAnchorActor, BubbleAnchorPickField
 from ..shared.form_layout import compact_form
+from ..shared.animation_contact_ao import animation_contact_ao_enabled
 
 
 class _WalkCalibStrip(QWidget):
@@ -413,12 +414,13 @@ class AnimEditor(QWidget):
             "脚底偏移%=这个状态的脚底线高于帧底多少（占帧高的百分比，留空=0=帧底就是脚）。\n"
             "游戏里按它把画往下挪，脚落在角色位置上；位置、阴影、遮挡排序都不动。\n"
             "不用手算：点下面「按图测脚底」按图集像素量（取本状态最贴地那一帧）。预览里橙线就是脚底线。\n"
+            "渲染 AO=这个动作是否允许角色接触 AO；默认只有 idle / crouch 勾选，其它和新动作关闭。\n"
             "改这些只写 anim.json，不重打图集。"
         )
         dl.addWidget(states_hdr)
-        self._state_table = QTableWidget(0, 6)
+        self._state_table = QTableWidget(0, 7)
         self._state_table.setHorizontalHeaderLabels(
-            ["name", "frames", "frameRate", "loop", "refSpeed", "脚底偏移%"])
+            ["name", "frames", "frameRate", "loop", "refSpeed", "脚底偏移%", "渲染 AO"])
         self._state_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch)
         self._state_table.verticalHeader().setDefaultSectionSize(32)
@@ -871,6 +873,7 @@ class AnimEditor(QWidget):
                     bool(sdef.get("loop", True)),
                     self._ref_speed_to_cell_text(sdef.get("referenceSpeed")),
                     self._foot_to_cell_text(sdef.get("footOffset")),
+                    animation_contact_ao_enabled(str(sname), sdef),
                 )
             if self._state_table.rowCount() > 0:
                 self._state_table.selectRow(0)
@@ -900,10 +903,12 @@ class AnimEditor(QWidget):
         self, r: int, name: str, frames_text: str, rate: int, loop: bool,
         ref_speed_text: str = "",
         foot_text: str = "",
+        contact_ao: bool | None = None,
     ) -> None:
-        """填一行 state：name/frames/frameRate/refSpeed/脚底偏移 为可编辑文本，loop 为复选框（无文本）。"""
+        """填一行 state：loop / 渲染 AO 为复选框，其余为可编辑文本。"""
         name_it = QTableWidgetItem(name)
         name_it.setData(Qt.ItemDataRole.UserRole, name)  # 旧名快照，重名/空名时回退
+        name_it.setData(Qt.ItemDataRole.UserRole + 2, name)  # 本次加载的原键；改名仍从原状态保留人工字段
         self._state_table.setItem(r, 0, name_it)
         self._state_table.setItem(r, 1, QTableWidgetItem(frames_text))
         self._state_table.setItem(r, 2, QTableWidgetItem(str(max(1, int(rate)))))
@@ -917,6 +922,15 @@ class AnimEditor(QWidget):
         self._state_table.setItem(r, 3, loop_it)
         self._state_table.setItem(r, 4, QTableWidgetItem(ref_speed_text))
         self._state_table.setItem(r, 5, QTableWidgetItem(foot_text))
+        ao_it = QTableWidgetItem("")
+        ao_it.setFlags(
+            (ao_it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            & ~Qt.ItemFlag.ItemIsEditable
+        )
+        enabled = animation_contact_ao_enabled(name) if contact_ao is None else contact_ao
+        ao_it.setCheckState(Qt.CheckState.Checked if enabled else Qt.CheckState.Unchecked)
+        ao_it.setToolTip("允许本动画渲染接触 AO；角色或场景的 AO 总开关仍须开启。")
+        self._state_table.setItem(r, 6, ao_it)
 
     # ---- 编辑 / 脏标记 / 保存 ------------------------------------------------
 
@@ -1099,34 +1113,18 @@ class AnimEditor(QWidget):
         j = row + delta
         if j < 0 or j >= self._state_table.rowCount():
             return
-        a = self._read_state_row(row)
-        b = self._read_state_row(j)
         self._loading = True
         try:
-            self._set_state_row(row, *b)
-            self._set_state_row(j, *a)
+            # 搬原条目，连同原状态键 / 授权锚待写值 / AO 勾选一起走，不能重建后丢行元数据。
+            for col in range(self._state_table.columnCount()):
+                a = self._state_table.takeItem(row, col)
+                b = self._state_table.takeItem(j, col)
+                self._state_table.setItem(row, col, b)
+                self._state_table.setItem(j, col, a)
         finally:
             self._loading = False
         self._state_table.selectRow(j)
         self._mark_dirty()
-
-    def _read_state_row(self, r: int) -> tuple[str, str, int, bool, str, str]:
-        name_it = self._state_table.item(r, 0)
-        frames_it = self._state_table.item(r, 1)
-        rate_it = self._state_table.item(r, 2)
-        loop_it = self._state_table.item(r, 3)
-        ref_it = self._state_table.item(r, 4)
-        name = name_it.text() if name_it else ""
-        frames_text = frames_it.text() if frames_it else "0"
-        try:
-            rate = int(round(float((rate_it.text() if rate_it else "8") or "8")))
-        except ValueError:
-            rate = 8
-        loop = bool(loop_it and loop_it.checkState() == Qt.CheckState.Checked)
-        ref_text = ref_it.text().strip() if ref_it else ""
-        foot_it = self._state_table.item(r, 5)
-        foot_text = foot_it.text().strip() if foot_it else ""
-        return name, frames_text, max(1, rate), loop, ref_text, foot_text
 
     def _parse_frames_strict(self, text: str) -> list[int] | None:
         t = (text or "").strip()
@@ -1194,7 +1192,7 @@ class AnimEditor(QWidget):
             loop = bool(loop_it and loop_it.checkState() == Qt.CheckState.Checked)
             ref_it = self._state_table.item(r, 4)
             ref_text = ref_it.text().strip() if ref_it else ""
-            old_name = name_it.data(Qt.ItemDataRole.UserRole) if name_it else None
+            old_name = name_it.data(Qt.ItemDataRole.UserRole + 2) if name_it else None
             src = None
             if isinstance(old_name, str):
                 src = orig_states.get(old_name)
@@ -1206,6 +1204,11 @@ class AnimEditor(QWidget):
                     # referenceSpeed 由 refSpeed 列显式管理（空=删除），不走未知键透传
                     if k not in ("frames", "frameRate", "loop", "referenceSpeed"):
                         sdef[k] = v
+            # 缺省显示不扩写旧包；勾选真正改变时只更新该布尔值，显式原值与未知字段仍保留。
+            ao_it = self._state_table.item(r, 6)
+            contact_ao = bool(ao_it and ao_it.checkState() == Qt.CheckState.Checked)
+            if contact_ao != animation_contact_ao_enabled(name, src):
+                sdef["contactAoEnabled"] = contact_ao
             # 授权头顶锚：气泡锚控件改过才动，没动过沿用上面透传来的磁盘原值
             bub_edit = name_it.data(Qt.ItemDataRole.UserRole + 1) if name_it else None
             if bub_edit == "clear":
@@ -1357,6 +1360,14 @@ class AnimEditor(QWidget):
             return str(e)
         self._original_anim = copy.deepcopy(
             self._model.animations.get(self._current_key, new_dict))
+        blocked = self._state_table.blockSignals(True)
+        try:
+            for row in range(self._state_table.rowCount()):
+                name_it = self._state_table.item(row, 0)
+                if name_it is not None:
+                    name_it.setData(Qt.ItemDataRole.UserRole + 2, name_it.text().strip())
+        finally:
+            self._state_table.blockSignals(blocked)
         # 保存后以盘面新值为基线重建种子，防止"改回种子值"误还原成保存前的旧字面值
         panel = getattr(self, "_socket_panel", None)
         # 只在挂点真被改过时才写：无条件写会把 sanitize 刷新的新指纹盖上去，

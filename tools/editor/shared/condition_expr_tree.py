@@ -34,6 +34,7 @@ from .reference_picker import ReferencePickerField
 from .rich_text_field import RichTextLineEdit
 from .form_layout import compact_form, fit_width_cap
 from .widget_discard import discard_layout_widgets, discard_widget
+from .vitality_threshold_field import VitalityThresholdField
 
 # 与 narrative_data_editors /运行时一致
 _SCENARIO_STATUSES = ("pending", "active", "done", "locked")
@@ -245,7 +246,7 @@ class ConditionExprNodeEditor(QWidget):
         self._hp_state: QComboBox | None = None
         self._hp_burning: QComboBox | None = None
         self._hp_op: QComboBox | None = None
-        self._hp_vitality: QDoubleSpinBox | None = None
+        self._hp_vitality: VitalityThresholdField | None = None
         self._hp_fuel_op: QComboBox | None = None
         self._hp_fuel: QDoubleSpinBox | None = None
         self._hp_effect: ReferencePickerField | None = None
@@ -1261,13 +1262,7 @@ class ConditionExprNodeEditor(QWidget):
             "运算符与数值一起写；不限 = 两个都不写。",
         )
         self._hp_op.currentIndexChanged.connect(self._on_hp_op_changed)
-        self._hp_vitality = QDoubleSpinBox(hw)
-        self._hp_vitality.setRange(0.0, 1.0)
-        self._hp_vitality.setSingleStep(0.05)
-        self._hp_vitality.setDecimals(3)
-        self._hp_vitality.setValue(0.5)
-        self._hp_vitality.setMaximumWidth(96)
-        self._hp_vitality.setToolTip("火势阈值 0..1（选了运算符才生效）。")
+        self._hp_vitality = VitalityThresholdField(hw)
         self._hp_vitality.valueChanged.connect(lambda _v: self._emit_changed())
         self._hp_fuel_op = QComboBox(hw)
         self._hp_fuel_op.setMaximumWidth(90)
@@ -1484,9 +1479,7 @@ class ConditionExprNodeEditor(QWidget):
         )
         v = raw.get("vitality")
         self._hp_vitality.blockSignals(True)
-        self._hp_vitality.setValue(
-            float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.5,
-        )
+        self._hp_vitality.setValue(v if "vitality" in raw else 0.5)
         self._hp_vitality.blockSignals(False)
         fop = raw.get("fuelOp", _HP_ABSENT)
         fop_want = _HP_UNSET if fop is _HP_ABSENT else (
@@ -1572,6 +1565,8 @@ class ConditionExprNodeEditor(QWidget):
             if (snap[v_key] == seed.get(v_key) and isinstance(rv, (int, float))
                     and not isinstance(rv, bool)):
                 num: Any = rv  # 数值没动：回吐磁盘原表示（0 不漂成 0.0、0.3333 不被截断）
+            elif v_key == "vitality" and not isinstance(snap[v_key], (int, float)):
+                num = copy.deepcopy(snap[v_key])
             else:
                 num = round(float(snap[v_key]), 4)
             put(v_key, num, untouched=pair_same)

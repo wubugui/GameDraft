@@ -1,4 +1,5 @@
 import { BlurFilter, Container, Sprite, Texture, Rectangle, type Shader, type TextureSource } from '../engine2d';
+import { animationContactAoEnabled } from '../data/animationContactAo';
 import type {
   AnimationPlaybackParams,
   AnimationSetDef,
@@ -793,6 +794,11 @@ export class SpriteEntity {
     return this.currentState;
   }
 
+  /** 实际在播片段的 AO 开关；定格/播完仍按当前片段，未知/尚未起播时关闭。 */
+  getContactAoEnabled(): boolean {
+    return animationContactAoEnabled(this.currentState, this.currentFrameDef);
+  }
+
   /** 当前状态可播放帧数（供预览工具做时间轴/逐帧）。 */
   getFrameCount(): number {
     return this.currentFrames.length;
@@ -808,6 +814,7 @@ export class SpriteEntity {
     const frame = this.sprite.texture?.frame;
     return {
       state: this.currentState,
+      contactAoEnabled: this.getContactAoEnabled(),
       frameIndex: this.frameIndex,
       frameTimer: this.frameTimer,
       playing: this.playing,

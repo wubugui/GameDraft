@@ -1,5 +1,14 @@
 WebGPU Inspector browser bundle
 Source: https://github.com/brendan-duncan/webgpu_inspector/tree/6ac30d672fb268d58998d24e882be07338601dfe
 File: extensions/chrome/webgpu_inspector.js
-SHA256: B32D0734DDC572907FBF76EBB4BA4856C3BB1565609F1F30E945FCA5181E7E16
+Upstream SHA256: B32D0734DDC572907FBF76EBB4BA4856C3BB1565609F1F30E945FCA5181E7E16
 License: MIT (see LICENSE)
+
+GameDraft local patch (2026-10-01):
+- saveCaptureData options.resourceIds selects captured command references plus
+  full frame resource IDs and transitive descriptor/parent dependencies before serialization.
+- externalResourceSnapshots omits cached texture mipData; exact bytes belong to RHI sidecars.
+- beginFrameCapture resetValidationErrors starts each job with current validation evidence.
+- Persistent object descriptors remain available for later captures of live resources.
+- HUD display patch (2026-10-02): hide the cumulative dropped estimate; keep FPS, frame times, pause status, and internal frame statistics.
+Patched SHA256: 77d924554d6f597aaf307df2a29bb18ba4a92c88aad75befb237238c9e9a6bd8

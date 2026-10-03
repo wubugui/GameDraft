@@ -35,6 +35,113 @@ function postDiagnostics(broker, args) {
   resourceBuffers: [], ...args });
 }
 
+function packedBufferBatch(entries, payloads, paddedHeaderBytes = 0) {
+  const json = Buffer.from(JSON.stringify({ entries }));
+  const header = paddedHeaderBytes ? Buffer.alloc(paddedHeaderBytes, 32) : json;
+  if (paddedHeaderBytes) json.copy(header);
+  const prefix = Buffer.alloc(4);
+  prefix.writeUInt32LE(header.length);
+  return Buffer.concat([prefix, header, ...payloads]);
+}
+
+test('validates complete bounded Buffer batches before writing and drains failed writers', async () => {
+  const external = await mkdtemp(join(tmpdir(), 'gamedraft-buffer-batch-'));
+  const oldOutput = process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
+  process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = external;
+  const broker = createWebGpuCaptureController(resolve('.'));
+  try {
+    broker.register({ targetBootId: 'batch-game', captureReady: true });
+    const job = await broker.request({ targetBootId: 'batch-game', frames: 2 });
+    const base = { jobId: job.id, targetBootId: 'batch-game', frameIndex: 1 };
+    const dir = join(external, job.createdAt.slice(0, 10), job.id);
+    const first = { kind: 'buffer', ordinal: 0, byteLength: 4 };
+    const second = { kind: 'resource-buffer', ordinal: 0, byteLength: 8 };
+    const good = packedBufferBatch([first, second], [Buffer.alloc(4, 7), Buffer.alloc(8, 9)]);
+    const rejectUnwritten = async (body, pattern, options = {}) => {
+      const before = (await readdir(dir)).sort();
+      await assert.rejects(broker.uploadBufferBatch({ ...base, contentLength: body.length,
+        stream: Readable.from([body]), ...options }), pattern);
+      assert.deepEqual((await readdir(dir)).sort(), before);
+    };
+    await rejectUnwritten(good, /not found/, { targetBootId: 'wrong-game' });
+    await rejectUnwritten(good, /frameIndex/, { frameIndex: 3 });
+    await rejectUnwritten(good, /declared bytes/, { contentLength: good.length + 1 });
+    for (const [bad, pattern] of [
+      [{ ...second, kind: 'texture' }, /kind/],
+      [{ ...second, ordinal: 4096 }, /ordinal/],
+      [{ ...first, ordinal: 8192 }, /ordinal/],
+      [{ ...first, ordinal: -1 }, /ordinal/],
+      [{ ...first, ordinal: '1' }, /ordinal/],
+      [{ ...second, byteLength: 0 }, /aligned bytes/],
+      [{ ...second, byteLength: 6 }, /aligned bytes/],
+      [{ ...second, byteLength: 65540 }, /aligned bytes/],
+      [{ ...first }, /duplicate/],
+    ]) {
+      await rejectUnwritten(packedBufferBatch([first, bad], [Buffer.alloc(4), Buffer.alloc(8)]), pattern);
+    }
+    await rejectUnwritten(packedBufferBatch([], []), /1 to 64/);
+    await rejectUnwritten(packedBufferBatch(Array.from({ length: 65 }, (_, ordinal) =>
+      ({ ...first, ordinal })), [Buffer.alloc(65 * 4)]), /1 to 64/);
+    await rejectUnwritten(packedBufferBatch([first, second], [Buffer.alloc(4)]), /truncated/);
+    await rejectUnwritten(Buffer.concat([good, Buffer.alloc(4)]), /trailing/);
+    const headerOverflow = Buffer.alloc(4);
+    headerOverflow.writeUInt32LE(16385);
+    await rejectUnwritten(headerOverflow, /header length/);
+    const malformed = Buffer.from(good);
+    malformed[4] = 255;
+    await rejectUnwritten(malformed, /UTF-8 JSON/);
+    const tooBig = Buffer.alloc(4 * 1024 * 1024 + 16389);
+    await rejectUnwritten(tooBig, /content length exceeds/);
+    await rejectUnwritten(tooBig, /body exceeds/, { contentLength: null });
+
+    const ack = await broker.uploadBufferBatch({ ...base, contentLength: good.length,
+      stream: Readable.from([good.subarray(0, 2), good.subarray(2, 17), good.subarray(17)]) });
+    assert.deepEqual(ack, { files: 2, bytes: 12 });
+    assert.deepEqual(await readFile(join(dir, 'frame-0001-buffer-0000.bin')), Buffer.alloc(4, 7));
+    assert.deepEqual(await readFile(join(dir, 'frame-0001-resource-buffer-0000.bin')), Buffer.alloc(8, 9));
+    // A duplicate already on disk must also reject the entire next envelope.
+    await rejectUnwritten(packedBufferBatch([{ ...first, ordinal: 1 }, first],
+      [Buffer.alloc(4), Buffer.alloc(4)]), /already uploaded/);
+
+    // Exact entry, header, per-item and total-body limits are all accepted.
+    const largestEntries = Array.from({ length: 64 }, (_, index) => ({
+      kind: index % 2 ? 'resource-buffer' : 'buffer',
+      ordinal: index === 0 ? 8191 : index === 1 ? 4095 : index,
+      byteLength: 65536,
+    }));
+    const largest = packedBufferBatch(largestEntries,
+      largestEntries.map((_, index) => Buffer.alloc(65536, index)), 16384);
+    assert.equal(largest.length, 4 * 1024 * 1024 + 16388);
+    assert.deepEqual(await broker.uploadBufferBatch({ ...base, frameIndex: 2,
+      contentLength: largest.length, stream: Readable.from([largest]) }),
+    { files: 64, bytes: 4 * 1024 * 1024 });
+    for (const [index, entry] of largestEntries.entries()) {
+      const file = join(dir, `frame-0002-${entry.kind}-${String(entry.ordinal).padStart(4, '0')}.bin`);
+      assert.deepEqual(await readFile(file), Buffer.alloc(65536, index));
+    }
+
+    // Force one open() to fail while sibling writes are in flight. Rejection must
+    // wait for those writers to finish, so files cannot change after the ACK fails.
+    await mkdir(join(dir, 'frame-0001-buffer-0090.bin'));
+    const failing = packedBufferBatch(Array.from({ length: 16 }, (_, index) =>
+      ({ kind: 'buffer', ordinal: 90 + index, byteLength: 65536 })),
+    Array.from({ length: 16 }, () => Buffer.alloc(65536, 5)));
+    await assert.rejects(broker.uploadBufferBatch({ ...base, contentLength: failing.length,
+      stream: Readable.from([failing]) }), /EEXIST|EISDIR|EPERM/);
+    const afterFailure = (await readdir(dir)).sort();
+    for (const name of afterFailure.filter(name => /frame-0001-buffer-009[1-9]\.bin/.test(name))) {
+      assert.deepEqual(await readFile(join(dir, name)), Buffer.alloc(65536, 5));
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.deepEqual((await readdir(dir)).sort(), afterFailure);
+  } finally {
+    broker.close();
+    if (oldOutput === undefined) delete process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
+    else process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR = oldOutput;
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
 test('stores a checked capture outside the worktree for its exact game bootId', async () => {
   const external = await mkdtemp(join(tmpdir(), 'gamedraft-webgpu-capture-'));
   const oldOutput = process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR;
@@ -313,18 +420,18 @@ test('bounds raw Pass uploads at 2 GiB and accepts a verified raw-only output', 
       stream: Readable.from([Buffer.alloc(256, 7)]) });
     assert.equal(saved.bytes, 256);
     await assert.rejects(broker.uploadInputRaw({ jobId: job.id, targetBootId: 'game-raw',
-      inputOrdinal: 1024, format: 'rg16float', width: 1, height: 1,
+      inputOrdinal: 8192, format: 'rg16float', width: 1, height: 1,
       bytesPerRow: 256, contentLength: 256, stream: Readable.from([]) }), /valid ordinal/);
     const input = await broker.uploadInputRaw({ jobId: job.id, targetBootId: 'game-raw',
-      inputOrdinal: 0, format: 'rg16float', width: 1, height: 1,
+      inputOrdinal: 1024, format: 'rg16float', width: 1, height: 1,
       bytesPerRow: 256, contentLength: 256,
       stream: Readable.from([Buffer.alloc(256, 9)]) });
-    assert.equal(input.inputOrdinal, 0);
+    assert.equal(input.inputOrdinal, 1024);
     assert.equal(input.bytes, 256);
     const detail = postDiagnostics(broker, { jobId: job.id, targetBootId: 'game-raw',
       passes: [{ passOrdinal: 0, colorIndex: 0, label: 'draw 0', targetLabel: 'screen',
         width: 1, height: 1, format: 'rgba8unorm', rawBytesPerRow: 256, rawByteLength: 256 }],
-      inputs: [{ inputOrdinal: 0, passOrdinal: 0, bindingName: 'uInput',
+      inputs: [{ inputOrdinal: 1024, passOrdinal: 0, bindingName: 'uInput',
         textureId: 3, viewId: 4, mipLevel: 0, arrayLayer: 0,
         width: 1, height: 1, format: 'rg16float', rawBytesPerRow: 256,
         rawByteLength: 256 }],
@@ -1164,15 +1271,17 @@ test('multi-frame diagnostics attach every resource to its exact frame despite r
       await broker.uploadInputRaw({ ...base, frameIndex, inputOrdinal: 0,
         format: 'rgba8unorm', width: 1, height: 1, bytesPerRow: 256,
         contentLength: 256, stream: Readable.from([rawInput]) });
-      await broker.uploadBufferRaw({ ...base, frameIndex, bufferOrdinal: 0,
-        contentLength: 16, stream: Readable.from([rawBuffer]) });
       await broker.uploadResourceTextureImage({ ...base, frameIndex, resourceOrdinal: 0,
         contentLength: png.length, stream: Readable.from([png]) });
       await broker.uploadResourceTextureRaw({ ...base, frameIndex, resourceOrdinal: 0,
         format: 'rgba8unorm', width: 1, height: 1, bytesPerRow: 256,
         contentLength: 256, stream: Readable.from([rawInput]) });
-      await broker.uploadResourceBufferRaw({ ...base, frameIndex, resourceOrdinal: 0,
-        contentLength: 16, stream: Readable.from([rawBuffer]) });
+      const batch = packedBufferBatch([
+        { kind: 'buffer', ordinal: 0, byteLength: 16 },
+        { kind: 'resource-buffer', ordinal: 0, byteLength: 16 },
+      ], [rawBuffer, rawBuffer]);
+      assert.deepEqual(await broker.uploadBufferBatch({ ...base, frameIndex,
+        contentLength: batch.length, stream: Readable.from([batch]) }), { files: 2, bytes: 32 });
     }
     await assert.rejects(broker.uploadPassImage({ ...base, frameIndex: 2,
       passOrdinal: 0, colorIndex: 0, contentLength: png.length,
@@ -1222,6 +1331,10 @@ test('multi-frame diagnostics attach every resource to its exact frame despite r
     assert.deepEqual(sidecars.gpuTimings.map(item => item.frameOrdinal), [1, 2]);
     assert.deepEqual(sidecars.resourceTextureSnapshots.map(item => item.frameOrdinal), [1, 2]);
     assert.deepEqual(sidecars.resourceBufferSnapshots.map(item => item.frameOrdinal), [1, 2]);
+    for (const item of [...sidecars.bufferSnapshots, ...sidecars.resourceBufferSnapshots]) {
+      assert.equal(item.rawSha256, createHash('sha256').update(rawBuffer).digest('hex'));
+      assert.deepEqual(await readFile(join(completed.outputDir, item.rawFile)), rawBuffer);
+    }
     assert.notEqual(sidecars.passSnapshots[0].file, sidecars.passSnapshots[1].file);
     assert.notEqual(sidecars.inputSnapshots[0].rawFile, sidecars.inputSnapshots[1].rawFile);
     assert.notEqual(sidecars.bufferSnapshots[0].rawFile, sidecars.bufferSnapshots[1].rawFile);

@@ -309,7 +309,7 @@ export class DebugTools {
   private webgpuHistory: WebGpuCaptureHistoryItem[] = [];
   private webgpuHistoryLoading = false;
   private webgpuHistoryError = '';
-  private webgpuViews = new Set<{ root: HTMLElement; attached: boolean; status: HTMLElement; input: HTMLInputElement;
+  private webgpuViews = new Set<{ root: HTMLElement; attached: boolean; status: HTMLElement; progress: HTMLProgressElement; input: HTMLInputElement;
     directoryInput: HTMLInputElement; directorySave: HTMLButtonElement; directoryStatus: HTMLElement;
     single: HTMLButtonElement; burst: HTMLButtonElement; stop: HTMLButtonElement;
     view: HTMLButtonElement; historySelect: HTMLSelectElement;
@@ -2202,7 +2202,7 @@ export class DebugTools {
         `${this.webgpuHistory.length} 个可复开的抓帧`;
   }
 
-  private paintWebGpuView(view: { root: HTMLElement; attached: boolean; status: HTMLElement; input: HTMLInputElement;
+  private paintWebGpuView(view: { root: HTMLElement; attached: boolean; status: HTMLElement; progress: HTMLProgressElement; input: HTMLInputElement;
     directoryInput: HTMLInputElement; directorySave: HTMLButtonElement; directoryStatus: HTMLElement;
     single: HTMLButtonElement; burst: HTMLButtonElement; stop: HTMLButtonElement;
     view: HTMLButtonElement; historySelect: HTMLSelectElement;
@@ -2222,15 +2222,32 @@ export class DebugTools {
       : gpuTimer.state === 'enabled' ? '已启用' : '可用，抓帧时启用'}`);
     if (job) {
       lines.push(`任务：${job.id} · ${names[job.state]}`);
-      const progress = job.state === 'capturing' || job.state === 'uploading'
-        ? current?.framesCaptured ?? 0 : job.actualFrames;
+      const progress = Math.max(current?.framesCaptured ?? 0, job.actualFrames, job.resourceFrames?.length ?? 0);
       lines.push(`已采集：${progress} / ${job.requestedFrames} 帧${job.state === 'stopped' && current?.framesCaptured ? '（本地采集未保存）' : job.state !== 'completed' ? '（不代表写盘及分析完成）' : ''}`);
       lines.push(`资源读回：${job.resourceFrames?.length ? `${job.resourceFrames.length} 帧已落盘` :
         job.state === 'completed' ? `旧版仅第 ${job.detailedFrameIndex ?? 1} 帧` : '每帧全部 Buffer、贴图和 RT'}`);
       if (job.captureFile) lines.push(`项目外文件：${job.captureFile}`);
       else if (job.outputDir) lines.push(`项目外目录：${job.outputDir}`);
       if (job.error) lines.push(`失败原因：${job.error}`);
+      const active = ['pending', 'capturing', 'uploading'].includes(job.state);
+      const elapsed = Math.max(0, ((active ? Date.now() : Date.parse(job.updatedAt)) - Date.parse(job.createdAt)) / 1000);
+      lines.push(`耗时：${elapsed.toFixed(1)} 秒`);
+      const detail = current?.progress;
+      if (detail) {
+        const mib = (bytes: number): string => `${(bytes / 1048576).toFixed(1)} MiB`;
+        const count = detail.total > 0 ? (detail.unit === '字节'
+          ? `${mib(detail.completed)} / ${mib(detail.total)}`
+          : `${detail.completed} / ${detail.total} ${detail.unit}`) : '进行中';
+        lines.push(`${active ? '当前阶段' : '结束阶段'}：${detail.phase} · ${count}${detail.detail ? ` · ${detail.detail}` : ''}${detail.bytes !== undefined ? ` · ${mib(detail.bytes)}` : ''}`);
+      }
     }
+    const activeProgress = !!job && ['pending', 'capturing', 'uploading'].includes(job.state);
+    view.progress.hidden = !job;
+    view.progress.max = current?.progress?.total || 1;
+    if (job?.state === 'completed') { view.progress.max = 1; view.progress.value = 1; }
+    else if (current?.progress?.total) view.progress.value = current.progress.completed;
+    else if (activeProgress) view.progress.removeAttribute('value');
+    else view.progress.value = 0;
     if (current?.error) lines.push(`服务错误：${current.error}`);
     if (this.webgpuUiError) lines.push(`操作失败：${this.webgpuUiError}`);
     view.status.textContent = lines.join('\n');
@@ -2268,6 +2285,9 @@ export class DebugTools {
     root.dataset.captureControls = 'true';
     const status = document.createElement('pre');
     status.className = 'debug-dock__pre';
+    const progress = document.createElement('progress');
+    progress.setAttribute('aria-label', '抓帧当前阶段进度');
+    progress.style.cssText = 'display:block;width:100%;height:18px;accent-color:#65b9ff;margin:8px 0';
     const controls = document.createElement('div');
     controls.className = 'debug-dock__actions';
     const inputLabel = document.createElement('label');
@@ -2353,8 +2373,8 @@ export class DebugTools {
     historyRefresh.addEventListener('click', () => void this.refreshWebGpuHistory());
     const historyStatus = document.createElement('span');
     historyControls.append(historySelect, historyOpen, historyRefresh, historyStatus);
-    root.append(status, directoryControls, controls, historyControls);
-    const view = { root, attached: false, status, input, directoryInput, directorySave, directoryStatus, single, burst, stop, view: viewButton,
+    root.append(status, progress, directoryControls, controls, historyControls);
+    const view = { root, attached: false, status, progress, input, directoryInput, directorySave, directoryStatus, single, burst, stop, view: viewButton,
       historySelect, historyOpen, historyRefresh, historyStatus };
     this.webgpuViews.add(view);
     this.paintWebGpuView(view);

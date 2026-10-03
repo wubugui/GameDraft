@@ -146,6 +146,7 @@ SCOPED_PARAM_RULES: list[tuple[str, str, str, str, bool, str | None]] = [
 _WIDGET_JSON_TYPE: dict[str, dict] = {
     "int": {"type": "number"},
     "float": {"type": "number"},
+    "vitality_threshold": {"anyOf": [{"type": "number", "exclusiveMinimum": 0, "maximum": 1}, {"const": "guardSafety"}]},
     # 指定/继承数字控件只改变缺键的编辑方式；类型口径与原 int/float 相同，不收紧旧值。
     "optional_int": {"type": "number"},
     "optional_number": {"type": "number"},
@@ -165,7 +166,7 @@ _WIDGET_JSON_TYPE: dict[str, dict] = {
 }
 
 # 脚手架占位值:必填参数按控件类型给默认
-_SNIPPET_DEFAULTS = {"int": 0, "float": 0, "bool": True}
+_SNIPPET_DEFAULTS = {"int": 0, "float": 0, "bool": True, "vitality_threshold": "guardSafety"}
 
 _CONDITION_HOST_KEY_PATTERN = "[cC]onditions?$"
 
@@ -478,7 +479,7 @@ def _condition_expr(spec: LanguageSpec, ud: UniverseData) -> dict:
                 "propState": {"type": "string"},
                 "burning": {"type": "boolean"},
                 "vitalityOp": {"enum": ["<", "<=", ">", ">="]},
-                "vitality": {"type": "number", "minimum": 0, "maximum": 1},
+                "vitality": {"anyOf": [{"type": "number", "minimum": 0, "maximum": 1}, {"const": "guardSafety"}]},
                 # 燃料(火把养成的耐久)与火势同一张运算符表、同一个 0..1 口径
                 "fuelOp": {"enum": ["<", "<=", ">", ">="]},
                 "fuel": {"type": "number", "minimum": 0, "maximum": 1},

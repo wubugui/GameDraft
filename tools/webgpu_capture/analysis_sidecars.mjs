@@ -10,6 +10,7 @@ const MAX_SIDECAR_BYTES = 128 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
 const MAX_PASS_RAW_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_INPUT_RAW_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_INPUT_RECORDS = 512 * 16;
 const MAX_BUFFER_ITEM_BYTES = 256 * 1024 * 1024;
 const MAX_RESOURCE_TEXTURE_RAW_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_RESOURCE_BUFFER_RAW_BYTES = 1024 * 1024 * 1024;
@@ -119,7 +120,7 @@ async function readSidecarManifest(sourceDir) {
       !Array.isArray(manifest.frames) || !Array.isArray(manifest.passSnapshots) ||
       !Array.isArray(manifest.gpuTimings) ||
       (manifest.inputSnapshots !== undefined && !Array.isArray(manifest.inputSnapshots)) ||
-      (manifest.inputSnapshots?.length ?? 0) > 120 * 1024 ||
+      (manifest.inputSnapshots?.length ?? 0) > 120 * MAX_INPUT_RECORDS ||
       (manifest.aspectSnapshots !== undefined && !Array.isArray(manifest.aspectSnapshots)) ||
       (manifest.aspectSnapshots?.length ?? 0) > 120 * 2048 ||
       (manifest.bufferSnapshots !== undefined && !Array.isArray(manifest.bufferSnapshots)) ||
@@ -479,8 +480,19 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
   }));
   const frameEntries = [...legacy, ...(manifest?.frames ?? []).map(item =>
     ({ ...item, source: 'sidecars.json canvas readback' }))];
+  let checked = 0;
+  const total = frameEntries.length + ['passSnapshots', 'inputSnapshots', 'bufferSnapshots',
+    'aspectSnapshots', 'resourceTextureSnapshots', 'resourceBufferSnapshots']
+    .reduce((count, key) => count + (manifest?.[key]?.length ?? 0), 0);
+  function* progressEntries(items) {
+    options.onProgress?.('校验并关联资源快照', checked, total, '项');
+    for (const item of items) {
+      yield item;
+      options.onProgress?.('校验并关联资源快照', ++checked, total, '项');
+    }
+  }
   const attachedFrames = new Set();
-  for (const item of frameEntries) {
+  for (const item of progressEntries(frameEntries)) {
     try {
       const frame = frameRecord(item, frames);
       if (manifest?.detailedFrameIndex !== undefined &&
@@ -504,7 +516,7 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
   }
 
   const snapshotKeys = new Set();
-  for (const item of manifest?.passSnapshots ?? []) {
+  for (const item of progressEntries(manifest?.passSnapshots ?? [])) {
     try {
       const pass = passRecord(item, frames, passes);
       if (!Number.isSafeInteger(item.afterCommandIndex) || item.afterCommandIndex !== pass.endCommand) {
@@ -581,11 +593,11 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
     [`${item.frameOrdinal}:${item.inputOrdinal}`, item]));
   const copiedInputPng = new Map();
   const copiedInputRaw = new Map();
-  for (const item of manifest?.inputSnapshots ?? []) {
+  for (const item of progressEntries(manifest?.inputSnapshots ?? [])) {
     try {
       const pass = passRecord(item, frames, passes);
       if (!Number.isSafeInteger(item.inputOrdinal) || item.inputOrdinal < 0 ||
-          item.inputOrdinal >= 1024 ||
+          item.inputOrdinal >= MAX_INPUT_RECORDS ||
           inputOrdinals.has(`${item.frameOrdinal}:${item.inputOrdinal}`) ||
           typeof item.bindingName !== 'string' || !item.bindingName.trim() ||
           item.bindingName.length > 160 ||
@@ -720,12 +732,12 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
       inputSnapshots.push(snapshot);
     } catch (error) {
       errors.push({ inputOrdinal: item?.inputOrdinal, passIndex: item?.passIndex,
-        file: item?.file ?? item?.rawFile, reason: error.message });
+        file: item?.rawFile ?? item?.file, reason: error.message });
     }
   }
 
   const bufferOrdinals = new Set();
-  for (const item of manifest?.bufferSnapshots ?? []) {
+  for (const item of progressEntries(manifest?.bufferSnapshots ?? [])) {
     try {
       const pass = passRecord(item, frames, passes);
       if (!Number.isSafeInteger(item.bufferOrdinal) || item.bufferOrdinal < 0 ||
@@ -810,7 +822,7 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
 
   const aspectOrdinals = new Set();
   const aspectKeys = new Set();
-  for (const item of manifest?.aspectSnapshots ?? []) {
+  for (const item of progressEntries(manifest?.aspectSnapshots ?? [])) {
     try {
       const pass = passRecord(item, frames, passes);
       if (pass.type !== 'render' || !['depth', 'stencil'].includes(item.aspect) ||
@@ -911,7 +923,7 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
   }
 
   const resourceTextureKeys = new Set();
-  for (const item of manifest?.resourceTextureSnapshots ?? []) {
+  for (const item of progressEntries(manifest?.resourceTextureSnapshots ?? [])) {
     try {
       frameRecord(item, frames);
       const texture = resources?.textures?.find(value => value.id === item.textureId);
@@ -975,7 +987,7 @@ export async function attachFrameSidecars(captureFile, outputDir, frames, passes
   }
 
   const resourceBufferKeys = new Set();
-  for (const item of manifest?.resourceBufferSnapshots ?? []) {
+  for (const item of progressEntries(manifest?.resourceBufferSnapshots ?? [])) {
     try {
       frameRecord(item, frames);
       const buffer = resources?.buffers?.find(value => value.id === item.bufferId);

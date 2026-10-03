@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ActionDef } from '../data/types';
 import type { PerformanceRelease, PerformanceSession } from './performanceSession';
 import {
@@ -15,6 +15,24 @@ import {
  */
 
 const PRESENTATION = new Set(['waitMs', 'screenFlash', 'setSceneDim', 'playSfx']);
+
+it('后台动作失败同样归还临时效果，并保留 error 原因', async () => {
+  const cleanup = vi.fn();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const manager = new PerformanceSessionManager({
+    runAction: async (_action, session) => {
+      session.effects.add({ cleanup });
+      throw new Error('failed action');
+    },
+    runActionSync: () => {}, isPresentationOnly: () => false,
+    release: {} as PerformanceRelease,
+  });
+  const session = manager.start('failure', [{ type: 'effect', params: {} }]);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(session.finished).toBe(true);
+  expect(cleanup).toHaveBeenCalledExactlyOnceWith('error');
+  manager.destroy(); expect(cleanup).toHaveBeenCalledOnce(); warn.mockRestore();
+});
 
 function makeHarness() {
   const ran: string[] = [];

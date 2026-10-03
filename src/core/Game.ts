@@ -220,7 +220,8 @@ import {
   type ShadowBindingContext,
 } from '../rendering/entityShadowBinding';
 import { ALL_SHADOWS_ON, npcShadowFlags, playerShadowFlags, type EntityShadowFlags } from '../rendering/entityShadowFlags';
-import { resolveContactAo } from '../rendering/contactAo';
+import { resolveContactAo, resolveContactAoDirection } from '../rendering/contactAo';
+import { ContactAoTransition } from '../rendering/contactAoTransition';
 import {
   indirectUpperMoment, lightGroundSources, resolveContactAoSources, type ContactAoSource,
 } from '../rendering/contactAoSources';
@@ -483,6 +484,10 @@ type EntityShadowEntry = {
   flags: EntityShadowFlags;
   /** 这个实体的接触 AO 作者配置（NPC `contactAo` / 场景 `playerContactAo`；热区无，恒缺省）。 */
   aoDef: ContactAoDef | null;
+  /** 当前播放动画的 AO 开关；热区/无精灵实体不提供，维持静态行为。 */
+  animationContactAoEnabled?: () => boolean;
+  /** 每个角色一份动画 AO 过渡，跟 entry 一起销毁。 */
+  animationContactAoTransition?: ContactAoTransition;
   /** 主实例按 flags 熄掉某一样时用的 env 覆盖对象（缓存复用） */
   mainEnv?: ResolvedLightEnv;
 };
@@ -821,8 +826,6 @@ export class Game {
   private planeLightEnvOverride: SceneLightEnv | null = null;
   /** 阴影方向/长度来源（今天=全局 LightEnv 均匀场；将来可换成场景灯光方向场） */
   private currentShadowField: ShadowProjectionField | null = null;
-  /** 光源驱动阴影:时间低通的上帧时间戳(ms) */
-  private shadowDriveLastMs = 0;
   /**
    * 玩家/NPC/热点的投影阴影（key: 'player' / npc.id / `hotspot:<id>`）。
    * F2 性能：ShadowSource 按实体缓存（owner 记录实例身份，实例被过场重建时按需换源），
@@ -1274,9 +1277,11 @@ export class Game {
       },
       onIgniteResult: (result, name) => this.onPlayerIgniteResult(result, name),
       readPlayerPropInput: () => {
-        if (this.stateController.currentState !== GameState.Exploring) return null;
+        const teaching = this.heldPropSystem.isGuardLessonActive
+          && this.stateController.currentState === GameState.ActionSequence;
+        if (this.stateController.currentState !== GameState.Exploring && !teaching) return null;
         return {
-          togglePressed: this.inputManager.consumeKeyJustPressed(PROP_CONTROL_KEYS.toggle),
+          togglePressed: !teaching && this.inputManager.consumeKeyJustPressed(PROP_CONTROL_KEYS.toggle),
           guardHeld: this.inputManager.isKeyDown(PROP_CONTROL_KEYS.guard),
         };
       },
@@ -3137,6 +3142,8 @@ export class Game {
         this.heldPropSystem.setStateAwait(targetId, socket, state, fadeMs, onlyIfBurning),
       playPropVfx: (targetId, socket, effect, point) => this.heldPropSystem.playOneShot(targetId, socket, effect, point),
       lockPropState: (targetId, socket, lock) => this.heldPropSystem.setLock(targetId, socket, lock),
+      acquirePropLock: (targetId, socket, lock) => this.heldPropSystem.acquireLock(targetId, socket, lock),
+      teachPropGuard: (vitality) => this.heldPropSystem.teachGuard(vitality),
       setPropLevel: (propId, level) => this.heldPropSystem.setPropLevel(propId, level),
       igniteBurnable: (target, socket, pointId) => this.burnSystem.igniteBurnable(target, socket, pointId),
       extinguishBurnable: (target, socket) => this.burnSystem.extinguishBurnable(target, socket),
@@ -5398,6 +5405,7 @@ export class Game {
     });
 
     this.stateController.setStateChangeObserver((next, previous) => {
+      if (next !== GameState.ActionSequence && next !== GameState.UIOverlay) this.heldPropSystem.cancelGuardLesson();
       // 控制权从玩家手上收走的那一刻，腿也要收住：不然走路动画在非探索态里继续循环，
       // 人不动、脚步声（与跟脚声）照响（见 Player.settleLocomotion）。
       if (previous === GameState.Exploring && next !== GameState.Exploring) this.player.settleLocomotion();
@@ -7296,6 +7304,7 @@ export class Game {
       owner: this.player,
       flags: playerShadowFlags(sceneData?.playerContactAo),
       aoDef: sceneData?.playerContactAo ?? null,
+      animationContactAoEnabled: () => this.player.sprite.getContactAoEnabled(),
     });
     for (const npc of this.sceneManager.getCurrentNpcs()) {
       this.buildNpcShadowEntry(npc);
@@ -7361,6 +7370,7 @@ export class Game {
       owner: npc,
       flags,
       aoDef: npc.def.contactAo ?? null,
+      animationContactAoEnabled: () => npc.spriteEntity?.getContactAoEnabled() ?? true,
     });
   }
 
@@ -7564,13 +7574,9 @@ export class Game {
   /** 每帧更新投影阴影（位置/剪影/朝向跟随实体）。ShadowSource 复用缓存（F2 性能）；
    *  仍按当前实体列表寻址——实例被过场重建（owner 变化）时就地换源，不更新已不在场的实体。
    *  光源驱动模式(shadowAutoReady)下逐实体走多槽驱动:方向/浓度/软度由光源表解析。 */
-  private updateEntityShadows(): void {
+  private updateEntityShadows(dtMs = 0): void {
     const env = this.currentLightEnv;
     if (!env || this.entityShadows.size === 0) return;
-
-    const now = this.captureClockNow();
-    const dtMs = this.shadowDriveLastMs > 0 ? Math.min(now - this.shadowDriveLastMs, 100) : 16;
-    this.shadowDriveLastMs = now;
 
     const field = this.currentShadowField;
     const playerEntry = this.entityShadows.get('player');
@@ -7583,6 +7589,10 @@ export class Game {
       if (entry.owner !== npc) {
         entry.owner = npc;
         entry.src = this.makeNpcShadowSource(npc);
+        entry.animationContactAoEnabled = () => npc.spriteEntity?.getContactAoEnabled() ?? true;
+        entry.animationContactAoTransition = undefined;
+        entry.flags = npcShadowFlags(npc.def);
+        entry.aoDef = npc.def.contactAo ?? null;
       }
       this.driveEntryShadows(entry, env, field, dtMs);
     }
@@ -7609,8 +7619,8 @@ export class Game {
    * 虚拟灯光，**不能自动 resolve**」。旧的能流模型会算出一组光、按身份绑槽、
    * 再做时间低通——作者既看不懂也改不动，换盏灯就全变，演出上完全没有抓手。
    *
-   * 现在这里**逐帧幂等**：同样的绑定 + 同样的位置永远解出同样的影子。
-   * 没有槽位继承、没有低通、没有隐藏状态。
+   * 投影绑定解算**逐帧幂等**：同样的绑定 + 同样的位置永远解出同样的影子。
+   * 没有槽位继承或光源低通；动画接触 AO 另有独立的浓度过渡。
    *
    * 影子形状只能是**剪影**（角色 mask 经光向剪切，脚边钉住、头边偏移）——
    * 角色本身是一个片，deferred 逐像素与重建面求交会把形状啃烂，这条是用户红线。
@@ -7637,11 +7647,12 @@ export class Game {
     entry: EntityShadowEntry,
     env: ResolvedLightEnv,
     field: ShadowProjectionField | null,
-    _dtMs: number,
+    dtMs: number,
   ): void {
     // 关了投影的实体（castShadow:false）连绑定的剪影也不画，只剩接触阴影。
     const bindings = entry.flags.cast ? this.resolveEntityShadowBindings(entry) : null;
-    const ao = this.contactAoParams(entry, env);
+    const ao = this.contactAoParams(entry, env, dtMs);
+    ao.animationTransition = entry.animationContactAoTransition?.active ?? false;
     const offSlot = (i: number): ResolvedLightEnv => {
       const off = this.getSlotEnv(entry, i, env);
       off.shadow.darkness = 0; off.shadow.contact = 0;
@@ -7694,7 +7705,9 @@ export class Game {
    * 胶囊 AO（脚底接触 AO）这一帧的参数。作者面（制作人 2026-09-24）：`contactAo` 缺省开、方向 AO 缺省也开；
    * 明暗 / 大小不写跟随场景光环境。
    *
-   * 方向来源是作者选项 `dirSource`：
+   * 方向两层：角色 direction > 场景 contactAoDirection > 自动。手动只控制 AO，
+   * 屏幕拖尾方向 / 仰角转换到 M-world 后直接使用，不读取 probe 或灯。
+   * 旧 dirSource 保留为角色显式覆盖，语义如下：
    * - `'lighting'`（缺省，制作人 2026-09-24「ao 方向本来就和间接光强度要一致」）跟角色身上的光一致：
    *   间接光一路（probe 上半球来光，与角色间接光同一份数据）+ 每盏实体灯一路，各投各的影、
    *   按各自照到脚下地面的量加权（`contactAoSources.ts`）。角色没走 probe 受光（没有载荷 / 只借几何）时
@@ -7705,13 +7718,25 @@ export class Game {
    * 浓度上限只认解出来的明暗（`dirStrength`）；缺省档里各路按照度分这份浓度，照不到的灯自然没份。
    * 这是投影剪影"不自动挑灯"（2026-08-20）之外的有意例外：只给接触 AO 用，作者随时能换档。
    */
-  private contactAoParams(entry: EntityShadowEntry, env: ResolvedLightEnv): ContactAoParams {
+  private contactAoParams(entry: EntityShadowEntry, env: ResolvedLightEnv, dtMs = 0): ContactAoParams {
     const wuPerQUnit = this.sceneLighting.wuPerQUnit;
     const ao = resolveContactAo(entry.aoDef, env.shadow);
     // 接触开关只有一个：entry.flags.contact（由 contactAo.enabled 派生，运行时也可单独关）。
     // 主实例画接触 AO 只看这里解出的 ao，不再看 env.shadow.contact——所以关必须关在这里
     // （2026-09-24 真机：只关 flags.contact 时接触 AO 照画）。
     if (!entry.flags.contact) ao.enabled = false;
+    if (entry.animationContactAoEnabled) {
+      if (!ao.enabled || !env.shadow.enabled || !entry.src.isVisible()) {
+        // 丢弃过渡；重现当帧可能同时换动作，要用那时的新目标初始化，不能保留隐藏前的值。
+        entry.animationContactAoTransition = undefined;
+        ao.enabled = false;
+      } else {
+        const transition = entry.animationContactAoTransition ??= new ContactAoTransition();
+        const weight = transition.update(entry.animationContactAoEnabled(), dtMs, ao.fadeInMs, ao.fadeOutMs);
+        ao.darkness *= weight;
+        if (weight === 0) ao.enabled = false;
+      }
+    }
     const rows = this.characterLighting.shadowBasisRows;
     // 看不见的实体影子本来就不画（PlanarEntityShadow.update 首行就藏），不必逐帧查探针、算灯
     if (!ao.enabled || !ao.directional || !rows || !entry.src.isVisible()) return { ao, sources: [], wuPerQUnit };
@@ -7721,9 +7746,14 @@ export class Game {
     const sceneDir = (): [number, number, number] | null =>
       lightDirFromShadowScreenAngle(env.key.azimuthDeg + 180, env.key.elevationDeg, rows);
 
-    if (ao.dirSource === 'scene') return { ao, sources: one(sceneDir()), wuPerQUnit };
+    const direction = resolveContactAoDirection(entry.aoDef, this.sceneManager.currentSceneData?.contactAoDirection);
+    // 手动只产生作者指定的一路；在探针与灯的读取之前返回，实际光照不会改它。
+    if (direction.source === 'manual') {
+      return { ao, sources: one(lightDirFromShadowScreenAngle(direction.azimuthDeg, direction.elevationDeg, rows, 1)), minElevationDeg: 1, wuPerQUnit };
+    }
+    if (direction.source === 'scene') return { ao, sources: one(sceneDir()), wuPerQUnit };
 
-    if (ao.dirSource === 'binding') {
+    if (direction.source === 'binding') {
       const bindings = this.resolveEntityShadowBindings(entry);
       if (!bindings || bindings.length === 0) return { ao, sources: one(sceneDir()), wuPerQUnit };
       const ctx = this.shadowBindingContext(entry);
@@ -11080,7 +11110,7 @@ export class Game {
     this.sceneLighting.setSurfaceTime(this.gameClock.now / 1000);
     // 统一光影：脏才重算场景辐射缓存，稳态是一次布尔判断（零光照计算）。
     this.sceneLighting.update(this.renderer.app.renderer);
-    this.updateEntityShadows();
+    this.updateEntityShadows(worldPaused ? 0 : dt * 1000);
 
     this.renderer.sortEntityLayer(this.player.x, this.player.y);
     this.touchMobileControls?.update();

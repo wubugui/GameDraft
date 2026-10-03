@@ -457,6 +457,9 @@ export interface ActionRegistryDeps {
   ) => Promise<boolean>;
   /** 锁挂件：`lit` 锁定不灭 / `unlit` 点不燃 / `none` 解锁；挂点上没有挂件 ⇒ false */
   lockPropState: (targetId: string, socket: string, lock: 'lit' | 'unlit' | 'none') => boolean;
+  acquirePropLock: (targetId: string, socket: string, lock: 'lit' | 'unlit') => (() => void) | null;
+  /** 等玩家亲手护火到指定火势；取消/没有可操作的火返回 false。 */
+  teachPropGuard: (vitality: number | 'guardSafety') => Promise<boolean>;
   /** 设挂件等级（`setPropLevel`）：没有等级表 / 超范围 ⇒ false */
   setPropLevel: (propId: string, level: number) => boolean;
   /**
@@ -1976,9 +1979,25 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       });
   }, ['target', 'socket', 'state', 'fadeMs', 'onlyIfBurning']);
 
+  /** 阻塞式操作教学：只放行真实护火输入，等实际火势达到数据指定值。 */
+  executor.register('teachPropGuard', async (p) => {
+    const vitality = p.vitality === 'guardSafety' ? 'guardSafety' : parseFiniteNumberParam(p.vitality);
+    const text = d.resolveRichText(String(p.text ?? '')).trim();
+    const subject = d.resolveEmoteTarget('player');
+    if ((vitality !== 'guardSafety' && (vitality === null || vitality <= 0 || vitality > 1)) || !text || !subject
+      || d.stateController.currentState !== GameState.ActionSequence) {
+      throw new Error('teachPropGuard: 需要动作序列态、玩家、提示文字和 (0, 1] 火势或预设安全线');
+    }
+    const dismiss = d.emoteBubbleManager.showSticky(subject, text, { variant: 'speech' });
+    try {
+      if (!await d.teachPropGuard(vitality)) throw new Error('teachPropGuard: 教学取消或没有可操作的火');
+    } finally { dismiss(); }
+  }, ['vitality', 'text']);
+
   /**
    * `lockPropState`：`lock` = `lit` 锁定不灭（风吹不灭——火势只回不掉，照样闪、照样被吹歪——玩家按键也熄不了）/
-   * `unlit` 点不燃（玩家按键点不着）/ `none` 解锁。锁入档。`setPropState` 不受锁影响——动作永远优先。
+   * `unlit` 点不燃（玩家按键点不着）/ `none` 解锁。缺省持久锁入档；lifetime=scope 的临时层由宿主收尾。
+   * `setPropState` 不受锁影响——动作永远优先。
    * 锁通常挂在叙事状态的进入 / 离开动作上（进这段剧情锁、出来解）。
    */
   executor.register('lockPropState', (p) => {
@@ -1994,7 +2013,19 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (!d.lockPropState(target, socket, lock)) {
       console.warn(`lockPropState: ${target}.${socket} 上没有挂件`);
     }
-  }, ['target', 'socket', 'lock']);
+  }, ['target', 'socket', 'lock', 'lifetime']);
+  executor.registerScoped('lockPropState', (p, _origin, scope) => {
+    const target = String(p.target ?? '').trim();
+    const socket = String(p.socket ?? '').trim();
+    const lock = p.lock;
+    if (!target || !socket || !['lit', 'unlit', 'none'].includes(String(lock))) {
+      throw new Error('lockPropState: temporary lock requires target, socket and lit/unlit/none');
+    }
+    const key = JSON.stringify(['lockPropState', target, socket]);
+    if (lock === 'none') { scope.effects!.release(key); return; }
+    const release = d.acquirePropLock(target, socket, lock as 'lit' | 'unlit');
+    if (release) return { key, cleanup: release };
+  });
 
   /**
    * 燃烧系统（A3.8）：`igniteBurnable` 直接点着可燃实例（不走点火表演）——`point` = 模板着火点 id，

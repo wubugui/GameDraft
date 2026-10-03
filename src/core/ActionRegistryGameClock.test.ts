@@ -68,7 +68,7 @@ describe('演出时间走游戏时钟', () => {
     expect(evaluateCondition).not.toHaveBeenCalled();
     expect(randomValue).not.toHaveBeenCalled();
     session.finished = true;
-    for (const cleanup of session.ledger.cleanups) cleanup();
+    session.effects.close();
     expect(releaseAudioOwner).toHaveBeenCalledWith(session);
     await executor.executeAwait(action);
     expect(prepareSfx).toHaveBeenCalledOnce();

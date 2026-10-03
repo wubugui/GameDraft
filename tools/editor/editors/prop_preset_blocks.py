@@ -1903,7 +1903,7 @@ BLOWOUT_TIP = (
 
 #: 玩家操作块 `playerControl` 里表单管着的键。其余键原样透传。
 PLAYER_CONTROL_KEYS = ("litState", "guardState", "outState", "extinguishFadeMs", "igniteFadeMs",
-                       "hintBelow", "guardBlocksRun")
+                       "hintBelow", "guardBlocksRun", "guardSafety")
 #: 快灭提示线缺省（`PROP_CONTROL_DEFAULTS.hintBelow`）
 PLAYER_CONTROL_HINT_BELOW_DEFAULT = 0.8
 #: 「护着火只能走不能跑」缺省（`PROP_CONTROL_DEFAULTS.guardBlocksRun`）
@@ -2552,6 +2552,12 @@ class PropPlayerControlBlock(QWidget):
             self._hint_below.set_tool_tip(PLAYER_CONTROL_HINT_TIP)
             self._hint_below.changed.connect(self._emit)
             form.addRow("快灭提示线", self._hint_below)
+            self._guard_safety = OptionalNumField(
+                0.001, 0.999, 0.05, 3, seed=0.5, parent=self._fields,
+                check_label="写", check_tip="不勾 = 不提供护火教学安全线。")
+            self._guard_safety.set_tool_tip("0..1 火势比例，不含两端。教学低于此值才介入，按住 Q 护到高于此值即放行；不要求满火。")
+            self._guard_safety.changed.connect(self._emit)
+            form.addRow("护火教学安全线", self._guard_safety)
             # 三态而非勾选框：运行时缺省是 true，勾选框的中性态是 false ⇒ 两态就配不出"沿用缺省"
             #（照 playNpcAnimation.loop 的惯例，与本模块 `lit` 同一个道理）
             self._guard_run = TristateBoolCombo(
@@ -2598,6 +2604,7 @@ class PropPlayerControlBlock(QWidget):
             for key, field in self._fades.items():
                 field.set_value(o.get(key))
             self._hint_below.set_value(o.get("hintBelow"))
+            self._guard_safety.set_value(o.get("guardSafety"))
             self._guard_run.set_value(o.get("guardBlocksRun"))
             self._guard_seed = self._guard_run.currentIndex()
         finally:
@@ -2609,6 +2616,7 @@ class PropPlayerControlBlock(QWidget):
                 and all(c.is_untouched() for c in self._states.values())
                 and all(f.is_untouched() for f in self._fades.values())
                 and self._hint_below.is_untouched()
+                and self._guard_safety.is_untouched()
                 and self._guard_run.currentIndex() == getattr(self, "_guard_seed", 0))
 
     def _refresh_title(self) -> None:
@@ -2668,6 +2676,13 @@ class PropPlayerControlBlock(QWidget):
             hb = self._hint_below.value()
             if hb is not None:
                 out["hintBelow"] = hb
+        if self._guard_safety.is_untouched():
+            if "guardSafety" in o:
+                out["guardSafety"] = copy.deepcopy(o["guardSafety"])
+        else:
+            safety = self._guard_safety.value()
+            if safety is not None:
+                out["guardSafety"] = safety
         if self._guard_run.currentIndex() == getattr(self, "_guard_seed", 0):
             if "guardBlocksRun" in o:
                 out["guardBlocksRun"] = copy.deepcopy(o["guardBlocksRun"])

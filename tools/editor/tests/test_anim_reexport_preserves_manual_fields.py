@@ -8,7 +8,7 @@ per-state 的两个字段，**顶层的 `normalBake` 每次重导出都被静默
 本文件钉死两侧：
 - 导出器**自己算得出来**的顶层键（图集布局/世界尺寸/states）必须以新导出为准，不被旧值盖住；
 - 其余顶层键（`normalBake` 及任何旁路工具写的键）必须原样带回；
-- per-state 白名单（referenceSpeed / bubbleAnchor / footOffset）行为不变。
+- per-state 人工字段（referenceSpeed / bubbleAnchor / footOffset / contactAoEnabled）保留。
 """
 from __future__ import annotations
 
@@ -94,6 +94,7 @@ class ReexportPreservesManualFieldsTests(unittest.TestCase):
                     "referenceSpeed": 42,
                     "bubbleAnchor": 0.75,
                     "footOffset": 0.0849,
+                    "contactAoEnabled": False,
                     "手写旁注": "不该被并回",
                 },
             },
@@ -103,11 +104,12 @@ class ReexportPreservesManualFieldsTests(unittest.TestCase):
         self.assertEqual(idle["referenceSpeed"], 42)
         self.assertEqual(idle["bubbleAnchor"], 0.75)
         self.assertEqual(idle["footOffset"], 0.0849)
+        self.assertIs(idle["contactAoEnabled"], False)
         self.assertEqual(idle["frames"], [0, 1, 2], "帧序必须是新导出的")
         self.assertEqual(idle["frameRate"], 8)
         self.assertTrue(idle["loop"])
         self.assertNotIn("手写旁注", idle, "per-state 是白名单，不在名单里的不并回")
-        self.assertEqual(set(PRESERVED_STATE_FIELDS), {"referenceSpeed", "bubbleAnchor", "footOffset"})
+        self.assertEqual(set(PRESERVED_STATE_FIELDS), {"referenceSpeed", "bubbleAnchor", "footOffset", "contactAoEnabled"})
 
     def test_new_export_value_wins_over_old(self) -> None:
         """新导出已显式给值的不被旧值覆盖（两侧同一条规则）。"""

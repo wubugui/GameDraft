@@ -104,7 +104,9 @@
       "emberBelow": 0.35,
       "fadeMs": 500
     },
-    "playerControl": {},
+    "playerControl": {
+      "guardSafety": 0.6
+    },
     "states": {
       "lit": {
         "label": "点着",
@@ -210,7 +212,9 @@
       "emberBelow": 0.35,
       "fadeMs": 500
     },
-    "playerControl": {},
+    "playerControl": {
+      "guardSafety": 0.6
+    },
     "states": {
       "lit": {
         "label": "点着",
@@ -354,7 +358,9 @@
       "emberBelow": 0.35,
       "fadeMs": 500
     },
-    "playerControl": {},
+    "playerControl": {
+      "guardSafety": 0.6
+    },
     "states": {
       "lit": {
         "label": "点着",
@@ -473,7 +479,9 @@
       "emberBelow": 0.35,
       "fadeMs": 500
     },
-    "playerControl": {},
+    "playerControl": {
+      "guardSafety": 0.6
+    },
     "states": {
       "lit": {
         "label": "点着",
@@ -592,7 +600,9 @@
       "emberBelow": 0.35,
       "fadeMs": 500
     },
-    "playerControl": {},
+    "playerControl": {
+      "guardSafety": 0.6
+    },
     "states": {
       "lit": {
         "label": "点着",

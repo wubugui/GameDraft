@@ -14,7 +14,7 @@ import type { SystemNoteDef } from '../data/types';
  * 系统说明卡（玩法需求清单 K4「系统说明卡」；首个用例 = 三把火）。
  *
  * 「当下只交代清楚，解释全放档案里」：世界与其余 HUD 压暗、**被说明的那个读数不压**
- * （`spotlight` 留口子），画面中间一张小卡 = 小图 + 两三行有重点的字；点一下或任意键关；
+ * （`spotlight` 留口子），画面中间一张小卡 = 小图 + 两三行有重点的字；仅按 E 关闭；
  * 关之前世界停住（键盘捕获阶段整帧吞掉，与确认框同一套模态纪律），不设超时。
  *
  * 图先装好再开卡——卡是一次性的，开了之后不做异步重排。
@@ -113,11 +113,10 @@ export async function openSystemNote(
     scrim.hitArea = new Rectangle(0, 0, sw, sh);
     scrim.on('pointerdown', (e) => {
       markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
-      finish();
     });
     root.addChild(scrim);
 
-    // 卡：左小图、右标题 + 正文；底行左「已记入见闻录」、右「点一下继续」+ 点捺
+    // 卡：左小图、右标题 + 正文；底行左「已记入见闻录」、右「按 E 继续」+ 点捺
     const pad = UITheme.spacing.xl;
     const gap = UITheme.spacing.lg;
     const panelW = Math.max(460, Math.min(Math.round(sw * 0.5), 680));
@@ -189,11 +188,11 @@ export async function openSystemNote(
     panel.position.set(Math.round((sw - panelW) / 2), Math.round((sh - panelH) / 2));
     root.addChild(panel);
 
-    // 模态期间键盘全归本卡：先吞传播（面板快捷键/推进监听都不许收到），任意键关
+    // 模态期间键盘全归本卡：吞掉其他键，只有新按下 E 才关闭，避免走路/护火误触。
     const onKey = (e: KeyboardEvent): void => {
       e.stopImmediatePropagation();
-      if (e.repeat) return;
       e.preventDefault();
+      if (e.repeat || e.code !== 'KeyE') return;
       finish();
     };
     window.addEventListener('keydown', onKey, true);

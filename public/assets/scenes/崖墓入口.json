@@ -20,7 +20,7 @@
       "liftKelvin": 6500.0
     },
     "aoStrength": 1.0,
-    "ratioMax": 8.0,
+    "ratioMax": 8,
     "dehaze": 0.0,
     "emissive": {
       "gain": 0.0
@@ -47,8 +47,8 @@
   "acousticSpace": "贴壁_无回",
   "name": "崖墓入口",
   "footstepSet": "纸钱路",
-  "worldWidth": 759.46,
-  "worldHeight": 427.2,
+  "worldWidth": 1536.0,
+  "worldHeight": 2048.0,
   "backgrounds": [
     {
       "image": "background.png",
@@ -57,16 +57,16 @@
     }
   ],
   "spawnPoint": {
-    "x": 352.8,
-    "y": 249.8
+    "x": 670.0,
+    "y": 1090.0
   },
   "hotspots": [
     {
       "id": "T_到跑马梁",
       "type": "transition",
       "label": "",
-      "x": 426.0,
-      "y": 26.6,
+      "x": 870.0,
+      "y": 420.0,
       "interactionRange": 50,
       "data": {
         "targetScene": "跑马梁",
@@ -80,8 +80,8 @@
       "id": "hs_火把",
       "type": "pickup",
       "label": "插在石缝里的火把",
-      "x": 520.0,
-      "y": 340.0,
+      "x": 712.0,
+      "y": 1200.0,
       "interactionRange": 140,
       "data": {
         "itemId": "torch",
@@ -93,8 +93,8 @@
       "id": "H_崖墓入口_神龛",
       "type": "inspect",
       "label": "神龛",
-      "x": 470.0,
-      "y": 280.0,
+      "x": 735.0,
+      "y": 1050.0,
       "interactionRange": 60.0,
       "data": {
         "graphId": "主线_崖墓入口_神龛"
@@ -104,8 +104,8 @@
   "npcs": [
     {
       "id": "new_npc",
-      "x": 109.0,
-      "y": 180.6,
+      "x": 645.0,
+      "y": 990.0,
       "interactionRange": 50,
       "name": "New NPC",
       "animFile": "/resources/runtime/animation/npc_yizhuang_keeper_anim/anim.json",
@@ -118,20 +118,20 @@
       "id": "Zone_崖墓入口_栈道口",
       "polygon": [
         {
-          "x": 322.0,
-          "y": 396.0
+          "x": 0.0,
+          "y": 1490.0
         },
         {
-          "x": 432.0,
-          "y": 396.0
+          "x": 95.0,
+          "y": 1450.0
         },
         {
-          "x": 440.0,
-          "y": 427.2
+          "x": 130.0,
+          "y": 1510.0
         },
         {
-          "x": 314.0,
-          "y": 427.2
+          "x": 0.0,
+          "y": 1590.0
         }
       ],
       "onEnter": [
@@ -147,20 +147,20 @@
       "id": "Zone_崖墓入口_牛头凼口",
       "polygon": [
         {
-          "x": 690.0,
-          "y": 240.0
+          "x": 765.0,
+          "y": 1140.0
         },
         {
-          "x": 759.46,
-          "y": 240.0
+          "x": 840.0,
+          "y": 1135.0
         },
         {
-          "x": 759.46,
-          "y": 350.0
+          "x": 865.0,
+          "y": 1200.0
         },
         {
-          "x": 690.0,
-          "y": 350.0
+          "x": 785.0,
+          "y": 1240.0
         }
       ],
       "onEnter": [
@@ -175,16 +175,16 @@
   ],
   "spawnPoints": {
     "spawn_0": {
-      "x": 347.8,
-      "y": 118.2
+      "x": 735.0,
+      "y": 510.0
     },
     "spawn_1": {
-      "x": 647.2,
-      "y": 325.5
+      "x": 698.0,
+      "y": 1145.0
     },
     "spawn_2": {
-      "x": 388.0,
-      "y": 372.0
+      "x": 205.0,
+      "y": 1460.0
     }
   },
   "camera": {
@@ -212,17 +212,17 @@
           0.7071067811865476
         ]
       ],
-      "ppu": 450.56,
-      "cx": 1024.0,
-      "cy": 576.0
+      "ppu": 337.92,
+      "cx": 768.0,
+      "cy": 1024.0
     },
     "depth_mapping": {
       "invert": false,
-      "scale": 2.5532784130096435,
-      "offset": -0.9589882923126221
+      "scale": 5.559896435928345,
+      "offset": -2.1680887771606447
     },
     "shader": {
-      "depth_per_sy": 0.002219460227272727
+      "depth_per_sy": 0.0029592803030303026
     },
     "depth_tolerance": 0.05,
     "floor_offset": 0.0
@@ -245,6 +245,30 @@
         "风声"
       ],
       "lighting": {
+        "sky": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 1,
+          "hemi": 0
+        },
+        "display": {
+          "ev": 0,
+          "tonemap": "none",
+          "whiteKelvin": 6500,
+          "contrast": 1,
+          "saturation": 1,
+          "lift": 0,
+          "liftKelvin": 6500
+        },
+        "aoStrength": 1,
+        "dehaze": 0,
+        "emissive": {
+          "gain": 0
+        },
+        "giGain": 0,
         "lightFactors": {
           "character": {
             "indirectFactor": 0.3183098861837907,
@@ -253,7 +277,7 @@
             "eChroma": 0
           },
           "particles": {
-            "indirectFactor": 1.0,
+            "indirectFactor": 1,
             "directFactor": 1,
             "totalFactor": 0.3183098861837907,
             "eChroma": 0

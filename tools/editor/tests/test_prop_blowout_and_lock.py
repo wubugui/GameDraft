@@ -4,7 +4,7 @@
 `crossLine`、`src/core/ActionRegistry.ts` 的 `lockPropState`。覆盖（每条对应一个"漏了会静默"的口子）：
 
 1. `lockPropState` 登记面：ACTION_TYPES / _PARAM_SCHEMAS ↔ TS manifest / register 参数名 / 持久化档（save）/
-   不在过场白名单 / 实体引用登记；控件（演员选择器、挂点下拉、三档锁下拉）；往返（最小形态逐字节、悬垂保值）；校验器。
+   过场只许临时模式 / 实体引用登记；控件（演员选择器、挂点下拉、三档锁和生命周期下拉）；往返（最小形态逐字节、悬垂保值）；校验器。
 2. 校验器：`blowout` 基础块 / 状态每条护栏先改坏一次；越线动作与状态进入动作走同一条动作校验链
    （未登记类型、playPropVfx 顶层可省 target / socket、嵌套的不省）；`playerControl` 护栏。
 3. 动作扫描面：越线动作列表进动作总表、保存门 [tag:] 校验、flag 汇总、实发信号目录、信号改名、信号关系（xref）、实体引用扫描。
@@ -87,11 +87,37 @@ def test_lock_registered_on_every_editor_surface() -> None:
     assert man["required"] == {"target", "socket", "lock"} and man["nonEmpty"] == {"target", "socket", "lock"}
     reg = (_ROOT / "src/core/ActionRegistry.ts").read_text("utf-8")
     i = reg.index(f"executor.register('{LOCK}'")
-    assert "['target', 'socket', 'lock']" in reg[i:i + 1500], "register 的 paramNames 与编辑器 schema 对不上"
-    # 锁跟着手持物入档 ⇒ save；也因此不许进过场白名单（过场内禁改存档）
+    assert "['target', 'socket', 'lock', 'lifetime']" in reg[i:i + 1500], "register 的 paramNames 与编辑器 schema 对不上"
+    # 缺省持久锁入档；过场只允许显式选择临时生命周期。
     assert ACTION_PERSISTENCE.get(LOCK) == "save"
     allow = json.loads((_ROOT / "src/data/cutscene_action_allowlist.json").read_text("utf-8"))
-    assert LOCK not in allow
+    assert LOCK in allow
+
+
+@pytest.mark.parametrize("lifetime", ["scope", "persistent", "future-value"])
+def test_lock_lifetime_roundtrip(model, lifetime) -> None:
+    act = {"type": LOCK, "params": {"target": "player", "socket": "right_hand", "lock": "lit", "lifetime": lifetime}}
+    assert _roundtrip(model, act) == act
+
+
+def test_lock_lifetime_picker(model, app) -> None:
+    row = ActionRow({"type": LOCK, "params": {"target": "player", "socket": "right_hand", "lock": "lit"}}, model=model)
+    try:
+        row._param_widgets["lifetime"].set_committed_type("scope")
+        assert row.to_dict()["params"]["lifetime"] == "scope"
+    finally:
+        row.deleteLater()
+
+
+@pytest.mark.parametrize("lifetime,valid", [("scope", True), ("persistent", False), (None, False)])
+def test_cutscene_only_accepts_scoped_lock(model, lifetime, valid) -> None:
+    from tools.editor.validator import _validate_cutscene_steps
+    params = {"target": "player", "socket": "right_hand", "lock": "lit"}
+    if lifetime is not None:
+        params["lifetime"] = lifetime
+    issues = []
+    _validate_cutscene_steps(model, [{"kind": "action", "type": LOCK, "params": params}], "probe", issues)
+    assert (not _errors(issues)) == valid, _errors(issues)
 
 
 def test_lock_target_is_a_registered_actor_ref() -> None:
@@ -455,7 +481,9 @@ def test_player_control_hint_below_default_matches_runtime() -> None:
     m = re.search(r"hintBelow:\s*([\d.]+)", block)
     assert float(m.group(1)) == PLAYER_CONTROL_HINT_BELOW_DEFAULT == _PLAYER_CONTROL_HINT_BELOW_DEFAULT
     # 表单管着的键 = TS 缺省表里的键（新加字段不跟上 = 那个键被当成"不认识的键"透传、编辑不了）
-    assert set(re.findall(r"(\w+):", block)) == set(PLAYER_CONTROL_KEYS)
+    assert set(re.findall(r"(\w+):", block)) == set(PLAYER_CONTROL_KEYS) - {"guardSafety"}
+    # 安全线必须作者显式配置，没有运行时缺省值。
+    assert "guardSafety" in PLAYER_CONTROL_KEYS
 
 
 def test_blowout_form_keys_match_runtime_type() -> None:

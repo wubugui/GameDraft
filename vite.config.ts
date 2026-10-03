@@ -198,6 +198,11 @@ function webgpuCaptureApi(): Plugin {
                 format: qs.get('format'), width: Number(qs.get('width')), height: Number(qs.get('height')),
                 bytesPerRow: Number(qs.get('bytesPerRow')), stream: req, contentLength,
               });
+            } else if (action === 'buffer-batch') {
+              result = await controller.uploadBufferBatch({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: Number(qs.get('frameIndex')), stream: req, contentLength,
+              });
             } else if (action === 'buffer-raw') {
               result = await controller.uploadBufferRaw({
                 jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',

@@ -20,6 +20,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from PySide6.QtWidgets import QApplication, QTableWidgetItem
+from PySide6.QtCore import Qt
 
 from tools.editor.editors.anim_editor import AnimEditor
 from tools.editor.project_model import ProjectModel
@@ -193,6 +194,68 @@ class AnimEditorSaveFidelityTests(unittest.TestCase):
             {"states": {"idle": {"bubbleAnchor": 0.5}}}, old)
         self.assertEqual(merged2["states"]["idle"]["bubbleAnchor"], 0.5)
         self.assertNotIn("走路", merge_preserved_anim_fields({"states": {}}, old)["states"])
+
+    def test_contact_ao_defaults_toggle_save_and_reorder(self) -> None:
+        """默认列不扩写旧包；人工勾选、行重排、保存重载都保值，新动作默认关闭。"""
+        model, root, td = self._temp_model()
+        try:
+            bid = "player_anim"
+            editor = AnimEditor(model)
+            editor._on_select(bid)
+            table = editor._state_table
+
+            def row(name: str) -> int:
+                return next(r for r in range(table.rowCount()) if table.item(r, 0).text() == name)
+
+            for name, enabled in (("idle", True), ("crouch", True), ("walk", False), ("slow_walk", False)):
+                self.assertEqual(table.item(row(name), 6).checkState() == Qt.CheckState.Checked, enabled)
+            self.assertFalse(editor._dirty, "加载默认勾选不得标脏")
+            before, err = editor._build_saved_anim_dict()
+            self.assertIsNone(err)
+            self.assertEqual(before, model.animations[bid])
+
+            table.item(row("idle"), 6).setCheckState(Qt.CheckState.Unchecked)
+            table.item(row("walk"), 6).setCheckState(Qt.CheckState.Checked)
+            self.assertTrue(editor._dirty)
+            table.setCurrentCell(row("walk"), 0)
+            editor._move_selected_state(1)
+            editor._add_state()
+            self.assertEqual(table.item(row("new_state"), 6).checkState(), Qt.CheckState.Unchecked)
+            self.assertTrue(editor._do_save())
+            disk = json.loads((root / "public/resources/runtime/animation" / bid / "anim.json").read_text(encoding="utf-8"))
+            self.assertIs(disk["states"]["idle"]["contactAoEnabled"], False)
+            self.assertIs(disk["states"]["walk"]["contactAoEnabled"], True)
+            self.assertNotIn("contactAoEnabled", disk["states"]["crouch"])
+            self.assertNotIn("contactAoEnabled", disk["states"]["new_state"])
+            editor._on_select(bid)
+            after, err = editor._build_saved_anim_dict()
+            self.assertIsNone(err)
+            self.assertEqual(_canonical(after), _canonical(disk))
+            # 显式 false 在改名后仍是作者配置；重排行元数据不能丢，原状态其它字段也要跟着走。
+            table.item(row("idle"), 0).setText("rest_pose")
+            table.setCurrentCell(row("rest_pose"), 0)
+            editor._move_selected_state(1)
+            self.assertTrue(editor._do_save())
+            renamed, err = editor._build_saved_anim_dict()
+            self.assertIsNone(err)
+            self.assertEqual(renamed["states"]["rest_pose"], disk["states"]["idle"])
+            self.assertNotIn("idle", renamed["states"])
+        finally:
+            td.cleanup()
+
+    def test_contact_ao_validator_rejects_non_booleans(self) -> None:
+        from tools.editor.validator import _validate_animation_contact_ao
+
+        model = ProjectModel()
+        for value in (True, False, "false", 0, 1, None):
+            model.animations = {"probe": {"states": {"idle": {"contactAoEnabled": value}}}}
+            issues = []
+            _validate_animation_contact_ao(model, issues)
+            self.assertEqual(len(issues), 0 if isinstance(value, bool) else 1, repr(value))
+        model.animations = {"probe": {"states": {"idle": {}}}}
+        issues = []
+        _validate_animation_contact_ao(model, issues)
+        self.assertEqual(issues, [])
 
     def test_out_of_range_frame_is_rejected(self) -> None:
         model, _root, td = self._temp_model()

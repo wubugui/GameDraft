@@ -19,7 +19,10 @@ from .editors.scene_lights import validate_lights as _validate_scene_lights
 from .editors.scene_lights import validate_shadow_bindings as _validate_shadow_bindings
 from .file_io import read_json
 from .shared.character_dialogue import resolve_npc_dialogue_graph
-from .shared.contact_ao import contact_ao_issues as _contact_ao_issues
+from .shared.contact_ao import (
+    contact_ao_direction_issues as _contact_ao_direction_issues,
+    contact_ao_issues as _contact_ao_issues,
+)
 from .shared.dialogue_entry_overrides import (
     collect_dialogue_graph_entry_overrides,
     graph_entry_roots,
@@ -1756,6 +1759,7 @@ def validate(model: ProjectModel) -> list[Issue]:
             if hc.get("tetherCueId") and hc["tetherCueId"] not in {c.get("id") for c in model.signal_cues}:
                 issues.append(Issue("error", "config", "game_config", "health.tetherCueId 引用的信号演出不存在"))
     _validate_character_avatars(model, issues)
+    _validate_animation_contact_ao(model, issues)
     _validate_animation_sockets(model, issues)
 
     _validate_items(model, issues)
@@ -1826,7 +1830,8 @@ def _npc_contact_ao_issues(scene: dict) -> list[str]:
     运行时只认「显式 false 才关」、数值越界一律钳住:写成字符串 "false" 或越界不会报错,
     只会画出来和作者以为的不一样。判据在 `shared/contact_ao.contact_ao_issues`(编辑器共用)。
     """
-    out: list[str] = list(_contact_ao_issues(scene.get("playerContactAo"), "玩家"))
+    out: list[str] = list(_contact_ao_direction_issues(scene.get("contactAoDirection"), "场景 contactAoDirection"))
+    out.extend(_contact_ao_issues(scene.get("playerContactAo"), "玩家"))
     for n in scene.get("npcs") or []:
         if isinstance(n, dict) and "contactAo" in n:
             out.extend(_contact_ao_issues(n["contactAo"], f'NPC {n.get("id")}'))
@@ -6160,6 +6165,12 @@ def _append_action_param_ref_issues(
     if t == "lockPropState":
         _lock_prop_state_issues(p, data_type, item_id, issues)
 
+    if t == "teachPropGuard":
+        value = p.get("vitality")
+        if value != "guardSafety" and (not _is_num(value) or not (0 < float(value) <= 1)):
+            issues.append(Issue("error", data_type, item_id,
+                                "teachPropGuard.vitality 必须是 guardSafety 或 (0, 1] 的数值"))
+
     if t == "setActiveIgniter":
         _set_active_igniter_issues(model, p, data_type, item_id, issues)
 
@@ -7613,7 +7624,9 @@ def _held_prop_condition_issues(
             ))
         if has_v:
             v = expr.get(v_key)
-            if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(float(v)):
+            if v_key == "vitality" and v == "guardSafety":
+                pass
+            elif not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(float(v)):
                 issues.append(Issue(
                     "error", data_type, item_id,
                     f"heldProp 条件的 {v_key} 须为 0..1 的数（当前 {v!r}）——运行时当没写，{absent}",
@@ -7902,6 +7915,21 @@ def _player_avatar_states(model: ProjectModel) -> tuple[set[str], str] | None:
     if not isinstance(states, dict):
         return None
     return {str(k) for k in states}, bundle
+
+
+def _validate_animation_contact_ao(model: ProjectModel, issues: list[Issue]) -> None:
+    """逐动画 AO 开关必须是真布尔值；缺省由运行时与编辑器共用的默认表解析。"""
+    for bundle, anim in model.animations.items():
+        states = anim.get("states") if isinstance(anim, dict) else None
+        if not isinstance(states, dict):
+            continue
+        for name, state in states.items():
+            if (isinstance(state, dict) and "contactAoEnabled" in state
+                    and not isinstance(state["contactAoEnabled"], bool)):
+                issues.append(Issue(
+                    "error", "animation", bundle,
+                    f"states[{name}].contactAoEnabled 须为 true/false（当前 {state['contactAoEnabled']!r}）",
+                ))
 
 
 def _validate_animation_sockets(model: ProjectModel, issues: list[Issue]) -> None:
@@ -10733,6 +10761,10 @@ def _prop_player_control_issues(raw: object, pid: str, states: object, issues: l
             ))
         else:
             _prop_coerced_num_warning(v, n, pid, f"playerControl.{key}", issues)
+    safety = raw.get("guardSafety", _ABSENT)
+    if safety is not _ABSENT and (not _is_num(safety) or not (0 < float(safety) < 1)):
+        issues.append(Issue("error", "prop_presets", pid,
+                            "playerControl.guardSafety 必须是 (0, 1) 的数值：护火教学安全线"))
     # 快灭提示线：火势掉到这以下火边出快灭符号（运行时 parsePlayerControl 夹到 0..1；读不出数当没写 = 0.8）
     hb = raw.get("hintBelow", _ABSENT)
     if hb is not _ABSENT:
@@ -11207,6 +11239,8 @@ def _lock_prop_state_issues(p: dict, data_type: str, item_id: str, issues: list[
     运行时缺 target / socket ⇒ warn 一行跳过；`lock` 只认 `"lit"`（锁定不灭）/ `"unlit"`（点不燃）/ `"none"`（解锁），
     别的值 warn 一行、当解锁——作者想锁、结果什么都没锁，所以缺 / 空 / 不认识一律 error。
     """
+    if "lifetime" in p and p["lifetime"] not in ("scope", "persistent"):
+        issues.append(Issue("error", data_type, item_id, "lockPropState.lifetime 必须为 scope 或 persistent"))
     missing = [k for k in ("target", "socket") if not str(p.get(k) or "").strip()]
     if missing:
         issues.append(Issue(
@@ -13348,7 +13382,8 @@ def _validate_cutscene_steps(
                     "error", "cutscene", cid,
                     f"step #{lbl} action type {t!r} 不在 Cutscene 白名单内（Cutscene 仅允许无副作用 Action）",
                 ))
-            if t and ACTION_PERSISTENCE.get(t) == "save" and t not in _CUTSCENE_STAGING_SAVE_ACTIONS:
+            scoped_lock = t == "lockPropState" and (step.get("params") or {}).get("lifetime") == "scope"
+            if t and ACTION_PERSISTENCE.get(t) == "save" and t not in _CUTSCENE_STAGING_SAVE_ACTIONS and not scoped_lock:
                 issues.append(Issue(
                     "error", "cutscene", cid,
                     f"step #{lbl} action type {t!r} 会修改全局存档状态，必须放到 startCutscene 外层 action 列表",

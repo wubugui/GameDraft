@@ -292,6 +292,7 @@ export interface HeldPropStatus {
   burning: boolean;
   /** 火势 0..1；没有 blowout 的恒 1 */
   vitality: number;
+  guardSafety?: number;
   /** 还剩几成燃料 0..1；没有耐久（烧不完）的恒 1 */
   fuel: number;
   /** 挂着的效果块 id 与它们的标签（`heldProp` 条件叶的 `effect` 两样都认） */
@@ -581,6 +582,53 @@ function vitalityBucketOf(v: number): number {
 
 export class HeldPropSystem implements IGameSystem {
   private entries = new Map<string, HeldEntry>();
+  private temporaryLocks = new WeakMap<HeldEntry, Map<symbol, PropLockMode>>();
+
+  /** Each temporary owner releases only its own layer; persistent lock remains the saved base. */
+  acquireLock(targetId: string, socket: string, lock: 'lit' | 'unlit'): (() => void) | null {
+    const key = this.key(targetId.trim(), socket.trim());
+    const entry = this.entries.get(key);
+    if (!entry) return null;
+    let locks = this.temporaryLocks.get(entry);
+    if (!locks) this.temporaryLocks.set(entry, locks = new Map());
+    const token = Symbol();
+    locks.set(token, lock);
+    this.deps.onHeldChanged();
+    return () => {
+      if (!locks.delete(token)) return;
+      if (this.entries.get(key) === entry) this.deps.onHeldChanged();
+    };
+  }
+
+  private effectiveLock(entry: HeldEntry): PropLockMode {
+    let lock = entry.lock;
+    for (const value of this.temporaryLocks.get(entry)?.values() ?? []) lock = value;
+    return lock;
+  }
+  /** 临时操作教学，不入档；世界拆除或控制权被抢走时兑现取消。 */
+  private guardLesson: { entry: HeldEntry; vitality: number; strict: boolean; resolve: (ok: boolean) => void } | null = null;
+
+  get isGuardLessonActive(): boolean { return this.guardLesson !== null; }
+
+  teachGuard(target: number | 'guardSafety'): Promise<boolean> {
+    const pc = this.playerControlled();
+    const strict = target === 'guardSafety';
+    const vitality = strict && pc ? this.deps.getPreset(pc.entry.propId)?.playerControl?.guardSafety : target;
+    if (this.guardLesson || !pc || !pc.entry.resolved.blowout || !pc.entry.resolved.light
+      || !this.hasFuelToBurn(pc.entry) || typeof vitality !== 'number' || !Number.isFinite(vitality) || vitality <= 0 || vitality > 1) {
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve) => { this.guardLesson = { entry: pc.entry, vitality, strict, resolve }; });
+  }
+
+  cancelGuardLesson(): void { this.finishGuardLesson(false); }
+
+  private finishGuardLesson(ok: boolean): void {
+    const lesson = this.guardLesson;
+    this.guardLesson = null;
+    lesson?.resolve(ok);
+    if (ok) this.deps.onHeldChanged();
+  }
   /** 这一帧玩家按键受理没有（演出 / 对话 / 面板里不受理 ⇒ 不出提示符号） */
   private playerInputAccepted = false;
   /**
@@ -904,10 +952,12 @@ export class HeldPropSystem implements IGameSystem {
       out.push({
         target: e.target, socket: e.socket, prop: e.propId, state: e.state,
         burning: this.isBurning(e),
-        vitality: e.vitality, fuel: this.fuelFraction(e),
+        vitality: e.vitality,
+        guardSafety: this.deps.getPreset(e.propId)?.playerControl?.guardSafety,
+        fuel: this.fuelFraction(e),
         effects: [...new Set(e.effects.flatMap((x) => [x.id, ...(x.tags ?? [])]))],
         level: this.getPropLevel(e.propId),
-        lock: e.lock,
+        lock: this.effectiveLock(e),
       });
     }
     return out;
@@ -993,7 +1043,7 @@ export class HeldPropSystem implements IGameSystem {
   }
 
   /** 玩家身上能按键操作的那件：优先右手，其次挂得最早的那件 */
-  private playerControlled(): { entry: HeldEntry; control: Required<PropPlayerControlDef> } | null {
+  private playerControlled(): { entry: HeldEntry; control: Required<Omit<PropPlayerControlDef, 'guardSafety'>> } | null {
     let pick: HeldEntry | null = null;
     for (const e of this.entries.values()) {
       if (e.target !== 'player' || !this.deps.getPreset(e.propId)?.playerControl) continue;
@@ -1050,7 +1100,7 @@ export class HeldPropSystem implements IGameSystem {
       : 0;
     if (input?.togglePressed) {
       if (burning) {
-        if (entry.lock === 'lit') {
+        if (this.effectiveLock(entry) === 'lit') {
           this.deps.log(`玩家熄灭：${entry.propId} 锁定不灭，没熄`);
         } else if (has(control.outState)) {
           entry.playerGuarding = false;
@@ -1059,7 +1109,7 @@ export class HeldPropSystem implements IGameSystem {
       } else if (entry.igniting) {
         // 点到一半再按 T = 停手，那一次已经用掉了
         this.failIgnite(entry, 'failCancel');
-      } else if (entry.lock === 'unlit') {
+      } else if (this.effectiveLock(entry) === 'unlit') {
         this.deps.log(`玩家点火：${entry.propId} 点不燃，没点着`);
         this.deps.onIgniteResult?.('locked', '');
       } else if (has(control.litState)) {
@@ -1082,7 +1132,7 @@ export class HeldPropSystem implements IGameSystem {
    * 按 T 点火（手上的火灭着 / 没点）：宿主给了火种 dep ⇒ 用当前火种开始点（先扣一次）；没给 ⇒ 直接点着（火种落地前的行为，
    * 测试与无背包宿主用）。没设火种 / 用完了 ⇒ 不开始，报结果。
    */
-  private beginIgnite(entry: HeldEntry, control: Required<PropPlayerControlDef>): void {
+  private beginIgnite(entry: HeldEntry, control: Required<Omit<PropPlayerControlDef, 'guardSafety'>>): void {
     if (!this.deps.igniterStatus || !this.deps.consumeIgniterUse) {
       if (!this.hasFuelToBurn(entry)) { this.deps.onIgniteResult?.('spent', ''); return; }
       this.transition(entry.target, entry.socket, control.litState, control.igniteFadeMs);
@@ -1137,7 +1187,7 @@ export class HeldPropSystem implements IGameSystem {
     const preset = this.deps.getPreset(entry.propId);
     const emberState = preset?.blowout?.emberState ?? 'ember';
     if ([control.litState, control.guardState, emberState].includes(entry.state)) return null;
-    if (entry.lock === 'unlit' || !preset?.states?.[control.litState]) return null;
+    if (this.effectiveLock(entry) === 'unlit' || !preset?.states?.[control.litState]) return null;
     if (!this.hasFuelToBurn(entry)) return null;              // 烧完的火把引不着
     const fp = entry.resolved.firePoint;
     return {
@@ -1224,7 +1274,7 @@ export class HeldPropSystem implements IGameSystem {
         mode: ig ? 'igniting' : 'failed',
       };
     }
-    if (!this.playerInputAccepted || !at || entry.lock === 'lit') return null;
+    if (!this.playerInputAccepted || !at || this.effectiveLock(entry) === 'lit') return null;
     // 这里用"当前状态有灯"，不用 isBurning：时断时续断着的那一下 isBurning 是假的，符号会跟着一闪一闪地消失
     if (!(entry.resolved.light && entry.resolved.light.intensity > 0)) return null;
     /**
@@ -1452,6 +1502,9 @@ export class HeldPropSystem implements IGameSystem {
   private stepBlowout(entry: HeldEntry, dt: number): void {
     const b = entry.resolved.blowout;
     if (!b || !(dt > 0)) return;
+    // 教学等真实护火输入；松手既不自动回满，也不在读提示时被吹灭。
+    const teaching = this.guardLesson?.entry === entry;
+    if (teaching && !entry.playerGuarding && entry.extraShelter <= 0) return;
     const outState = b.outState ?? 'out';
     const emberState = b.emberState ?? 'ember';
     if (entry.state === outState) {
@@ -1463,15 +1516,19 @@ export class HeldPropSystem implements IGameSystem {
     const ws = b.windSpeed;
     let v = entry.vitality;
     if (u > ws) {
-      if (entry.lock !== 'lit') v -= ((u - ws) / ws / b.drainSeconds) * dt;
+      if (this.effectiveLock(entry) !== 'lit') v -= ((u - ws) / ws / b.drainSeconds) * dt;
     } else {
       v += ((1 - u / ws) / b.recoverSeconds) * dt;
     }
+    if (teaching) v = Math.max(entry.vitality, v);
     v = v < 0 ? 0 : v > 1 ? 1 : v;
+    const safety = this.deps.getPreset(entry.propId)?.playerControl?.guardSafety;
+    const crossedSafety = safety !== undefined && ((entry.vitality < safety) !== (v < safety)
+      || (entry.vitality > safety) !== (v > safety));
     entry.falling = v < entry.vitality;
     entry.vitality = v;
     const bucket = vitalityBucketOf(v);
-    if (bucket !== entry.vitalityBucket) {
+    if (bucket !== entry.vitalityBucket || crossedSafety) {
       entry.vitalityBucket = bucket;
       this.deps.onHeldChanged();
     }
@@ -1540,6 +1597,7 @@ export class HeldPropSystem implements IGameSystem {
     const k = this.key(targetId.trim(), socket.trim());
     const entry = this.entries.get(k);
     if (!entry) return;
+    if (this.guardLesson?.entry === entry) this.cancelGuardLesson();
     this.entries.delete(k);
     this.rememberFuel(entry);
     this.clearEffectFields(entry);
@@ -1621,7 +1679,7 @@ export class HeldPropSystem implements IGameSystem {
     return [...this.entries.values()].map((e) => ({
       target: e.target, socket: e.socket, prop: e.propId, state: e.state,
       lightIntensity: this.currentBaseIntensity(e), vitality: e.vitality, fuel: this.fuelFraction(e),
-      level: this.getPropLevel(e.propId), lock: e.lock,
+      level: this.getPropLevel(e.propId), lock: this.effectiveLock(e),
     }));
   }
 
@@ -1651,7 +1709,7 @@ export class HeldPropSystem implements IGameSystem {
     }
     for (const e of keep) {
       void this.attach(e.target, e.socket, e.propId, e.state || undefined, e.overrides, {
-        lock: e.lock, vitality: e.vitality, fuel: e.fuelLeft ?? undefined,
+        lock: this.effectiveLock(e), vitality: e.vitality, fuel: e.fuelLeft ?? undefined,
       });
     }
   }
@@ -1739,7 +1797,7 @@ export class HeldPropSystem implements IGameSystem {
       // 火把处的相对气流（场景风 − 人走动，护火挡掉一部分）：火苗倾斜与物理闪烁读同一股风，每帧只算一次
       this.stepAirflow(entry, anchor, dt);
       this.stepHostSpeed(entry, dt);
-      this.stepFuel(entry, dt);
+      if (this.guardLesson?.entry !== entry) this.stepFuel(entry, dt);
       if (entry.igniting) this.stepIgnite(entry, dt);
       if (entry.igniteFailSec > 0) entry.igniteFailSec = Math.max(0, entry.igniteFailSec - dt);
       entry.hintAnchor = anchor
@@ -1757,6 +1815,9 @@ export class HeldPropSystem implements IGameSystem {
       }
       // 火势（风吹灭火）：越线可能切状态 ⇒ 之后重读灯的形状
       this.stepBlowout(entry, dt);
+      if (this.guardLesson?.entry === entry && entry.playerGuarding
+        && (this.guardLesson.strict ? entry.vitality > this.guardLesson.vitality
+          : entry.vitality >= this.guardLesson.vitality)) this.finishGuardLesson(true);
       light = entry.lightDef;
       // 快被吹灭时的时断时续：断着时灯暗到两成（进低通之前乘，暗下去 / 窜起来都是 25 ms 的一下，不是硬切）
       entry.gutterOn = entry.gutter.step(dt, this.currentGutterDuty(entry));
@@ -1892,7 +1953,7 @@ export class HeldPropSystem implements IGameSystem {
    */
   private currentGutterDuty(entry: HeldEntry): number {
     const b = entry.resolved.blowout;
-    if (!b || entry.lock === 'lit') return 1;
+    if (!b || this.effectiveLock(entry) === 'lit') return 1;
     if (entry.state === (b.outState ?? 'out') || entry.state === (b.emberState ?? 'ember')) return 1;
     return gutterDuty(entry.vitality);
   }
@@ -2372,6 +2433,7 @@ export class HeldPropSystem implements IGameSystem {
 
   /** `bumpGeneration` = 让在途的异步挂载作废（读档 / 拆除 / 切场景都要） */
   private clearAll(bumpGeneration: boolean): void {
+    this.cancelGuardLesson();
     if (bumpGeneration) this.generation++;
     if (this.entries.size > 0) this.deps.onHeldChanged();
     if (this.hintPushed) {

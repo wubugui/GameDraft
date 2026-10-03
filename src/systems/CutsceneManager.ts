@@ -1,6 +1,6 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
-import type { ActionExecutor } from '../core/ActionExecutor';
+import { SCOPE_ATTACHED, type ActionExecutor, type ActionExecScope } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
 import type { CutsceneRenderer, ShowSubtitleLayout, CutsceneCameraEasing } from '../rendering/CutsceneRenderer';
@@ -297,6 +297,7 @@ export class CutsceneManager implements IGameSystem {
   /** R9：中止在途 steps 的代际——skip / deserialize / destroy 推进。`skipping` 标志会在 finally
    *  复位，被 parallel race 放弃的轨道靠此代际在其当前 await 归来时终止，不再执行后续步。 */
   private stepEpoch = 0;
+  private actionScope: ActionExecScope | null = null;
   /** R10：「世界已被替换」代际——deserialize / destroy 推进。在飞 startCutscene 的 finally
    *  见过期即不得用过场前快照覆盖刚读入的存档状态，也不重复 cleanup。 */
   private worldEpoch = 0;
@@ -707,6 +708,8 @@ export class CutsceneManager implements IGameSystem {
     /** 本次会话的代际快照：steps 执行与 finally 收尾据此判断是否已被 skip / 读档 / 拆除作废 */
     const stepEpochAtStart = this.stepEpoch;
     const worldEpochAtStart = this.worldEpoch;
+    const actionScope = this.actionExecutor.createScope({ detached: false, temporaryOnly: true });
+    this.actionScope = actionScope;
     this.playbackCutsceneId = id;
     // hideMetaHud 随开演事件一起发：HUD 层要据此决定「三把火/气味」这一列跟不跟着淡出
     // （缺省 false = 不淡出）。别改成让 HUD 回头查 def——UI 不认识过场数据源。
@@ -791,7 +794,7 @@ export class CutsceneManager implements IGameSystem {
           const rawFf = Math.floor(opts?.fastForwardTo ?? 0);
           /** 越界夹回：编辑器传来的下标可能已被删步/重排作废，夹到 [0, len) 保证仍能开演。 */
           const ff = Number.isFinite(rawFf) ? Math.max(0, Math.min(rawFf, steps.length)) : 0;
-          await this.executeSteps(steps, stepEpochAtStart, ff);
+          await this.executeSteps(steps, stepEpochAtStart, ff, actionScope);
         } finally {
           this.actionExecutor.popActionPolicy();
         }
@@ -800,9 +803,12 @@ export class CutsceneManager implements IGameSystem {
       if (this.destroyed) return;
 
     } catch (e) {
+      actionScope.effects!.close('error');
       console.warn(`CutsceneManager: startCutscene "${id}" failed`, e);
       throw e;
     } finally {
+      actionScope.effects!.close(this.skipping ? 'interrupted' : 'done');
+      if (this.actionScope === actionScope) this.actionScope = null;
       if (this.capturePauseDepth > 0 && !this.destroyed) await this.waitForCaptureResume();
       if (this.worldEpoch !== worldEpochAtStart) {
         /** R10：过场中读档 / 整机拆除已接管收尾（deserialize/destroy 已 cleanup + 解绑输入 +
@@ -871,6 +877,7 @@ export class CutsceneManager implements IGameSystem {
   /** 跳过当前演出：结束进行中的画面插值/等待，跳过后续 steps，finally 中 cleanup + 恢复快照。 */
   skip(): void {
     if (!this.playing) return;
+    this.actionScope?.effects?.close('interrupted');
     this.skipping = true;
     /** R9：推进 step 代际——被 parallel race 放弃的在途轨道在 `skipping` 于 finally 复位后
      *  仍会从当前 await 归来，靠代际不再执行后续步（残留 tween / 加回图片 / 对已销毁演员操作） */
@@ -1126,13 +1133,14 @@ export class CutsceneManager implements IGameSystem {
     steps: CutsceneStep[],
     epoch: number,
     fastForwardTo = 0,
+    scope: ActionExecScope = SCOPE_ATTACHED,
   ): Promise<void> {
     for (let i = 0; i < steps.length; i++) {
       if (this.capturePauseDepth > 0) await this.waitForCaptureResume();
       if (this.isStepStale(epoch)) return;
       /** 顶层下标决定快进边界；parallel 子轨随所属顶层步一起快进（读同一实例标志）。 */
       this.setFastForwarding(i < fastForwardTo);
-      await this.executeOneStep(steps[i], String(i), epoch);
+      await this.executeOneStep(steps[i], String(i), epoch, scope);
     }
     this.setFastForwarding(false);
   }
@@ -1226,7 +1234,7 @@ export class CutsceneManager implements IGameSystem {
     });
   }
 
-  private async executeOneStep(step: CutsceneStep, path: string, epoch: number): Promise<void> {
+  private async executeOneStep(step: CutsceneStep, path: string, epoch: number, scope: ActionExecScope = SCOPE_ATTACHED): Promise<void> {
     if (this.capturePauseDepth > 0) await this.waitForCaptureResume();
     if (this.isStepStale(epoch)) return;
     /**
@@ -1253,7 +1261,7 @@ export class CutsceneManager implements IGameSystem {
     let probeRafId = 0;
     if (needBarrier) probeRafId = requestAnimationFrame(() => { framePassed = true; });
     try {
-      await this.executeOneStepBody(step, path, epoch);
+      await this.executeOneStepBody(step, path, epoch, scope);
     } finally {
       if (needBarrier) cancelAnimationFrame(probeRafId);
     }
@@ -1262,7 +1270,7 @@ export class CutsceneManager implements IGameSystem {
     }
   }
 
-  private async executeOneStepBody(step: CutsceneStep, path: string, epoch: number): Promise<void> {
+  private async executeOneStepBody(step: CutsceneStep, path: string, epoch: number, scope: ActionExecScope): Promise<void> {
     if (this.capturePauseDepth > 0) await this.waitForCaptureResume();
     if (this.isStepStale(epoch)) return;
     switch (step.kind) {
@@ -1279,7 +1287,7 @@ export class CutsceneManager implements IGameSystem {
          *  playBgm / 环境音**不在**此列——它们建立音频基线，跳过会让排演起点听感不对
          *  （见 cutscene-audio-reclamation 契约）。 */
         if (this.fastForwarding && CUTSCENE_FAST_FORWARD_SKIP_ACTIONS.has(step.type)) break;
-        await this.actionExecutor.executeAwait({ type: step.type, params: step.params });
+        await this.actionExecutor.executeAwait({ type: step.type, params: step.params }, null, scope);
         break;
       case 'present':
         await this.executePresent(step);
@@ -1296,7 +1304,7 @@ export class CutsceneManager implements IGameSystem {
           check();
         });
         await Promise.race([
-          Promise.all(step.tracks.map((s, j) => this.executeOneStep(s, `${path}.p${j}`, epoch))).then(() => {
+          Promise.all(step.tracks.map((s, j) => this.executeOneStep(s, `${path}.p${j}`, epoch, scope))).then(() => {
             cancelAnimationFrame(skipRafId);
             resolveSkip?.();
           }),
@@ -1844,6 +1852,8 @@ export class CutsceneManager implements IGameSystem {
   }
 
   deserialize(_data: any): void {
+    this.actionScope?.effects?.close('interrupted');
+    this.actionScope = null;
     /** R10：过场中读档必须真正中止在途演出——
      *  (a) 推进 stepEpoch：在途 steps（含被 parallel 放弃的轨道）从当前 await 归来即弃；
      *  (b) 立即落地挂起的 waitClick / 对白 resolve：否则监听已 unsub、promise 永不 resolve，
@@ -1884,6 +1894,8 @@ export class CutsceneManager implements IGameSystem {
   }
 
   destroy(): void {
+    this.actionScope?.effects?.close('interrupted');
+    this.actionScope = null;
     this.destroyed = true;
     const capturePending = [...this.captureResumeCallbacks];
     this.captureResumeCallbacks.clear();

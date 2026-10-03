@@ -1,4 +1,5 @@
 import type { ActionDef, ActionOriginContext } from '../data/types';
+import { ActionEffectScope } from '../core/ActionEffectScope';
 
 /**
  * 脱手演出会话（detached performance session）。
@@ -59,8 +60,6 @@ export interface PerformanceLedger {
   sfxIds: Set<string>;
   /** 本会话放出的粒子实例 id */
   vfxIds: string[];
-  /** Instance-owned presentation resources (audio handles, transient overlays). */
-  cleanups: Set<() => void>;
 }
 
 function emptyLedger(): PerformanceLedger {
@@ -73,7 +72,6 @@ function emptyLedger(): PerformanceLedger {
     gusted: false,
     sfxIds: new Set<string>(),
     vfxIds: [],
-    cleanups: new Set(),
   };
 }
 
@@ -90,6 +88,7 @@ export interface PerformanceRelease {
 }
 
 export class PerformanceSession {
+  readonly effects = new ActionEffectScope();
   readonly id: string;
   readonly actions: ActionDef[];
   /** 开这一批的来源（zone / 图 owner…）。补跑时原样用同一份，不另造上下文 */
@@ -152,6 +151,7 @@ export class PerformanceSessionManager {
     this.sessions.set(id, session);
     void this.run(session).catch((e) => {
       console.warn(`PerformanceSession「${id}」执行失败`, e);
+      session.effects.close('error');
       this.finish(session, 'done');
     });
     return session;
@@ -231,10 +231,7 @@ export class PerformanceSessionManager {
     const L = session.ledger;
     const r = this.deps.release;
 
-    for (const cleanup of L.cleanups) {
-      try { cleanup(); } catch { /* The owning presentation may already have ended. */ }
-    }
-    L.cleanups.clear();
+    session.effects.close(session.endReason === 'interrupted' ? 'interrupted' : 'done');
 
     for (let i = L.vfxIds.length - 1; i >= 0; i--) {
       try {
@@ -312,7 +309,7 @@ export function ledgerTakeVfx(session: PerformanceSession | undefined, id: strin
 export function ledgerTakeCleanup(session: PerformanceSession | undefined, cleanup: () => void): void {
   if (!session) return;
   if (session.finished || session.hurried) { cleanup(); return; }
-  session.ledger.cleanups.add(cleanup);
+  session.effects.add({ cleanup });
 }
 
 export function ledgerTakeShake(session: PerformanceSession | undefined): void {

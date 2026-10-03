@@ -54,6 +54,7 @@
   "emitVfxField",
   "fadeLight",
   "setPropState",
+  "lockPropState",
   "screenFlash",
   "cameraShake",
   "setSceneDim",

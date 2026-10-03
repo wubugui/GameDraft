@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CutsceneManager } from './CutsceneManager';
 import type { NewCutsceneDef } from '../data/types';
+import { ActionEffectScope } from '../core/ActionEffectScope';
 
 /**
  * 过场开演事件要带上「这段过场收不收三把火/气味」（`hideMetaHud`）。
@@ -19,6 +20,7 @@ function installRafStub(): void {
 async function emitOnStart(def: Partial<NewCutsceneDef>): Promise<Record<string, unknown>> {
   const eventBus = { emit: vi.fn(), on: vi.fn(), off: vi.fn() } as any;
   const actionExecutor = {
+    createScope: (base: object) => ({ ...base, effects: new ActionEffectScope() }),
     executeAwait: vi.fn(async () => { /* noop */ }),
     pushActionPolicy: vi.fn(),
     popActionPolicy: vi.fn(),

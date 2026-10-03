@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CutsceneManager } from './CutsceneManager';
 import type { CutsceneStep, NewCutsceneDef } from '../data/types';
+import { ActionExecutor } from '../core/ActionExecutor';
+import { EventBus } from '../core/EventBus';
+import { FlagStore } from '../core/FlagStore';
+import { registerActionHandlers, type ActionRegistryDeps } from '../core/ActionRegistry';
+import cutsceneData from '../../public/assets/data/cutscenes/index.json';
 
 /**
  * 步骤级 `disabled`：数据留着、播放时整步跳过。
@@ -30,6 +35,55 @@ const ACTION = (params: Record<string, unknown> = {}): CutsceneStep =>
 describe('cutscene step disabled', () => {
   beforeEach(installRafStub);
   afterEach(() => { vi.restoreAllMocks(); });
+
+  it.each(['done', 'skip', 'load', 'destroy', 'error'] as const)('跑马梁真实编排：说话保火、大风前释放，%s 不留锁', async how => {
+    const events = new EventBus(), executor = new ActionExecutor(events, new FlagStore(events));
+    let locked = false, reachedGust = false, fireOut = false;
+    const release = vi.fn(() => { locked = false; });
+    registerActionHandlers(executor, {
+      acquirePropLock: () => { locked = true; return release; },
+    } as unknown as ActionRegistryDeps);
+    // Execute the authored timeline and real lock action; unrelated audiovisual work is immediate.
+    const data = Object.values(cutsceneData).find((d: any) => d.id === '跑马梁_纸钱引路') as unknown as NewCutsceneDef;
+    expect(data).toBeDefined();
+    const def = structuredClone(data);
+    const scan = (steps: CutsceneStep[]) => { for (const step of steps) {
+      if (step.kind === 'parallel') scan(step.tracks);
+      else if (step.kind === 'action' && step.type !== 'lockPropState') executor.register(step.type, () => {
+        if (step.type === 'sceneWindGust') { expect(locked).toBe(false); reachedGust = true; }
+        if (step.type === 'setPropState') fireOut = true;
+      });
+    } };
+    scan(def.steps);
+    const renderer = { cleanup: vi.fn(), abortCutsceneOps: vi.fn(), settleFadeOverlaysBeforeCleanup: async () => {} };
+    const mgr = new CutsceneManager(events, {} as any, executor, renderer as any);
+    (mgr as any).cutsceneDefs.set(def.id, def);
+    let resume!: () => void;
+    let speechReached!: () => void;
+    const atSpeech = new Promise<void>(resolve => { speechReached = resolve; });
+    const speechGate = new Promise<void>(resolve => { resume = resolve; });
+    let paused = false;
+    vi.spyOn(mgr as any, 'executePresent').mockImplementation(async (...args: unknown[]) => {
+      if (!paused && (args[0] as { type: string }).type === 'showDialogue') {
+        paused = true; expect(locked).toBe(true); speechReached(); await speechGate;
+        if (how === 'error') throw new Error('present failed');
+      }
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const playing = mgr.startCutscene(def.id);
+    await atSpeech;
+    expect(locked).toBe(true); expect(reachedGust).toBe(false);
+    if (how === 'skip') mgr.skip();
+    if (how === 'load') mgr.deserialize({});
+    if (how === 'destroy') mgr.destroy();
+    if (['skip', 'load', 'destroy'].includes(how)) expect(locked).toBe(false);
+    resume();
+    if (how === 'error') await expect(playing).rejects.toThrow('present failed');
+    else await playing;
+    expect(locked).toBe(false); expect(release).toHaveBeenCalledOnce();
+    expect(reachedGust).toBe(how === 'done'); expect(fireOut).toBe(how === 'done');
+    warn.mockRestore();
+  });
 
   it('禁用的 action 步不执行，启用的照常执行', async () => {
     const { mgr, executeAwait } = makeManager();

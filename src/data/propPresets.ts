@@ -550,6 +550,8 @@ export interface PropPlayerControlDef {
    * 锁定不灭、灭了、演出 / 对话里不出。
    */
   hintBelow?: number;
+  /** 护火教学安全线 (0,1)：条件和教学动作共用；不写则不提供安全线。 */
+  guardSafety?: number;
   /**
    * 护着火的时候只能走不能跑；缺省 true（制作人 2026-09-16：侧身把火拢住还撒腿狂奔不像话，
    * 而且这是护火省燃料的代价——不然一路按着护火键最划算）。
@@ -833,6 +835,8 @@ function parsePlayerControl(v: unknown): PropPlayerControlDef | undefined {
     const n = finiteOrUndefined(c[k]);
     if (n !== undefined && n >= 0) def[k] = n;
   }
+  if (typeof c.guardSafety === 'number' && Number.isFinite(c.guardSafety)
+    && c.guardSafety > 0 && c.guardSafety < 1) def.guardSafety = c.guardSafety;
   const hint = finiteOrUndefined(c.hintBelow);
   if (hint !== undefined) def.hintBelow = clamp01(hint);
   if (typeof c.guardBlocksRun === 'boolean') def.guardBlocksRun = c.guardBlocksRun;

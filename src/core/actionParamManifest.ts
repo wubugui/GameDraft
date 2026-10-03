@@ -432,7 +432,8 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   // point = 贴图上的点 [u, v]（0..1），不写 = 起火点，再没有 = 挂点本身。
   playPropVfx: { required: ['effect'], nonEmpty: ['effect'], optional: ['target', 'socket', 'point'] },
   // 锁挂件：lock = lit 锁定不灭（风吹不灭、玩家熄不了）/ unlit 点不燃（玩家点不着）/ none 解锁。入档（手持物）
-  lockPropState: { required: ['target', 'socket', 'lock'], nonEmpty: ['target', 'socket', 'lock'] },
+  lockPropState: { required: ['target', 'socket', 'lock'], nonEmpty: ['target', 'socket', 'lock'], optional: ['lifetime'] },
+  teachPropGuard: { required: ['vitality', 'text'], nonEmpty: ['text'] },
   // 燃烧系统（A3.8 模板 + 实例）：socket 没写 = target 是当前场景的可燃实体 id（热点 / NPC / 演出生成留下的对象）；
   // 写了 = target 是拿东西的人（player / NPC），烧他这个挂点上的可燃挂件。point = 模板着火点 id（缺省：有点取第一个、没有整体点）
   igniteBurnable: { required: ['target'], nonEmpty: ['target'], optional: ['socket', 'point'] },
@@ -468,7 +469,13 @@ export function getActionParamManifest(type: string): ActionParamManifestEntry |
 
 /** 新增演出参数的构建期契约；不收紧旧雷链的结算参数。Python 兜底与此同口径。 */
 export function presentationActionErrors(type: string, params: Record<string, unknown>): string[] {
+  if (type === 'lockPropState' && params.lifetime !== undefined
+    && params.lifetime !== 'scope' && params.lifetime !== 'persistent') return ['lockPropState.lifetime must be scope or persistent'];
   const errors: string[] = [];
+  if (type === 'teachPropGuard' && params.vitality !== 'guardSafety' && (typeof params.vitality !== 'number'
+    || !Number.isFinite(params.vitality) || params.vitality <= 0 || params.vitality > 1)) {
+    errors.push('vitality must be guardSafety or a finite number in (0, 1]');
+  }
   const number = (key: string, min: number, max = Infinity, integer = false): void => {
     const value = params[key];
     if (value === undefined || value === null) return;
@@ -576,7 +583,7 @@ export const DETACHED_FORBIDDEN_ACTIONS: ReadonlySet<string> = new Set([
   'chooseAction', 'waitClickContinue', 'openShop', 'openMap',
   'startWaterMinigame', 'startSugarWheelMinigame', 'startPaperCraftMinigame',
   'startObjectExamine', 'startPressureHold',
-  'revealDocument', 'showSystemNote',
+  'revealDocument', 'showSystemNote', 'teachPropGuard',
   'triggerDeathTether',
   // 换世界 / 推时间
   'switchScene', 'changeScene', 'endDay', 'advanceTime', 'advanceTimeTo',

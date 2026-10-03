@@ -155,58 +155,8 @@ function startGame(): void {
 }
 
 /**
- * 首启「点击开始」手势门：玩家点一下再进游戏，借这一次用户手势解锁 AudioContext，
- * 保证开场过场首句旁白的配音音画同步（浏览器 autoplay 策略要求先有手势才允许出声；
- * 否则首句配音会被推迟到下一次点击才补播、与字幕错位）。AudioManager 在 init 时会检测
- * 页面已获得的 sticky 用户激活并据此直接解锁。
- * dev / 各预览模式跳过此门，避免阻塞编辑器预览与自动化命令通道。
- */
-function showStartGateThenStart(): void {
-  const overlay = document.createElement('div');
-  overlay.id = 'game-start-gate';
-  overlay.style.cssText = [
-    'position:fixed', 'inset:0', 'z-index:99998', 'display:flex',
-    'flex-direction:column', 'align-items:center', 'justify-content:center',
-    'gap:14px', 'cursor:pointer', 'user-select:none',
-    'background:#0b0d10', 'color:#e8d9b0', 'font-family:system-ui,sans-serif',
-    'text-align:center',
-  ].join(';');
-
-  const title = document.createElement('div');
-  title.textContent = '点击开始';
-  title.style.cssText = 'font-size:28px;letter-spacing:0.3em;font-weight:600;';
-
-  const hint = document.createElement('div');
-  hint.textContent = '点击任意处进入（开启声音）';
-  hint.style.cssText = 'font-size:13px;opacity:0.55;letter-spacing:0.1em;';
-
-  overlay.append(title, hint);
-
-  let started = false;
-  const enter = (): void => {
-    if (started) return;
-    started = true;
-    window.removeEventListener('keydown', enter, true);
-    overlay.remove();
-    startGame();
-  };
-  // pointerdown / touchstart / keydown 任一都构成用户手势，足以解锁音频
-  overlay.addEventListener('pointerdown', enter, { once: true });
-  overlay.addEventListener('touchstart', enter, { once: true });
-  window.addEventListener('keydown', enter, true);
-
-  document.body.appendChild(overlay);
-}
-
-const skipStartGate = Boolean(
-  devMode || playCutscene || devScene || narrativeWarp
-  || waterPreview || sugarWheelPreview || paperCraftPreview
-  // 标题态启动不需要这道门：标题界面本身没有要出声的东西，而玩家点「新游戏 / 继续」
-  // 都会整页重启一次、那一次照常有门。多加一道只是让"回主菜单"多点一下。
-  || startAtTitle,
-);
-/**
- * 先过入口卫兵再决定要不要起游戏：`file://` 这类根本跑不起来的当场说清楚，
+ * 入口检查通过后直接启动游戏；桌面宿主允许自动播放，音频解锁由 AudioManager 管理。
+ * `file://` 这类根本跑不起来的当场说清楚，
  * 存档后端不可用的挂一条横幅（"这次的进度不会留下"），别让人存完档才发现。
  * 卫兵自己不抛——它出问题不该顶掉整个开局。
  */
@@ -219,11 +169,7 @@ void prepareDevWebGpuCapture()
   })
   .then((ok) => {
     if (!ok) return;
-    if (skipStartGate) {
-      startGame();
-    } else {
-      showStartGateThenStart();
-    }
+    startGame();
   });
 
 function destroyGame(): void {

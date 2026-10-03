@@ -15,6 +15,52 @@
  */
 import { describe, expect, it } from 'vitest';
 import { CONTACT_FRAG_WGSL } from './EntityShadow';
+import { ContactAoTransition } from './contactAoTransition';
+import { resolveContactAo } from './contactAo';
+
+describe('动画 AO 浓度过渡', () => {
+  it('首次直接采用动作开关；默认一秒淡出和淡入，终点精确落到 0/1', () => {
+    const fade = new ContactAoTransition();
+    const defaults = resolveContactAo(undefined, { contact: 0.75, contactSize: 1 });
+    const step = (enabled: boolean, ms: number) => fade.update(enabled, ms, defaults.fadeInMs, defaults.fadeOutMs);
+    expect(step(true, 16)).toBe(1);
+    expect(step(false, 500)).toBeCloseTo(0.5);
+    expect(step(false, 500)).toBe(0);
+    expect(fade.active).toBe(false);
+    expect(step(true, 500)).toBeCloseTo(0.5);
+    expect(step(true, 500)).toBe(1);
+    expect(fade.active).toBe(false);
+    expect(new ContactAoTransition().update(false, 16, 250, 150)).toBe(0);
+  });
+
+  it('快速反转从当前浓度继续，重复同目标不会重启；暂停和非法 dt 不推进', () => {
+    const fade = new ContactAoTransition();
+    fade.reset(true);
+    const out = fade.update(false, 50, 250, 150);
+    expect(fade.update(true, 0, 250, 150)).toBe(out);
+    expect(fade.update(true, Number.NaN, 250, 150)).toBe(out);
+    expect(fade.update(true, -10, 250, 150)).toBe(out);
+    const back = fade.update(true, 125, 250, 150);
+    expect(back).toBeGreaterThan(out);
+    expect(back).toBeLessThan(1);
+    expect(fade.update(false, 0, 250, 150)).toBe(back);
+    expect(fade.update(false, 150, 250, 150)).toBe(0);
+  });
+
+  it('同样游戏时间在不同帧率下得到相同浓度，0ms 配置立即完成', () => {
+    const one = new ContactAoTransition();
+    const many = new ContactAoTransition();
+    one.reset(false);
+    many.reset(false);
+    const expected = one.update(true, 120, 250, 150);
+    let actual = 0;
+    for (let i = 0; i < 12; i++) actual = many.update(true, 10, 250, 150);
+    expect(actual).toBeCloseTo(expected, 12);
+    expect(many.update(false, 0, 250, 0)).toBe(0);
+    expect(many.update(true, 0, 0, 150)).toBe(1);
+    expect(many.active).toBe(false);
+  });
+});
 
 const stripComments = (s: string): string => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
@@ -65,6 +111,11 @@ describe('接触 AO 片元(WGSL)的结构', () => {
     const call = /capsuleOmni\(([^;]*)\);/.exec(wMain)?.[1].replace(/\bu\./g, '').replace(/\s+/g, '');
     expect(call).toBe('x,uRadiusWu,max(he,uRadiusWu)');
     expect(wMain).not.toMatch(/max\(x,\s*1e-4\)/);
+  });
+
+  it('GPU 仰角下限读取逐实体参数，手动档不会被 shader 的固定 25° 覆盖', () => {
+    expect(W.fns.get('aoLightDir')).toContain('max(shadowUniforms.uMinElevation, atan2(v.y, hn))');
+    expect(CONTACT_FRAG_WGSL).toContain('uMinElevation: f32');
   });
 });
 

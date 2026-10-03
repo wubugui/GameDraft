@@ -255,6 +255,7 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     ("setPropState", "fadeMs"): 0,
     # 只在燃着时切：缺省 false＝照切不误；不登记的话「打开→不改→保存」会给全项目 setPropState 写上 onlyIfBurning:false
     ("setPropState", "onlyIfBurning"): False,
+    ("lockPropState", "lifetime"): "persistent",
     ("fadeLight", "fadeMs"): 0,
     # 贴屏幕边缺省 false＝气泡只挂在人头上；不登记的话「打开→不改→保存」会给全项目气泡写上 pinOnScreen:false
     ("showSpeechBubble", "pinOnScreen"): False,
@@ -630,7 +631,7 @@ ACTION_TYPES = [
     "persistHotspotEnabled", "setZoneEnabled", "persistZoneEnabled", "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "shopPurchase", "inventoryDiscard",
     "setPlayerAvatar", "resetPlayerAvatar",
-    "attachToSocket", "detachFromSocket", "setPropState", "lockPropState",
+    "attachToSocket", "detachFromSocket", "setPropState", "lockPropState", "teachPropGuard",
     "fadeLight",
     "setSceneDepthFloorOffset", "resetSceneDepthFloorOffset",
     "setCameraZoom", "restoreSceneCameraZoom",
@@ -1303,8 +1304,9 @@ ACTION_PERSISTENCE: dict[str, str] = {
     #（HeldPropSystem.serialize），所以切状态是会落到存档里的事实，不是纯演出。
     "setPropState": "save",
     # 挂件的锁（锁定不灭 / 点不燃）：与状态同一条 HeldPropSystem.serialize 入档（手持物的玩法事实）。
-    # 因此**不进过场白名单**（过场内禁改存档）。
+    # 持久模式入档；过场只允许 lifetime=scope 的临时模式，由宿主作用域自动释放。
     "lockPropState": "save",
+    "teachPropGuard": "save",
     # 场景灯的运行时强度倍率：只活在这一次运行里（HeldPropSystem 的 scale 表不序列化），
     # 所以是 memory；它也因此在过场白名单里（纯表演、不改存档）。
     "fadeLight": "memory",
@@ -1653,7 +1655,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
                      ("onlyIfBurning", "bool")],
     # 挂件的锁：lock 必填三选一——lit 锁定不灭（风压不掉火势、玩家 T 熄不灭）/ unlit 点不燃（玩家 T 点不着）/
     # none 解锁。setPropState 永远不受锁影响。
-    "lockPropState": [("target", "str"), ("socket", "str"), ("lock", "str")],
+    "lockPropState": [("target", "str"), ("socket", "str"), ("lock", "str"), ("lifetime", "str")],
+    "teachPropGuard": [("vitality", "vitality_threshold"), ("text", "str")],
     # 场景灯的运行时强度倍率（0 = 吹灭门口那盏灯笼）。**手持火把不走这条**，走 setPropState。
     "fadeLight": [("lightId", "str"), ("scale", "float"), ("fadeMs", "int")],
     "setSceneDepthFloorOffset": [("floor_offset", "float")],
@@ -7868,6 +7871,11 @@ class ActionRow(QWidget):
                                          maximum=1 if pname == "reduction" else 1000000,
                                          required=ptype == "health_number")
                 w.changed.connect(self.changed)
+            elif ptype == "vitality_threshold":
+                from .vitality_threshold_field import VitalityThresholdField
+                w = VitalityThresholdField(self)
+                w.setValue(params.get(pname, "guardSafety"))
+                w.valueChanged.connect(lambda _v: self.changed.emit())
             elif ptype == "float":
                 w = QDoubleSpinBox(self)
                 if act_type in (
@@ -8455,7 +8463,7 @@ class ActionRow(QWidget):
                 w.setToolTip(
                     "与 showEmote 相同：NPC、热点 id 或 player；对白气泡锚在展示图上沿。",
                 )
-            elif act_type == "showSpeechBubble" and pname == "text":
+            elif act_type in ("showSpeechBubble", "teachPropGuard") and pname == "text":
                 w = EmoteBubbleParamWidget(
                     self,
                     self._ctx_model,
@@ -8629,15 +8637,19 @@ class ActionRow(QWidget):
                     "哪个挂点上的挂件；与目标动画包 sockets.json 里的键一致。\n"
                     "候选来自上面那个 target 的动画包（在动画编辑器的「挂点」区标）。")
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "lockPropState" and pname == "lifetime":
+                w = _enum_combo(self, [("persistent", "持久（存档）"), ("scope", "临时（随本段结束）")], str(val) if val is not None else "persistent")
+                w.setToolTip("临时锁不入档，本段结束、跳过或中断自动释放。\n同一段内用临时 + 解锁提前释放；只释放本段的锁。过场内必须选临时。")
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
             elif act_type == "lockPropState" and pname == "lock":
                 # 短枚举（三档）走下拉；空值那一行是"还没选"（manifest 必填非空，校验器报 error），
                 # 数据里的未知值保值展示（_enum_combo 追加「未知」行）。
                 w = _enum_combo(self, _PROP_LOCK_ROWS, str(val) if val is not None else "")
                 w.setToolTip(
-                    "挂件的锁（进存档，手持物）：\n"
+                    "挂件的锁（是否入档由生命周期决定）：\n"
                     "· 锁定不灭（lit）：风压不掉火势（只回不掉，照样闪、照样被吹歪），玩家按 T 也熄不灭；\n"
                     "· 点不燃（unlit）：玩家按 T 点不着；\n"
-                    "· 解锁（none）：风照常能吹灭、玩家照常能点 / 熄。\n"
+                    "· 解锁（none）：持久模式清除基础锁；临时模式只释放本段的锁。\n"
                     "setPropState 不受锁影响——动作永远优先。锁通常挂在叙事状态的进入 / 离开动作上（进这段剧情锁、出来解）。")
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
             elif act_type == "playPropVfx" and pname == "target":
@@ -8801,6 +8813,8 @@ class ActionRow(QWidget):
                 w.textChanged.connect(self.changed)
             self._param_widgets[pname] = w
             labels = {
+                ("lockPropState", "lifetime"): ("生命周期", "持久锁进存档；临时锁随本段结束、跳过或中断自动释放，过场必须选临时。"),
+                ("teachPropGuard", "vitality"): ("护火放行阈值", "预设安全线：严格高于它就放行；指定数值：达到该值放行（兼容旧编排）。"),
                 ("duckAudio", "id"): ("压音层名称", "restoreAudio 按此名称还原同一会话的压音层；本会话自己的声音不被这层压低。"),
                 ("duckAudio", "holdMs"): ("普通批兜底时长（ms）", "仅无会话的普通动作批使用墙钟兜底，未指定或不大于 0 时为 20000ms。脱手演出忽略此值，由会话托管：结束自动还原，打断立即还原；自然结束保留已开始的还原渐变。"),
                 ("restoreAudio", "id"): ("压音层名称", "还原同一会话内最早的同名压音层，不影响其它会话。"),
@@ -9842,6 +9856,8 @@ class ActionRow(QWidget):
                 value = w.value()
                 if value is not HEALTH_ABSENT:
                     params[pname] = value
+            elif ptype == "vitality_threshold":
+                params[pname] = w.value()
             elif ptype == "float":
                 params[pname] = float(w.value())
             elif ptype == "bool":

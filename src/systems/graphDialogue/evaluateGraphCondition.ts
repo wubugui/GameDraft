@@ -274,7 +274,9 @@ function heldPropMismatch(expr: HeldPropConditionLeaf, s: HeldPropConditionStatu
     return `效果=${(s.effects ?? []).join('、') || '没有'}`;
   }
   const op = expr.vitalityOp ? HELD_VITALITY_OPS[expr.vitalityOp] : undefined;
-  if (op && typeof expr.vitality === 'number' && !op(s.vitality, expr.vitality)) return `火势=${s.vitality.toFixed(2)}`;
+  const threshold = expr.vitality === 'guardSafety' ? s.guardSafety : expr.vitality;
+  if (op && expr.vitality === 'guardSafety' && threshold === undefined) return '未配置护火教学安全线';
+  if (op && typeof threshold === 'number' && !op(s.vitality, threshold)) return `火势=${s.vitality.toFixed(2)}`;
   const fop = expr.fuelOp ? HELD_VITALITY_OPS[expr.fuelOp] : undefined;
   if (fop && typeof expr.fuel === 'number' && !fop(s.fuel ?? 1, expr.fuel)) return `燃料=${(s.fuel ?? 1).toFixed(2)}`;
   return null;
@@ -695,7 +697,7 @@ export function evaluateConditionExprWithTrace(
       expr.socket && `挂点=${expr.socket}`, expr.prop && `挂件=${expr.prop}`, expr.propState && `状态=${expr.propState}`,
       typeof expr.burning === 'boolean' && (expr.burning ? '燃着' : '没燃'), expr.lock && `锁=${expr.lock}`,
       expr.effect && `效果=${expr.effect}`,
-      expr.vitalityOp && typeof expr.vitality === 'number' && `火势${expr.vitalityOp}${expr.vitality}`,
+      expr.vitalityOp && (typeof expr.vitality === 'number' || expr.vitality === 'guardSafety') && `火势${expr.vitalityOp}${expr.vitality === 'guardSafety' ? '预设安全线' : expr.vitality}`,
       expr.fuelOp && typeof expr.fuel === 'number' && `燃料${expr.fuelOp}${expr.fuel}`,
     ].filter(Boolean).join(' ');
     const label = `heldProp「${expr.heldProp.trim() || '—'}」期望=${want || '拿着东西'} 实际=${got}`;

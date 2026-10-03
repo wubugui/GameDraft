@@ -1,8 +1,7 @@
 /** WebGPU Inspector's local capture, driven by the dev server for both F2 and agents. */
 import type { RhiDevice } from '../rendering/rhi/RhiDevice';
-import { captureFrameDiagnostics, visualizeCapturedAspectPixels, visualizeCapturedInputPixels, visualizeCapturedPassPixels,
-  visualizeCapturedResourceTexture,
-  type CapturedFrameDiagnostics } from './webgpuFrameDiagnostics';
+import { captureFrameDiagnostics, type CapturedFrameDiagnostics } from './webgpuFrameDiagnostics';
+import { WebGpuCapturePngEncoder } from './webgpuCapturePngEncoder';
 
 const API = '/__gamedraft-api/webgpu-capture';
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -10,11 +9,19 @@ const UPLOAD_TIMEOUT_MS = 120_000;
 const FINAL_UPLOAD_TIMEOUT_MS = 3_600_000;
 const HEARTBEAT_MS = 1_000;
 const READBACK_TIMEOUT_MS = 30_000;
-const PNG_ENCODE_TIMEOUT_MS = 30_000;
 const MAX_FRAME_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_FRAME_IMAGES_BYTES = 16 * 1024 * 1024 * 1024;
 const MAX_RESOURCE_IMAGES_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_CAPTURE_BYTES = 1024 * 1024 * 1024;
+
+export interface WebGpuCaptureProgress {
+  phase: string;
+  completed: number;
+  total: number;
+  unit: string;
+  bytes?: number;
+  detail?: string;
+}
 
 export interface WebGpuCaptureJob {
   id: string;
@@ -31,6 +38,7 @@ export interface WebGpuCaptureJob {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  progress?: WebGpuCaptureProgress;
 }
 
 export interface WebGpuCaptureHistoryItem {
@@ -73,14 +81,16 @@ interface FrameDiagnosticBatch {
   cancelled: boolean;
   failed: boolean;
   submissionCounts: number[];
+  resourceIds: Set<number>;
 }
 
+
 interface Inspector {
-  beginFrameCapture(options: { maxBufferSize: number; maxTextureSize: number }): void;
+  beginFrameCapture(options: { maxBufferSize: number; maxTextureSize: number; resetValidationErrors?: boolean }): void;
   endFrameCapture(): void;
   disableRecording(): void;
   enableRecording(): void;
-  saveCaptureData(filename: string, options: { download: false }): Promise<CaptureStream>;
+  saveCaptureData(filename: string, options: { download: false; resourceIds?: number[]; externalResourceSnapshots?: boolean }): Promise<CaptureStream>;
   captureStreamToBlob(stream: CaptureStream): Blob;
 }
 
@@ -141,6 +151,21 @@ async function api<T>(method: 'GET' | 'POST' | 'PUT', query: Record<string, stri
   }
 }
 
+async function forEachCaptureItem<T>(items: T[], concurrency: number,
+    callback: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  let failed = false;
+  let error: unknown;
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (!failed && next < items.length) {
+      const index = next++;
+      try { await callback(items[index], index); }
+      catch (reason) { if (!failed) error = reason; failed = true; }
+    }
+  }));
+  if (failed) throw error;
+}
+
 export class WebGpuCaptureClient {
   private readonly bootId: string;
   private readonly sceneId: () => string | undefined;
@@ -171,6 +196,19 @@ export class WebGpuCaptureClient {
   private frameImages: FrameImageBatch | null = null;
   private frameDiagnostics: FrameDiagnosticBatch | null = null;
   private resumeFrameLoop: (() => void) | null = null;
+  private progress: WebGpuCaptureProgress | undefined;
+  private lastProgressPaint = 0;
+  private pngEncoder: WebGpuCapturePngEncoder | null = null;
+
+  private reportProgress(progress: WebGpuCaptureProgress): void {
+    const changedPhase = this.progress?.phase !== progress.phase;
+    this.progress = progress;
+    const now = performance.now();
+    if (changedPhase || progress.completed === progress.total || now - this.lastProgressPaint >= 100) {
+      this.lastProgressPaint = now;
+      if (!this.disposed) this.onChange();
+    }
+  }
 
   constructor(options: {
     bootId: string;
@@ -196,10 +234,12 @@ export class WebGpuCaptureClient {
     this.onChange = options.onChange;
   }
 
-  get status(): { ready: boolean; reason: string; job: WebGpuCaptureJob | null; framesCaptured: number; error: string; frozen: boolean } {
+  get status(): { ready: boolean; reason: string; job: WebGpuCaptureJob | null; framesCaptured: number; error: string; frozen: boolean; progress?: WebGpuCaptureProgress } {
     return { ready: this.registeredReady, reason: this.unreadyReason,
       job: this.latestJob, framesCaptured: this.framesCaptured, error: this.serviceError,
-      frozen: this.resumeFrameLoop !== null };
+      frozen: this.resumeFrameLoop !== null,
+      progress: this.latestJob?.state !== 'capturing' && this.latestJob?.state !== 'pending'
+        ? this.latestJob?.progress ?? this.progress : this.progress };
   }
 
   async history(limit = 20): Promise<WebGpuCaptureHistoryItem[]> {
@@ -227,6 +267,7 @@ export class WebGpuCaptureClient {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.releasePngEncoder();
     if (this.timer !== null) window.clearInterval(this.timer);
     this.timer = null;
     const jobs = [this.activeJob, this.exportingJob].filter((job): job is WebGpuCaptureJob => job !== null);
@@ -292,6 +333,7 @@ export class WebGpuCaptureClient {
         this.finishedLocallyJobId = null;
         this.latestJob = job;
         this.framesCaptured = 0;
+        this.progress = undefined;
       }
       this.serviceError = '';
       this.onChange();
@@ -304,6 +346,7 @@ export class WebGpuCaptureClient {
     const job = this.latestJob;
     if (!job || !['pending', 'capturing', 'uploading'].includes(job.state)) throw new Error('当前没有可停止的抓帧任务');
     this.stoppedJobIds.add(job.id);
+    this.releasePngEncoder();
     if (this.stoppedJobIds.size > 32) this.stoppedJobIds.delete(this.stoppedJobIds.values().next().value!);
     if (this.finalUpload?.jobId === job.id) this.finalUpload.controller.abort();
     if (this.frameImages?.jobId === job.id) this.frameImages.cancelled = true;
@@ -375,13 +418,14 @@ export class WebGpuCaptureClient {
             return;
           }
           this.activeJob = job;
+          this.progress = undefined;
           this.framesCaptured = 0;
           this.frameImages = this.readFramePixels ? {
             jobId: job.id, uploads: Promise.resolve(), bytes: 0, failed: false, cancelled: false,
           } : null;
           this.frameDiagnostics = {
             jobId: job.id, uploads: Promise.resolve(), active: null,
-            busy: false, cancelled: false, failed: false, submissionCounts: [],
+            busy: false, cancelled: false, failed: false, submissionCounts: [], resourceIds: new Set(),
           };
           // Explicit stepping owns the whole frame, including offscreen GPU work
           // performed by Game.tick before Application.render composites the stage.
@@ -448,7 +492,10 @@ export class WebGpuCaptureClient {
     }
     let diagnostic: ReturnType<typeof captureFrameDiagnostics>;
     try {
-      diagnostic = captureFrameDiagnostics(rhi, inspector);
+      this.reportProgress({ phase: `第 ${frameIndex} 帧：录制 GPU 命令`, completed: 0, total: 0, unit: '' });
+      diagnostic = captureFrameDiagnostics(rhi, inspector, (completed, total, bytes) => {
+        if (this.isCurrentJob(job)) this.reportProgress({ phase: `第 ${frameIndex} 帧：GPU 读回`, completed, total, unit: '项', bytes });
+      });
       batch.active = diagnostic;
     } catch (error) {
       try { draw(); }
@@ -459,7 +506,7 @@ export class WebGpuCaptureClient {
       // Inspector keeps game commands, object IDs and descriptors. Native resource
       // payloads are exported by the per-frame RHI sidecars, including pre-Draw
       // inputs and frame-end live objects, so its automatic copies are duplicate.
-      inspector.beginFrameCapture({ maxBufferSize: 0, maxTextureSize: 0 });
+      inspector.beginFrameCapture({ maxBufferSize: 0, maxTextureSize: 0, resetValidationErrors: frameIndex === 1 });
     } catch (error) {
       diagnostic.cancel();
       batch.active = null;
@@ -524,6 +571,16 @@ export class WebGpuCaptureClient {
       try {
         const diagnostics = await result;
         if (batch.cancelled || !this.isCurrentJob(job)) return;
+        // An incomplete frame cannot pass the final server validation. Report it
+        // before spending minutes encoding and persisting unusable sidecars.
+        if (diagnostics.warning) throw new Error(`本帧数据不完整：${diagnostics.warning}`);
+        for (const item of [...diagnostics.inputs, ...diagnostics.aspects, ...diagnostics.resourceTextures]) {
+          if (item.textureId !== null) batch.resourceIds.add(item.textureId);
+          if ('viewId' in item && item.viewId !== null) batch.resourceIds.add(item.viewId);
+        }
+        for (const item of [...diagnostics.buffers, ...diagnostics.resourceBuffers]) {
+          if (item.bufferId !== null) batch.resourceIds.add(item.bufferId);
+        }
         batch.submissionCounts[frameIndex - 1] = diagnostics.submissionCount;
         await this.exportDiagnostics(job, frameIndex, diagnostics);
         if (images) await images.uploads;
@@ -596,46 +653,18 @@ export class WebGpuCaptureClient {
     }
   }
 
+  private getPngEncoder(): WebGpuCapturePngEncoder {
+    return this.pngEncoder ??= new WebGpuCapturePngEncoder();
+  }
+
   private encodeFrameImage(frame: FramePixels | null, unpremultiply = true): Promise<Blob> {
     if (!frame) throw new Error('GPU 画布没有可回读的图像');
-    const { pixels, width, height } = frame;
-    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 ||
-        !Number.isSafeInteger(width * height * 4) || pixels.length !== width * height * 4) {
-      throw new Error('GPU 回读尺寸与 RGBA8 数据不匹配');
-    }
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('浏览器无法创建 PNG 编码画布');
-    const imageData = context.createImageData(width, height);
-    imageData.data.set(pixels);
-    const rgba = imageData.data;
-    // The RHI returns premultiplied bytes; ImageData expects straight alpha.
-    if (unpremultiply) {
-      for (let i = 0; i < rgba.length; i += 4) {
-        const alpha = rgba[i + 3];
-        if (alpha > 0 && alpha < 255) {
-          rgba[i] = Math.min(255, Math.round(rgba[i] * 255 / alpha));
-          rgba[i + 1] = Math.min(255, Math.round(rgba[i + 1] * 255 / alpha));
-          rgba[i + 2] = Math.min(255, Math.round(rgba[i + 2] * 255 / alpha));
-        }
-      }
-    }
-    context.putImageData(imageData, 0, 0);
-    return new Promise<Blob>((resolve, reject) => {
-      const timeout = window.setTimeout(() => reject(new Error('PNG 编码超时')), PNG_ENCODE_TIMEOUT_MS);
-      try {
-        canvas.toBlob((blob) => {
-          window.clearTimeout(timeout);
-          if (!blob || blob.size === 0 || blob.type !== 'image/png') reject(new Error('浏览器未生成有效 PNG'));
-          else resolve(blob);
-        }, 'image/png');
-      } catch (error) {
-        window.clearTimeout(timeout);
-        reject(error);
-      }
-    });
+    return this.getPngEncoder().encode({ kind: 'rgba', ...frame, unpremultiply });
+  }
+
+  private releasePngEncoder(): void {
+    this.pngEncoder?.dispose();
+    this.pngEncoder = null;
   }
 
   private isCurrentJob(job: WebGpuCaptureJob): boolean {
@@ -649,7 +678,10 @@ export class WebGpuCaptureClient {
     try {
       await diagnostics.uploads;
       if (!this.isCurrentJob(job) || diagnostics.cancelled || images?.cancelled) return;
-      const stream = await inspector.saveCaptureData(`${job.id}.wgpuc`, { download: false });
+      this.reportProgress({ phase: '整理抓帧命令与资源索引', completed: 0, total: 0, unit: '' });
+      await new Promise(resolve => window.setTimeout(resolve, 0));
+      const stream = await inspector.saveCaptureData(`${job.id}.wgpuc`, { download: false,
+        resourceIds: [...diagnostics.resourceIds], externalResourceSnapshots: true });
       saved = true;
       if (diagnostics.submissionCounts.length !== actualFrames ||
           diagnostics.submissionCounts.some(count => !Number.isSafeInteger(count) || count < 1)) {
@@ -666,6 +698,7 @@ export class WebGpuCaptureClient {
       if (images) await images.uploads;
       if (!this.isCurrentJob(job) || diagnostics.cancelled || images?.cancelled) return;
       const controller = new AbortController();
+      this.reportProgress({ phase: '写入抓帧文件', completed: 0, total: blob.size, unit: '字节' });
       this.finalUpload = { jobId: job.id, controller };
       const result = await api<WebGpuCaptureJob>('PUT', {
         action: 'upload', jobId: job.id, targetBootId: this.bootId,
@@ -686,6 +719,7 @@ export class WebGpuCaptureClient {
       if (this.frameDiagnostics === diagnostics) {
         this.frameDiagnostics = null;
         this.releaseFrameLoop();
+        this.releasePngEncoder();
       }
       if (!this.disposed) this.onChange();
     }
@@ -728,42 +762,103 @@ export class WebGpuCaptureClient {
     const pendingUploads = new Set<Promise<void>>();
     let uploadFailed = false;
     let uploadError: unknown;
-    const upload = async (query: Record<string, string>, blob: Blob): Promise<void> => {
+    let uploadedFiles = 0;
+    let uploadedBytes = 0;
+    let processed = 0;
+    const total = diagnostics.passes.length + diagnostics.inputs.length + diagnostics.aspects.length +
+      diagnostics.buffers.length + diagnostics.resourceTextures.length + diagnostics.resourceBuffers.length;
+    const report = (): void => {
+      if (this.isCurrentJob(job)) this.reportProgress({
+        phase: `第 ${frameIndex} 帧：编码与写盘`,
+        detail: `${uploadedFiles} 个文件已落盘 · ${this.pngEncoder?.backend === 'web-worker' ? `${this.pngEncoder.workerCount} 个 PNG Worker` : this.pngEncoder?.fallbackReason ?? '准备 PNG 编码器'}`,
+        completed: processed, total, unit: '项', bytes: uploadedBytes,
+      });
+    };
+    report();
+    const upload = async (query: Record<string, string>, blob: Blob,
+      accounting?: { files: number; bytes: number; limit: number }): Promise<void> => {
+      if (!this.isCurrentJob(job)) throw new Error('抓帧任务已取消');
+      while (pendingUploads.size >= (accounting?.limit ?? (blob.size <= 64 * 1024 ? 16 : 4))) {
+        await Promise.race(pendingUploads);
+      }
       if (uploadFailed) throw uploadError;
-      const task = api('PUT', query, blob).then(() => {}, (error) => {
+      const task = api('PUT', query, blob).then(() => {
+        uploadedFiles += accounting?.files ?? 1;
+        uploadedBytes += accounting?.bytes ?? blob.size;
+        report();
+      }, (error) => {
         if (!uploadFailed) uploadError = error;
         uploadFailed = true;
       }).finally(() => { pendingUploads.delete(task); });
       pendingUploads.add(task);
-      if (pendingUploads.size >= 4) await Promise.race(pendingUploads);
+      // Small Buffer files otherwise spend almost all their time waiting for fsync.
+      // Keep large texture uploads bounded to four to avoid multiplying peak RAM.
+
       if (uploadFailed) throw uploadError;
+    };
+    type BufferUpload = { kind: 'buffer' | 'resource-buffer'; ordinal: number; raw: Blob };
+    let bufferBatch: BufferUpload[] = [];
+    const uploadOneBuffer = (item: BufferUpload): Promise<void> => upload({
+      action: `${item.kind}-raw`, jobId: job.id, targetBootId: this.bootId,
+      frameIndex: String(frameIndex),
+      [item.kind === 'buffer' ? 'bufferOrdinal' : 'resourceOrdinal']: String(item.ordinal),
+    }, item.raw);
+    const flushBuffers = async (): Promise<void> => {
+      const entries = bufferBatch;
+      bufferBatch = [];
+      if (!entries.length) return;
+      if (entries.length === 1) { await uploadOneBuffer(entries[0]); return; }
+      const header = new TextEncoder().encode(JSON.stringify({ entries: entries.map(item => ({
+        kind: item.kind, ordinal: item.ordinal, byteLength: item.raw.size,
+      })) }));
+      const length = new ArrayBuffer(4);
+      new DataView(length).setUint32(0, header.byteLength, true);
+      const blob = new Blob([length, header, ...entries.map(item => item.raw)],
+        { type: 'application/octet-stream' });
+      await upload({ action: 'buffer-batch', jobId: job.id, targetBootId: this.bootId,
+        frameIndex: String(frameIndex) }, blob, { files: entries.length,
+        bytes: entries.reduce((sum, item) => sum + item.raw.size, 0), limit: 4 });
+    };
+    const uploadBuffer = async (kind: BufferUpload['kind'], ordinal: number, raw: Blob): Promise<void> => {
+      if (raw.size > 64 * 1024) { await uploadOneBuffer({ kind, ordinal, raw }); return; }
+      // One bounded request replaces up to 64 tiny HTTP round trips. The server
+      // still hashes, syncs and acknowledges every independent file before returning.
+      bufferBatch.push({ kind, ordinal, raw });
+      if (bufferBatch.length === 64) await flushBuffers();
     };
     let pngBytes = 0;
     let resourcePngBytes = 0;
-    const uploadedInputs = new WeakMap<Uint8Array, {
-      ordinal: number; rawByteLength: number; rawBytesPerRow: number;
-      textureId: number | null; viewId: number | null; contentVersion: number;
-      mipLevel: number; arrayLayer: number; width: number; height: number; format: string;
-    }>();
+    // Decide aliases in capture order before starting workers; only identical
+    // pre-Draw snapshots may share a PNG/raw file. Frame-end copies never alias them.
+    const inputAliases = new Map<number, number>();
+    const inputSources = new WeakMap<Uint8Array, Map<string, number>>();
+    diagnostics.inputs.forEach((item, index) => {
+      if (!item.rawPixels) return;
+      const signature = JSON.stringify([item.textureId, item.viewId, item.contentVersion,
+        item.mipLevel, item.arrayLayer, item.width, item.height, item.format, item.rawBytesPerRow]);
+      let versions = inputSources.get(item.rawPixels);
+      if (!versions) inputSources.set(item.rawPixels, versions = new Map());
+      const source = versions.get(signature);
+      if (source !== undefined) inputAliases.set(index, source);
+      else versions.set(signature, index);
+    });
     try {
-      for (const item of diagnostics.passes) {
+      await forEachCaptureItem(diagnostics.passes, 4, async (item, passIndex) => {
         if (!this.isCurrentJob(job)) return;
         if (uploadFailed) throw uploadError;
         let reason = item.reason?.slice(0, 500);
         if (item.rawPixels && item.rawBytesPerRow) {
           try {
-            const pixels = visualizeCapturedPassPixels(item);
-            const png = await this.encodeFrameImage({ pixels,
-              width: item.width, height: item.height }, false);
+            const png = await this.getPngEncoder().encode({ kind: 'pass', capture: item });
             if (png.size > MAX_FRAME_IMAGE_BYTES) throw new Error('PNG 超过 32 MiB');
             if (pngBytes + png.size > MAX_FRAME_IMAGES_BYTES) {
               throw new Error('本帧 PNG 总量达到 16 GiB 上限');
             }
+            pngBytes += png.size;
             await upload({
               action: 'pass-image', jobId: job.id, targetBootId: this.bootId,
               frameIndex: String(frameIndex), passOrdinal: String(item.passOrdinal), colorIndex: String(item.colorIndex),
             }, png);
-            pngBytes += png.size;
           } catch (error) { reason = `Pass PNG 导出失败：${String(error)}`.slice(0, 500); }
         } else if (!reason) reason = 'Pass 没有可读回的颜色输出';
         let rawReason: string | undefined;
@@ -782,53 +877,33 @@ export class WebGpuCaptureClient {
           } catch (error) { rawReason = `Pass 原始像素导出失败：${String(error)}`.slice(0, 500); }
           finally { item.rawPixels = undefined; }
         } else rawReason = item.reason?.slice(0, 500) || 'Pass 没有可回读的原始像素';
-        passes.push({
+        passes[passIndex] = {
           passOrdinal: item.passOrdinal, label: item.label, targetLabel: item.targetLabel,
           colorIndex: item.colorIndex, width: item.width, height: item.height,
           format: item.format, ...(reason ? { reason } : {}),
           ...(rawByteLength === undefined ? { rawReason } : {
             rawBytesPerRow: item.rawBytesPerRow, rawByteLength,
           }),
-        });
-      }
-      for (const [inputOrdinal, item] of diagnostics.inputs.entries()) {
+        };
+        processed++; report();
+      });
+      await forEachCaptureItem(diagnostics.inputs, 4, async (item, inputOrdinal) => {
         if (!this.isCurrentJob(job)) return;
         if (uploadFailed) throw uploadError;
-        const pixels = item.rawPixels;
-        const uploaded = pixels ? uploadedInputs.get(pixels) : undefined;
-        if (uploaded && uploaded.textureId === item.textureId && uploaded.viewId === item.viewId &&
-            uploaded.contentVersion === item.contentVersion && uploaded.mipLevel === item.mipLevel &&
-            uploaded.arrayLayer === item.arrayLayer && uploaded.width === item.width &&
-            uploaded.height === item.height && uploaded.format === item.format &&
-            uploaded.rawBytesPerRow === item.rawBytesPerRow) {
-          item.rawPixels = undefined;
-          inputs.push({ inputOrdinal, passOrdinal: item.passOrdinal, bindingName: item.bindingName,
-            textureId: item.textureId, viewId: item.viewId, groupSlot: item.groupSlot,
-            binding: item.binding, contentVersion: item.contentVersion,
-            mipLevel: item.mipLevel, arrayLayer: item.arrayLayer,
-            width: item.width, height: item.height, format: item.format,
-            rawAliasInputOrdinal: uploaded.ordinal, rawBytesPerRow: uploaded.rawBytesPerRow,
-            rawByteLength: uploaded.rawByteLength,
-          });
-          continue;
-        }
+        if (inputAliases.has(inputOrdinal)) return;
         let reason = item.reason?.slice(0, 500);
         if (item.rawPixels && item.rawBytesPerRow) {
           try {
-            const pixels = visualizeCapturedInputPixels(item);
-            if (pixels) {
-              const png = await this.encodeFrameImage({ pixels,
-                width: item.width, height: item.height }, false);
-              if (png.size > MAX_FRAME_IMAGE_BYTES) throw new Error('PNG 超过 32 MiB');
-              if (pngBytes + png.size > MAX_FRAME_IMAGES_BYTES) {
-                  throw new Error('本帧 PNG 总量达到 16 GiB 上限');
-              }
-              await upload({
-                action: 'input-image', jobId: job.id, targetBootId: this.bootId,
-                frameIndex: String(frameIndex), inputOrdinal: String(inputOrdinal),
-              }, png);
-              pngBytes += png.size;
-            } else reason = `输入纹理 ${item.format} 没有可导出的 PNG 预览`;
+            const png = await this.getPngEncoder().encode({ kind: 'input', capture: item });
+            if (png.size > MAX_FRAME_IMAGE_BYTES) throw new Error('PNG 超过 32 MiB');
+            if (pngBytes + png.size > MAX_FRAME_IMAGES_BYTES) {
+              throw new Error('本帧 PNG 总量达到 16 GiB 上限');
+            }
+            pngBytes += png.size;
+            await upload({
+              action: 'input-image', jobId: job.id, targetBootId: this.bootId,
+              frameIndex: String(frameIndex), inputOrdinal: String(inputOrdinal),
+            }, png);
           } catch (error) { reason = `输入纹理 PNG 导出失败：${String(error)}`.slice(0, 500); }
         } else if (!reason) reason = 'Draw 输入纹理没有可读回的像素';
         let rawReason: string | undefined;
@@ -847,7 +922,7 @@ export class WebGpuCaptureClient {
           } catch (error) { rawReason = `Draw 输入纹理原始像素导出失败：${String(error)}`.slice(0, 500); }
           finally { item.rawPixels = undefined; }
         } else rawReason = item.reason?.slice(0, 500) || 'Draw 输入纹理没有可回读的原始像素';
-        inputs.push({
+        inputs[inputOrdinal] = {
           inputOrdinal, passOrdinal: item.passOrdinal, bindingName: item.bindingName,
           textureId: item.textureId, viewId: item.viewId,
           groupSlot: item.groupSlot, binding: item.binding, contentVersion: item.contentVersion,
@@ -857,33 +932,38 @@ export class WebGpuCaptureClient {
           ...(rawByteLength === undefined ? { rawReason } : {
             rawBytesPerRow: item.rawBytesPerRow, rawByteLength,
           }),
-        });
-        if (pixels && rawByteLength !== undefined && item.rawBytesPerRow !== undefined) {
-          uploadedInputs.set(pixels, { ordinal: inputOrdinal, rawByteLength,
-            rawBytesPerRow: item.rawBytesPerRow, textureId: item.textureId,
-            viewId: item.viewId, contentVersion: item.contentVersion,
-            mipLevel: item.mipLevel, arrayLayer: item.arrayLayer,
-            width: item.width, height: item.height, format: item.format });
-        }
+        };
+        processed++; report();
+      });
+      for (const [index, sourceIndex] of inputAliases) {
+        const item = diagnostics.inputs[index];
+        const source = inputs[sourceIndex];
+        if (!source || !this.isCurrentJob(job)) return;
+        item.rawPixels = undefined;
+        inputs[index] = { ...source, inputOrdinal: index, passOrdinal: item.passOrdinal,
+          bindingName: item.bindingName, groupSlot: item.groupSlot, binding: item.binding,
+          ...(source.rawByteLength !== undefined ? {
+            rawAliasInputOrdinal: sourceIndex, reason: undefined, rawReason: undefined,
+          } : {}),
+        };
+        processed++; report();
       }
-      for (const [aspectOrdinal, item] of diagnostics.aspects.entries()) {
+      await forEachCaptureItem(diagnostics.aspects, 4, async (item, aspectOrdinal) => {
         if (!this.isCurrentJob(job)) return;
         if (uploadFailed) throw uploadError;
         let reason = item.reason?.slice(0, 500);
         if (item.rawPixels && item.rawBytesPerRow) {
           try {
-            const pixels = visualizeCapturedAspectPixels(item);
-            const png = await this.encodeFrameImage({ pixels,
-              width: item.width, height: item.height }, false);
+            const png = await this.getPngEncoder().encode({ kind: 'aspect', capture: item });
             if (png.size > MAX_FRAME_IMAGE_BYTES) throw new Error('PNG 超过 32 MiB');
             if (pngBytes + png.size > MAX_FRAME_IMAGES_BYTES) {
               throw new Error('本帧 PNG 总量达到 16 GiB 上限');
             }
+            pngBytes += png.size;
             await upload({
               action: 'aspect-image', jobId: job.id, targetBootId: this.bootId,
               frameIndex: String(frameIndex), aspectOrdinal: String(aspectOrdinal),
             }, png);
-            pngBytes += png.size;
           } catch (error) { reason = `深度/模板 PNG 导出失败：${String(error)}`.slice(0, 500); }
         } else if (!reason) reason = '此 Pass 的深度/模板没有可回读的像素';
         let rawReason: string | undefined;
@@ -902,7 +982,7 @@ export class WebGpuCaptureClient {
           } catch (error) { rawReason = `深度/模板原始像素导出失败：${String(error)}`.slice(0, 500); }
           finally { item.rawPixels = undefined; }
         } else rawReason = item.reason?.slice(0, 500) || '深度/模板没有可回读的原始像素';
-        aspects.push({
+        aspects[aspectOrdinal] = {
           aspectOrdinal, passOrdinal: item.passOrdinal, label: item.label,
           targetLabel: item.targetLabel, aspect: item.aspect, textureId: item.textureId,
           viewId: item.viewId, width: item.width, height: item.height,
@@ -912,8 +992,9 @@ export class WebGpuCaptureClient {
           ...(rawByteLength === undefined ? { rawReason } : {
             rawBytesPerRow: item.rawBytesPerRow, rawByteLength,
           }),
-        });
-      }
+        };
+        processed++; report();
+      });
       for (const [bufferOrdinal, item] of diagnostics.buffers.entries()) {
         if (!this.isCurrentJob(job)) return;
         if (uploadFailed) throw uploadError;
@@ -923,10 +1004,7 @@ export class WebGpuCaptureClient {
           try {
             const raw = new Blob([item.rawBytes as BlobPart], { type: 'application/octet-stream' });
             item.rawBytes = undefined;
-            await upload({
-              action: 'buffer-raw', jobId: job.id, targetBootId: this.bootId,
-              frameIndex: String(frameIndex), bufferOrdinal: String(bufferOrdinal),
-            }, raw);
+            await uploadBuffer('buffer', bufferOrdinal, raw);
             rawByteLength = raw.size;
           } catch (error) { rawReason = `Draw 前 Buffer 导出失败：${String(error)}`.slice(0, 500); }
           finally { item.rawBytes = undefined; }
@@ -945,25 +1023,25 @@ export class WebGpuCaptureClient {
           ...(item.reason ? { reason: item.reason.slice(0, 500) } : {}),
           ...(rawByteLength === undefined ? { rawReason } : { rawByteLength }),
         });
+        processed++; report();
       }
-      for (const [resourceOrdinal, item] of diagnostics.resourceTextures.entries()) {
+      await flushBuffers();
+      await forEachCaptureItem(diagnostics.resourceTextures, 4, async (item, resourceOrdinal) => {
         if (!this.isCurrentJob(job)) return;
         if (uploadFailed) throw uploadError;
         let reason = item.reason?.slice(0, 500);
         if (item.rawPixels && item.rawBytesPerRow) {
           try {
-            const pixels = visualizeCapturedResourceTexture(item);
-            const png = await this.encodeFrameImage({ pixels,
-              width: item.width, height: item.height }, false);
+            const png = await this.getPngEncoder().encode({ kind: 'resource', capture: item });
             if (png.size > MAX_FRAME_IMAGE_BYTES) throw new Error('PNG 超过 32 MiB');
             if (resourcePngBytes + png.size > MAX_RESOURCE_IMAGES_BYTES) {
               throw new Error('本帧资源纹理 PNG 总量达到 2 GiB 上限');
             }
+            resourcePngBytes += png.size;
             await upload({
               action: 'resource-texture-image', jobId: job.id, targetBootId: this.bootId,
               frameIndex: String(frameIndex), resourceOrdinal: String(resourceOrdinal),
             }, png);
-            resourcePngBytes += png.size;
           } catch (error) { reason = `资源纹理 PNG 导出失败：${String(error)}`.slice(0, 500); }
         } else if (!reason) reason = '资源纹理没有可回读的像素';
         let rawReason: string | undefined;
@@ -982,7 +1060,7 @@ export class WebGpuCaptureClient {
           } catch (error) { rawReason = `资源纹理原始像素导出失败：${String(error)}`.slice(0, 500); }
           finally { item.rawPixels = undefined; }
         } else rawReason = item.reason?.slice(0, 500) || '资源纹理没有可回读的原始像素';
-        resourceTextures.push({
+        resourceTextures[resourceOrdinal] = {
           resourceOrdinal, textureOrdinal: item.textureOrdinal, textureId: item.textureId,
           label: item.label, width: item.width, height: item.height,
           sourceFormat: item.sourceFormat, rawFormat: item.rawFormat,
@@ -992,8 +1070,9 @@ export class WebGpuCaptureClient {
           ...(rawByteLength === undefined ? { rawReason } : {
             rawBytesPerRow: item.rawBytesPerRow, rawByteLength,
           }),
-        });
-      }
+        };
+        processed++; report();
+      });
       for (const [resourceOrdinal, item] of diagnostics.resourceBuffers.entries()) {
         if (!this.isCurrentJob(job)) return;
         if (uploadFailed) throw uploadError;
@@ -1003,10 +1082,7 @@ export class WebGpuCaptureClient {
           try {
             const raw = new Blob([item.rawBytes as BlobPart], { type: 'application/octet-stream' });
             item.rawBytes = undefined;
-            await upload({
-              action: 'resource-buffer-raw', jobId: job.id, targetBootId: this.bootId,
-              frameIndex: String(frameIndex), resourceOrdinal: String(resourceOrdinal),
-            }, raw);
+            await uploadBuffer('resource-buffer', resourceOrdinal, raw);
             rawByteLength = raw.size;
           } catch (error) { rawReason = `资源 Buffer 导出失败：${String(error)}`.slice(0, 500); }
           finally { item.rawBytes = undefined; }
@@ -1018,8 +1094,10 @@ export class WebGpuCaptureClient {
           ...(item.reason ? { reason: item.reason.slice(0, 500) } : {}),
           ...(rawByteLength === undefined ? { rawReason } : { rawByteLength }),
         });
+        processed++; report();
       }
       if (!this.isCurrentJob(job)) return;
+      await flushBuffers();
       await Promise.all(pendingUploads);
       if (uploadFailed) throw uploadError;
       await api('POST', {}, { action: 'diagnostics', jobId: job.id, targetBootId: this.bootId,
@@ -1039,6 +1117,7 @@ export class WebGpuCaptureClient {
 
   private leaveActiveJob(): void {
     const hadJob = this.activeJob !== null;
+    if (hadJob) this.releasePngEncoder();
     if (this.activeJob) this.finishedLocallyJobId = this.activeJob.id;
     if (this.activeJob && this.frameImages?.jobId === this.activeJob.id) {
       this.frameImages.cancelled = true;
@@ -1074,7 +1153,7 @@ export class WebGpuCaptureClient {
       return this.cleanup;
     }
     this.cleanup = this.cleanup.then(async () => {
-      try { await inspector.saveCaptureData('discard.wgpuc', { download: false }); }
+      try { await inspector.saveCaptureData('discard.wgpuc', { download: false, resourceIds: [], externalResourceSnapshots: true }); }
       catch (error) {
         this.capturePoisoned = true;
         this.registeredReady = false;
@@ -1090,6 +1169,7 @@ export class WebGpuCaptureClient {
     if (this.isCurrentJob(job)) {
       this.finishedLocallyJobId = job.id;
       this.releaseFrameLoop();
+      this.releasePngEncoder();
     }
     if (this.activeJob?.id === job.id) this.leaveActiveJob();
     if (this.frameDiagnostics?.jobId === job.id) {

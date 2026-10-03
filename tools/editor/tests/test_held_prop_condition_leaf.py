@@ -135,6 +135,23 @@ def test_leaf_roundtrips_byte_for_byte(model, leaf) -> None:
         assert json.dumps(out, ensure_ascii=False) == json.dumps(conds, ensure_ascii=False)
 
 
+def test_shared_guard_safety_can_be_selected_and_roundtripped(model) -> None:
+    leaf = {"heldProp": "player", "vitalityOp": "<", "vitality": 0.6}
+    tree = _tree(model, leaf)
+    try:
+        field = tree.root_node()._hp_vitality
+        field.source.setCurrentIndex(field.source.findData("guardSafety"))
+        shared = {**leaf, "vitality": "guardSafety"}
+        assert tree.get_expr() == shared
+        assert _roundtrip(model, [shared]) == [shared]
+        # 只改比较符时不能把共享引用变成数字。
+        root = tree.root_node()
+        root._hp_op.setCurrentIndex(root._hp_op.findData(">"))
+        assert tree.get_expr() == {**shared, "vitalityOp": ">"}
+    finally:
+        tree.deleteLater()
+
+
 def test_full_real_leaf_roundtrips(model) -> None:
     leaf = _full(model)
     assert _roundtrip(model, [leaf]) == [leaf]

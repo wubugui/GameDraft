@@ -93,6 +93,113 @@ function harness(space: { light: Vec3 | null; vfx: Vec3 | null }) {
   return { sys: new HeldPropSystem(deps), deps, pushed, played, moved, scales, flames, ran, pointQueries, socketQueries, setInput, hints, changed };
 }
 
+describe('强制护火操作教学', () => {
+  async function lessonHarness(safety = 0.6) {
+    const h = harness({ light: [0, 100, 0], vfx: [0, 100, 0] });
+    const table = parsePropPresets({ t: {
+      image: 'torch.png', light: { intensity: 1 }, playerControl: { guardSafety: safety },
+      blowout: { windSpeed: 5, drainSeconds: 2, recoverSeconds: 1 },
+      states: { lit: {}, guarding: { windShelter: 0.8 }, out: { light: null } },
+    } });
+    h.deps.getPreset = (id) => table[id];
+    h.deps.windVectorAt = () => [10 * FLAME_WU_PER_M, 0, 0];
+    await h.sys.attach('player', 'right_hand', 't', 'lit');
+    const run = (seconds: number) => { for (let i = 0; i < seconds * 60; i++) h.sys.update(1 / 60); };
+    run(1);
+    return { ...h, run, value: () => h.sys.statusOf('player')[0].vitality };
+  }
+
+  it('临时锁保住说话时火势，释放后强风重新耗火', async () => {
+    const h = await lessonHarness();
+    const before = h.value();
+    const release = h.sys.acquireLock('player', 'right_hand', 'lit')!;
+    h.run(3);
+    expect(h.value()).toBe(before); expect(h.sys.statusOf('player')[0].lock).toBe('lit');
+    release(); h.run(0.1);
+    expect(h.value()).toBeLessThan(before); expect(h.sys.statusOf('player')[0].lock).toBe('none');
+  });
+
+  it('临时锁不入档，交叠释放不覆盖其他锁或期间修改的持久锁', async () => {
+    const h = await lessonHarness();
+    const oldGet = h.deps.getPreset;
+    h.deps.getPreset = id => ({ ...oldGet(id)!, persistent: true });
+    h.sys.detach('player', 'right_hand');
+    await h.sys.attach('player', 'right_hand', 't', 'lit');
+    h.sys.setLock('player', 'right_hand', 'unlit');
+    const a = h.sys.acquireLock('player', 'right_hand', 'lit')!;
+    const b = h.sys.acquireLock('player', 'right_hand', 'unlit')!;
+    a(); a();
+    expect(h.sys.statusOf('player')[0].lock).toBe('unlit');
+    h.sys.setLock('player', 'right_hand', 'none');
+    expect((h.sys.serialize() as { held: { lock?: string }[] }).held[0].lock).toBeUndefined();
+    b(); expect(h.sys.statusOf('player')[0].lock).toBe('none');
+    const stale = h.sys.acquireLock('player', 'right_hand', 'lit')!;
+    h.sys.detach('player', 'right_hand');
+    await h.sys.attach('player', 'right_hand', 't', 'lit');
+    const current = h.sys.acquireLock('player', 'right_hand', 'lit')!;
+    stale(); expect(h.sys.statusOf('player')[0].lock).toBe('lit');
+    current(); expect(h.sys.statusOf('player')[0].lock).toBe('none');
+  });
+
+  it.each([0.637, 0.82])('预设安全线 %s：等于时不放行，刚高于就结束并通知叙事，不等满火', async (safety) => {
+    const h = await lessonHarness(safety);
+    expect(h.sys.statusOf('player')[0].guardSafety).toBe(safety);
+    const done = h.sys.teachGuard('guardSafety');
+    const entry = [...(h.sys as any).entries.values()][0] as any;
+    entry.vitality = safety;
+    h.setInput({ guardHeld: true, togglePressed: false });
+    h.sys.update(0);
+    expect(h.sys.isGuardLessonActive).toBe(true);
+    h.sys.update(1 / 60);
+    await expect(done).resolves.toBe(true);
+    expect(h.value()).toBeGreaterThan(safety);
+    expect(h.value()).toBeLessThan(1);
+  });
+
+  it('读提示不掉火、不自动回满；按一下不算完成，持续护火回满才结束；结束后恢复正常耗火', async () => {
+    const h = await lessonHarness();
+    const before = h.value();
+    expect(before).toBeLessThan(0.6);
+    const done = h.sys.teachGuard(1);
+    h.run(10);
+    expect(h.value()).toBe(before);
+    expect(h.sys.isGuardLessonActive).toBe(true);
+    h.setInput({ guardHeld: true, togglePressed: false });
+    h.run(0.1);
+    expect(h.sys.isGuardLessonActive).toBe(true);
+    h.setInput({ guardHeld: false, togglePressed: false });
+    const released = h.value();
+    h.run(2);
+    expect(h.value()).toBe(released);
+    h.setInput({ guardHeld: true, togglePressed: false });
+    h.run(2);
+    await expect(done).resolves.toBe(true);
+    expect(h.value()).toBe(1);
+    h.setInput({ guardHeld: false, togglePressed: false });
+    h.run(1);
+    expect(h.value()).toBeLessThan(0.6);
+    expect(h.sys.isGuardLessonActive).toBe(false);
+  });
+
+  it.each(['detach', 'destroy', 'cancel'] as const)('%s 封口等待，不留下教学锁', async (how) => {
+    const h = await lessonHarness();
+    const done = h.sys.teachGuard(1);
+    if (how === 'detach') h.sys.detach('player', 'right_hand');
+    else if (how === 'destroy') h.sys.destroy();
+    else h.sys.cancelGuardLesson();
+    await expect(done).resolves.toBe(false);
+    expect(h.sys.isGuardLessonActive).toBe(false);
+  });
+
+  it('没火/坏参数立即拒绝，不进入等待', async () => {
+    const h = harness({ light: null, vfx: null });
+    await expect(h.sys.teachGuard(1)).resolves.toBe(false);
+    const real = await lessonHarness();
+    await expect(real.sys.teachGuard(0)).resolves.toBe(false);
+    await expect(real.sys.teachGuard(2)).resolves.toBe(false);
+  });
+});
+
 describe('HeldPropSystem 灯位与效果共享世界锚点', () => {
   it('实体不动、只有动画挂点移动不足 1 wu，也在当前帧推送灯位', async () => {
     const space = { light: [1, 2, 3] as Vec3, vfx: null };

@@ -96,6 +96,10 @@ export interface ContactAoParams {
   ao: ResolvedContactAo;
   /** 方向部分的几路光（≤ MAX_CONTACT_AO_SOURCES，权重和 ≤ 1）；空 = 只画无方向部分（没勾方向 AO 也是空）。 */
   sources: readonly ContactAoSource[];
+  /** 手动方向可低至 1°；自动与旧绑定缺省仍用 25°。CPU 与 GPU 共用这一限值。 */
+  minElevationDeg?: number;
+  /** 动画浓度仍在过渡：允许沿用刚画过的胶囊横截面，避免新帧抬脚截断淡出。 */
+  animationTransition?: boolean;
   /** 1 个 q 单位 = 多少 wu（铁律 0：光照的长度一律 wu）。 */
   wuPerQUnit: number;
 }
