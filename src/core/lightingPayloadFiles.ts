@@ -129,17 +129,58 @@ export function requiredLightingPayloadFiles(
  * - content-type 不是 HTML：vite dev 服的 SPA fallback 对缺文件回 **200 + index.html**，
  *   只看 `r.ok` 会放行（optional-asset-probe 机制卡）。
  */
-export async function fetchPayloadBytes(url: string): Promise<ArrayBuffer> {
-  const r = await fetch(url);
-  assertPayloadResponse(r, url);
-  return r.arrayBuffer();
+export interface PayloadLoadOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  strict?: boolean;
+}
+
+/** 包括响应体读取在内的整条请求有截止时间，且消费者取消不会伪装成缺件降级。 */
+async function fetchPayload<T>(url: string, options: PayloadLoadOptions, read: (r: Response) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs! > 0 ? options.timeoutMs! : 30_000;
+  const cancel = (): void => controller.abort(options.signal?.reason ?? new DOMException('Payload cancelled', 'AbortError'));
+  if (options.signal?.aborted) cancel();
+  options.signal?.addEventListener('abort', cancel, { once: true });
+  let onAbort: (() => void) | undefined;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(controller.signal.reason);
+    if (controller.signal.aborted) onAbort();
+    else controller.signal.addEventListener('abort', onAbort, { once: true });
+  });
+  const timer = setTimeout(() => controller.abort(new DOMException(`Payload timeout: ${url}`, 'TimeoutError')), timeoutMs);
+  try {
+    if (controller.signal.aborted) return await cancelled;
+    return await Promise.race([
+      fetch(url, { signal: controller.signal }).then(read), cancelled,
+    ]);
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', cancel);
+    if (onAbort) controller.signal.removeEventListener('abort', onAbort);
+  }
+}
+
+export async function fetchPayloadBytes(url: string, options: PayloadLoadOptions = {}): Promise<ArrayBuffer> {
+  return fetchPayload(url, options, async (r) => { assertPayloadResponse(r, url); return r.arrayBuffer(); });
 }
 
 /** 同 `fetchPayloadBytes`，取 Blob（`ground_d.png` 走 `createImageBitmap`）。 */
-export async function fetchPayloadBlob(url: string): Promise<Blob> {
-  const r = await fetch(url);
-  assertPayloadResponse(r, url);
-  return r.blob();
+export async function fetchPayloadBlob(url: string, options: PayloadLoadOptions = {}): Promise<Blob> {
+  return fetchPayload(url, options, async (r) => { assertPayloadResponse(r, url); return r.blob(); });
+}
+
+export async function fetchPayloadJson<T>(url: string, options: PayloadLoadOptions = {}): Promise<T> {
+  return fetchPayload(url, options, async (r) => { assertPayloadResponse(r, url); return r.json() as Promise<T>; });
+}
+
+/** 未烘的入口与可选旁挂：仅真正缺失/SPA fallback 归 null，断网、超时和取消照常抛。 */
+export async function fetchOptionalPayloadJson<T>(url: string, options: PayloadLoadOptions = {}): Promise<T | null> {
+  return fetchPayload(url, options, async (r) => {
+    if (r.status === 404 || r.status === 410 || (r.headers.get('content-type') ?? '').includes('text/html')) return null;
+    assertPayloadResponse(r, url);
+    return r.json() as Promise<T>;
+  });
 }
 
 function assertPayloadResponse(r: Response, url: string): void {

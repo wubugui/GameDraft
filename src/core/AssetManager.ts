@@ -18,6 +18,40 @@ export interface AssetRef {
   path: string;
   options?: { loop?: boolean };
   label?: string;
+  /** 明确可选的旁挂资源可降级；没有声明的资源必须成功。 */
+  optional?: boolean;
+}
+
+export interface AssetLoadOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+export interface AssetLoadPolicy {
+  concurrency?: number;
+  timeoutMs?: number;
+}
+
+export interface AssetPreloadItemProgress {
+  ref: AssetRef;
+  completed: number;
+  total: number;
+  status: 'loaded' | 'optional-failed' | 'required-failed';
+  error?: unknown;
+}
+
+export interface AssetPreloadResult {
+  loaded: number;
+  optionalFailed: number;
+  requiredFailed: number;
+  failures: Array<{ ref: AssetRef; error: unknown }>;
+}
+
+export class AssetPreloadError extends Error {
+  constructor(readonly scopeId: string, readonly result: AssetPreloadResult) {
+    super(`Required assets failed: ${scopeId}`);
+    this.name = 'AssetPreloadError';
+  }
 }
 
 export interface AssetManifest {
@@ -45,9 +79,12 @@ interface CacheEntry<T = unknown> {
   bytes: number;
   lastUsed: number;
   pins: Set<string>;
+  /** 曾登记明确生命周期的持有者，零 pin 后可安全释放 CPU 源。未登记的长活调用保守保留到整局销毁。 */
+  scoped: boolean;
 }
 
 interface CacheBucket<T = unknown> {
+  generation: number;
   entries: Map<string, CacheEntry<T>>;
   inflight: Map<string, Promise<T>>;
   errors: Map<string, unknown>;
@@ -71,6 +108,7 @@ const DEFAULT_LIMITS: Record<AssetType, { bytes?: number; entries?: number }> = 
 function createBucket<T = unknown>(type: AssetType): CacheBucket<T> {
   const limits = DEFAULT_LIMITS[type];
   return {
+    generation: 0,
     entries: new Map(),
     inflight: new Map(),
     errors: new Map(),
@@ -129,17 +167,32 @@ export class AssetManager {
   private scopeRefs = new Map<string, AssetRef[]>();
   /** dispose() 后置 true：在途加载完成的产物立即释放、不入缓存（见 loadIntoBucket） */
   private disposed = false;
+  private readonly requestControllers = new Set<AbortController>();
+  private readonly requestQueue: Array<() => void> = [];
+  private activeRequests = 0;
+  private requestConcurrency: number;
+  private requestTimeoutMs: number;
+  private readonly ownedTextures = new Set<Texture>();
+  private readonly inflightConsumers = new Map<Promise<unknown>, { count: number; settled: boolean; cancel: () => void }>();
   private readonly verboseStageLog =
     typeof import.meta !== 'undefined'
     && import.meta.env?.DEV
     && typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).has('assetDebug');
 
-  constructor(limits: AssetCacheLimitConfig = {}) {
+  constructor(limits: AssetCacheLimitConfig = {}, policy: AssetLoadPolicy = {}) {
+    this.requestConcurrency = Math.max(1, Math.floor(policy.concurrency ?? 6));
+    this.requestTimeoutMs = Math.max(1, policy.timeoutMs ?? 30_000);
     for (const [type, limit] of Object.entries(limits) as Array<[AssetType, { bytes?: number; entries?: number }]>) {
       if (limit.bytes !== undefined) this.buckets[type].limitBytes = limit.bytes;
       if (limit.entries !== undefined) this.buckets[type].limitEntries = limit.entries;
     }
+  }
+
+  configureLoading(policy: AssetLoadPolicy): void {
+    if (policy.concurrency !== undefined && Number.isFinite(policy.concurrency)) this.requestConcurrency = Math.max(1, Math.floor(policy.concurrency));
+    if (policy.timeoutMs !== undefined && Number.isFinite(policy.timeoutMs)) this.requestTimeoutMs = Math.max(1, policy.timeoutMs);
+    while (this.activeRequests < this.requestConcurrency && this.requestQueue.length) this.requestQueue.shift()?.();
   }
 
   private touch<T>(bucket: CacheBucket<T>, entry: CacheEntry<T>): T {
@@ -163,9 +216,12 @@ export class AssetManager {
   private async loadIntoBucket<T>(
     type: AssetType,
     key: string,
-    loader: () => Promise<T>,
+    loader: (signal: AbortSignal) => Promise<T>,
     sizeOf: (value: T) => number,
+    options: AssetLoadOptions = {},
   ): Promise<T> {
+    if (this.disposed) throw new DOMException('AssetManager disposed', 'AbortError');
+    options.signal?.throwIfAborted();
     const bucket = this.buckets[type] as CacheBucket<T>;
     // 命中判断看条目存在性而非值真假：空字符串/0/false 等合法 falsy 缓存值不能被当成未命中重复加载
     const cachedEntry = bucket.entries.get(key);
@@ -176,16 +232,18 @@ export class AssetManager {
     bucket.stats.misses++;
 
     const inflight = bucket.inflight.get(key);
-    if (inflight) return inflight;
+    if (inflight) return this.consume(inflight, options.signal);
 
-    const p = loader()
+    const generation = bucket.generation;
+    const controller = new AbortController();
+    const p = this.request(type, key, loader, options.timeoutMs, controller)
       .then((value) => {
-        bucket.inflight.delete(key);
+        if (bucket.inflight.get(key) === p) bucket.inflight.delete(key);
         // 整机已 dispose：在途加载的产物完成即释放、不入缓存——否则 new Howl 已注册进
         // Howler 全局表/纹理已占显存，销毁后无人回收（跨 HMR/预览残留）。
-        if (this.disposed) {
+        if (this.disposed || generation !== bucket.generation) {
           this.disposeValue(type, value);
-          return value;
+          throw new DOMException('Asset load invalidated', 'AbortError');
         }
         bucket.errors.delete(key);
         bucket.stats.loads++;
@@ -198,20 +256,103 @@ export class AssetManager {
           bytes: Math.max(1, sizeOf(value)),
           lastUsed: ++this.logicalClock,
           pins,
+          scoped: pins.size > 0,
         };
         bucket.entries.set(key, entry);
         this.evict(type);
         return value;
       })
       .catch((e) => {
-        bucket.inflight.delete(key);
+        if (bucket.inflight.get(key) === p) bucket.inflight.delete(key);
+        if (this.disposed || generation !== bucket.generation || (e instanceof DOMException && e.name === 'AbortError')) throw e;
         bucket.errors.set(key, e);
         bucket.stats.errors++;
         reportDevError(`[${type}] 加载失败: ${key}\n${describeError(e)}`);
         throw e;
       });
     bucket.inflight.set(key, p);
-    return p;
+    const consumers = { count: 0, settled: false, cancel: (): void => {
+      if (bucket.inflight.get(key) === p) bucket.inflight.delete(key);
+      controller.abort(new DOMException('No remaining asset consumers', 'AbortError'));
+    } };
+    this.inflightConsumers.set(p, consumers);
+    const finish = (): void => { consumers.settled = true; this.inflightConsumers.delete(p); };
+    void p.then(finish, finish);
+    return this.consume(p, options.signal);
+  }
+
+  /** 消费者的取消不取消同 URL 的共享请求。旧消费者不会收到已取消的产物。 */
+  private async consume<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
+    const consumers = this.inflightConsumers.get(work);
+    if (consumers) consumers.count++;
+    try {
+      if (!signal) return await work;
+      return await new Promise<T>((resolve, reject) => {
+      const abort = (): void => { cleanup(); reject(signal.reason ?? new DOMException('Asset consumer cancelled', 'AbortError')); };
+      const cleanup = (): void => signal.removeEventListener('abort', abort);
+      signal.addEventListener('abort', abort, { once: true });
+      work.then(value => { cleanup(); if (!signal.aborted) resolve(value); }, error => { cleanup(); reject(error); });
+      });
+    } finally {
+      if (consumers) {
+        consumers.count--;
+        if (!consumers.settled && consumers.count === 0) consumers.cancel();
+      }
+    }
+  }
+
+  /** 全部实际 I/O 共用有界通道。filter 本身只组装、其 JSON 请求已占通道，不能再次占位导致递归死锁。 */
+  private async request<T>(type: AssetType, key: string, loader: (signal: AbortSignal) => Promise<T>, timeoutMs?: number, controller = new AbortController()): Promise<T> {
+    if (this.disposed) throw new DOMException('AssetManager disposed', 'AbortError');
+    this.requestControllers.add(controller);
+    const signal = controller.signal;
+    let acquired = false;
+    try {
+      if (type !== 'filter') {
+        await new Promise<void>((resolve, reject) => {
+          const start = (): void => {
+            signal.removeEventListener('abort', abort);
+            if (signal.aborted) { reject(signal.reason); return; }
+            this.activeRequests++;
+            acquired = true;
+            resolve();
+          };
+          const abort = (): void => {
+            const index = this.requestQueue.indexOf(start);
+            if (index >= 0) this.requestQueue.splice(index, 1);
+            reject(signal.reason);
+          };
+          signal.addEventListener('abort', abort, { once: true });
+          if (this.activeRequests < this.requestConcurrency) start();
+          else this.requestQueue.push(start);
+        });
+      }
+      signal.throwIfAborted();
+      return await new Promise<T>((resolve, reject) => {
+        let settled = false;
+        const finish = (error: unknown, value?: T): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          signal.removeEventListener('abort', abort);
+          if (error) reject(error); else resolve(value as T);
+        };
+        const abort = (): void => finish(signal.reason ?? new DOMException('Asset load cancelled', 'AbortError'));
+        const timer = setTimeout(() => controller.abort(new DOMException(`Asset timed out: ${key}`, 'TimeoutError')), Math.max(1, timeoutMs ?? this.requestTimeoutMs));
+        signal.addEventListener('abort', abort, { once: true });
+        Promise.resolve().then(() => loader(signal)).then(value => {
+          if (settled || signal.aborted) { this.disposeValue(type, value); return; }
+          finish(null, value);
+        }, error => finish(error));
+      });
+    } finally {
+      this.requestControllers.delete(controller);
+      if (acquired) {
+        this.activeRequests--;
+        this.requestQueue.shift()?.();
+      }
+    }
   }
 
   private evict(type: AssetType): void {
@@ -254,12 +395,14 @@ export class AssetManager {
   }
 
   private disposeEntry(entry: CacheEntry): void {
-    this.disposeValue(entry.type, entry.value);
+    this.disposeValue(entry.type, entry.value, this.disposed || (entry.scoped && entry.pins.size === 0));
   }
 
-  private disposeValue(type: AssetType, value: unknown): void {
+  private disposeValue(type: AssetType, value: unknown, releaseCpu = this.disposed): void {
     if (type === 'texture') {
-      (value as Texture).source?.unload();
+      const texture = value as Texture;
+      if (releaseCpu && this.ownedTextures.delete(texture)) Assets.releaseTexture(texture, this);
+      else texture.source?.unload();
     }
     if (type === 'audio') {
       (value as Howl).unload();
@@ -276,12 +419,12 @@ export class AssetManager {
     return resolved;
   }
 
-  async loadTexture(path: string): Promise<Texture> {
+  async loadTexture(path: string, options: AssetLoadOptions = {}): Promise<Texture> {
     const resolved = resolveAssetPath(path);
     return this.loadIntoBucket<Texture>(
       'texture',
       resolved,
-      async () => {
+      async (signal) => {
         // ⚠ 法线图集(*.normal.png)的 alpha 是鼓包 profile(**数据**,不是透明度),
         // rgb 绝不能被 ×a。实测:文件帧均值 r=0.500(完美中性碗、平均法线≈(0,0,-0.86)),
         // 默认加载后 GPU 采到 0.749 —— 污染发生在 **createImageBitmap 解码期**(浏览器
@@ -292,16 +435,17 @@ export class AssetManager {
         // Pixi v8 装载器(loadTextures.js)**只有** data.alphaMode === 'premultiplied-alpha'
         // 这一个值会走 createImageBitmap(blob, {premultiplyAlpha:'none'}) 保留原始字节
         // (语义="数据已预乘,别再动",名字反直觉但这是唯一的原样通道)。
-        const texture = resolved.endsWith('.normal.png')
-          ? await Assets.load<Texture>({
-              src: resolved,
-              data: { alphaMode: 'premultiplied-alpha' },
-            })
-          : await Assets.load<Texture>(resolved);
-        assertSafeTextureSize(texture, resolved);
+        const texture = await Assets.load<Texture>({
+          src: resolved,
+          data: resolved.endsWith('.normal.png') ? { alphaMode: 'premultiplied-alpha' } : {},
+        }, { signal, timeoutMs: options.timeoutMs ?? this.requestTimeoutMs });
+        if (!this.ownedTextures.has(texture)) { Assets.retainTexture(texture, this); this.ownedTextures.add(texture); }
+        try { assertSafeTextureSize(texture, resolved); }
+        catch (error) { this.ownedTextures.delete(texture); Assets.releaseTexture(texture, this); throw error; }
         return texture;
       },
       textureBytes,
+      options,
     );
   }
 
@@ -309,17 +453,18 @@ export class AssetManager {
     return this.getFromBucket<Texture>('texture', resolveAssetPath(path));
   }
 
-  async loadJson<T = unknown>(path: string): Promise<T> {
+  async loadJson<T = unknown>(path: string, options: AssetLoadOptions = {}): Promise<T> {
     const resolved = resolveAssetPath(path);
     return this.loadIntoBucket<T>(
       'json',
       resolved,
-      async () => {
-        const response = await fetch(resolved);
+      async (signal) => {
+        const response = await fetch(resolved, { signal });
         if (!response.ok) throw new Error(`fetch ${response.status} for ${resolved}`);
         return await response.json() as T;
       },
       jsonBytes,
+      options,
     );
   }
 
@@ -340,36 +485,47 @@ export class AssetManager {
    * 确认是 JSON 之后才转交 `loadJson`，为的是走它的缓存与统计；多一次 HEAD 的代价
    * 只落在真有 sidecar 的包上。
    */
-  async loadOptionalJson<T = unknown>(path: string): Promise<T | null> {
+  async loadOptionalJson<T = unknown>(path: string, options: AssetLoadOptions = {}): Promise<T | null> {
+    if (this.disposed) throw new DOMException('AssetManager disposed', 'AbortError');
+    options.signal?.throwIfAborted();
     const cached = this.getJson<T>(path);
     if (cached !== null) return cached;
     const resolved = resolveAssetPath(path);
+    const probeController = new AbortController();
+    const abortProbe = (): void => probeController.abort(options.signal?.reason ?? new DOMException('Optional probe cancelled', 'AbortError'));
+    options.signal?.addEventListener('abort', abortProbe, { once: true });
     try {
-      const probe = await fetch(resolved, { method: 'HEAD' });
+      const probe = await this.request('json', resolved, signal => fetch(resolved, { method: 'HEAD', signal }), options.timeoutMs, probeController);
       if (!probe.ok) return null;
       const contentType = probe.headers.get('content-type') ?? '';
       if (!contentType.toLowerCase().includes('json')) return null;
-    } catch {
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      if (this.disposed) throw error;
       return null;   // 网络层失败也当"没有这个可选文件"，不打扰玩家
+    } finally {
+      options.signal?.removeEventListener('abort', abortProbe);
     }
     try {
-      return await this.loadJson<T>(path);
+      return await this.loadJson<T>(path, options);
     } catch {
+      options.signal?.throwIfAborted();
       return null;
     }
   }
 
-  async loadText(path: string): Promise<string> {
+  async loadText(path: string, options: AssetLoadOptions = {}): Promise<string> {
     const resolved = resolveAssetPath(path);
     return this.loadIntoBucket<string>(
       'text',
       resolved,
-      async () => {
-        const response = await fetch(resolved);
+      async (signal) => {
+        const response = await fetch(resolved, { signal });
         if (!response.ok) throw new Error(`fetch ${response.status} for ${resolved}`);
         return await response.text();
       },
       textBytes,
+      options,
     );
   }
 
@@ -377,17 +533,18 @@ export class AssetManager {
     return this.getFromBucket<string>('text', resolveAssetPath(path));
   }
 
-  async loadBitmap(path: string): Promise<ImageBitmap> {
+  async loadBitmap(path: string, options: AssetLoadOptions = {}): Promise<ImageBitmap> {
     const resolved = resolveAssetPath(path);
     return this.loadIntoBucket<ImageBitmap>(
       'bitmap',
       resolved,
-      async () => {
-        const resp = await fetch(resolved);
+      async (signal) => {
+        const resp = await fetch(resolved, { signal });
         if (!resp.ok) throw new Error(`fetch ${resp.status} for ${resolved}`);
         return await createImageBitmap(await resp.blob());
       },
       bitmapBytes,
+      options,
     );
   }
 
@@ -395,24 +552,28 @@ export class AssetManager {
     return this.getFromBucket<ImageBitmap>('bitmap', resolveAssetPath(path));
   }
 
-  async loadAudio(path: string, options: { loop?: boolean } = {}): Promise<Howl> {
+  async loadAudio(path: string, options: { loop?: boolean } = {}, loadOptions: AssetLoadOptions = {}): Promise<Howl> {
     const loop = options.loop === true;
     const resolved = resolveAssetPath(path);
     const key = `${resolved}::loop=${loop ? '1' : '0'}`;
     return this.loadIntoBucket<Howl>(
       'audio',
       key,
-      () => new Promise<Howl>((resolve, reject) => {
+      (signal) => new Promise<Howl>((resolve, reject) => {
+        const cleanup = (): void => signal.removeEventListener('abort', abort);
+        const abort = (): void => { cleanup(); h.unload(); reject(signal.reason); };
         const h = new Howl({
           src: [resolved],
           loop,
           preload: true,
           volume: 0,
-          onload: () => resolve(h),
-          onloaderror: (_id, error) => reject(error),
+          onload: () => { cleanup(); resolve(h); },
+          onloaderror: (_id, error) => { cleanup(); h.unload(); reject(error); },
         });
+        signal.addEventListener('abort', abort, { once: true });
       }),
       audioBytes,
+      loadOptions,
     );
   }
 
@@ -421,16 +582,17 @@ export class AssetManager {
     return this.getFromBucket<Howl>('audio', `${resolved}::loop=${options.loop === true ? '1' : '0'}`);
   }
 
-  async loadFilter(filterId: string): Promise<Filter> {
+  async loadFilter(filterId: string, options: AssetLoadOptions = {}): Promise<Filter> {
     const id = filterId.trim();
     return this.loadIntoBucket<Filter>(
       'filter',
       id,
-      async () => {
-        const def = await this.loadJson<FilterDef>(filterJsonUrl(id));
+      async (signal) => {
+        const def = await this.loadJson<FilterDef>(filterJsonUrl(id), { signal });
         return createFilterFromDef(def);
       },
       () => 1,
+      options,
     );
   }
 
@@ -444,63 +606,113 @@ export class AssetManager {
       mode?: LoadMode;
       onProgress?: (ratio01: number, label: string) => void;
       tolerateErrors?: boolean;
+      signal?: AbortSignal;
+      concurrency?: number;
+      onItemProgress?: (progress: AssetPreloadItemProgress) => void;
     } = {},
-  ): Promise<void> {
+  ): Promise<AssetPreloadResult> {
+    if (this.disposed) throw new DOMException('AssetManager disposed', 'AbortError');
+    options.signal?.throwIfAborted();
     const refs = this.dedupeRefs(manifest.refs);
     this.pinScope(manifest.scopeId, refs);
+    const scope = this.scopeRefs.get(manifest.scopeId);
     const total = Math.max(1, refs.length);
     let done = 0;
+    let next = 0;
+    let stopped = false;
+    const result: AssetPreloadResult = { loaded: 0, optionalFailed: 0, requiredFailed: 0, failures: [] };
     const start = performance.now();
     options.onProgress?.(0, refs.length > 0 ? '资源准备' : '资源准备完成');
     const loadOne = async (ref: AssetRef): Promise<void> => {
       const label = ref.label ?? `${ref.type}: ${ref.path}`;
       const itemStart = performance.now();
+      let status: AssetPreloadItemProgress['status'] = 'loaded';
+      let error: unknown;
       try {
-        await this.loadRef(ref);
+        await this.loadRef(ref, { signal: options.signal });
+        options.signal?.throwIfAborted();
+        if (this.scopeRefs.get(manifest.scopeId) !== scope) throw new DOMException('Asset preload scope replaced', 'AbortError');
         this.pinLoadedRef(manifest.scopeId, ref);
+        result.loaded++;
       } catch (e) {
-        if (!options.tolerateErrors) throw e;
+        if (options.signal?.aborted || (e instanceof DOMException && e.name === 'AbortError')) { stopped = true; throw e; }
+        error = e;
+        status = ref.optional ? 'optional-failed' : 'required-failed';
+        if (ref.optional) result.optionalFailed++; else result.requiredFailed++;
+        result.failures.push({ ref, error: e });
+        if (!ref.optional && !options.tolerateErrors) stopped = true;
         console.warn(`AssetManager: preload failed (${label})`, e);
       } finally {
         done++;
-        options.onProgress?.(Math.min(1, done / total), label);
+        if (!options.signal?.aborted && this.scopeRefs.get(manifest.scopeId) === scope) {
+          options.onProgress?.(Math.min(1, done / total), label);
+          options.onItemProgress?.({ ref, completed: done, total: refs.length, status, error });
+        }
         if (this.verboseStageLog && options.mode === 'stage') {
           console.debug(`[assets] ${manifest.scopeId} ${label} ${Math.round(performance.now() - itemStart)}ms`);
         }
       }
     };
-    await Promise.all(refs.map(loadOne));
+    try {
+      const workers = Math.min(refs.length, Math.max(1, Math.floor(options.concurrency ?? this.requestConcurrency)));
+      await Promise.all(Array.from({ length: workers }, async () => {
+        while (!stopped && next < refs.length) {
+          options.signal?.throwIfAborted();
+          await loadOne(refs[next++]);
+        }
+      }));
+      options.signal?.throwIfAborted();
+      if (result.requiredFailed > 0 && !options.tolerateErrors) throw new AssetPreloadError(manifest.scopeId, result);
+    } catch (error) {
+      stopped = true;
+      if (this.scopeRefs.get(manifest.scopeId) === scope) this.releaseScope(manifest.scopeId);
+      throw error;
+    }
     if (this.verboseStageLog && options.mode === 'stage') {
       console.debug(`[assets] ${manifest.scopeId} total ${Math.round(performance.now() - start)}ms (${refs.length} refs)`);
     }
+    return result;
   }
 
-  async loadRef(ref: AssetRef): Promise<unknown> {
+  async loadRef(ref: AssetRef, options: AssetLoadOptions = {}): Promise<unknown> {
     switch (ref.type) {
-      case 'json': return await this.loadJson(ref.path);
-      case 'texture': return await this.loadTexture(ref.path);
-      case 'audio': return await this.loadAudio(ref.path, ref.options);
-      case 'text': return await this.loadText(ref.path);
-      case 'bitmap': return await this.loadBitmap(ref.path);
-      case 'filter': return await this.loadFilter(ref.path);
+      case 'json': return await this.loadJson(ref.path, options);
+      case 'texture': return await this.loadTexture(ref.path, options);
+      case 'audio': return await this.loadAudio(ref.path, ref.options, options);
+      case 'text': return await this.loadText(ref.path, options);
+      case 'bitmap': return await this.loadBitmap(ref.path, options);
+      case 'filter': return await this.loadFilter(ref.path, options);
     }
   }
 
   pinScope(scopeId: string, refs: AssetRef[]): void {
-    this.releaseScope(scopeId);
+    const old = this.scopeRefs.get(scopeId) ?? [];
+    for (const ref of old) this.buckets[ref.type].entries.get(this.keyForRef(ref))?.pins.delete(scopeId);
     const deduped = this.dedupeRefs(refs);
     this.scopeRefs.set(scopeId, deduped);
     for (const ref of deduped) {
       const bucket = this.buckets[ref.type];
       const entry = bucket.entries.get(this.keyForRef(ref));
-      entry?.pins.add(scopeId);
+      if (entry) { entry.pins.add(scopeId); entry.scoped = true; }
+    }
+    for (const type of Object.keys(this.buckets) as AssetType[]) this.evict(type);
+  }
+
+  /** 增量登记持有者，不经过 release/evict 间隙；应在开始加载与创建绑定之前调用。 */
+  extendScope(scopeId: string, refs: AssetRef[]): void {
+    if (this.disposed) return;
+    const combined = this.dedupeRefs([...(this.scopeRefs.get(scopeId) ?? []), ...refs]);
+    this.scopeRefs.set(scopeId, combined);
+    for (const ref of combined) {
+      const entry = this.buckets[ref.type].entries.get(this.keyForRef(ref));
+      if (entry) { entry.pins.add(scopeId); entry.scoped = true; }
     }
   }
 
   private pinLoadedRef(scopeId: string, ref: AssetRef): void {
     const bucket = this.buckets[ref.type];
     const entry = bucket.entries.get(this.keyForRef(ref));
-    entry?.pins.add(scopeId);
+    if (entry) { entry.pins.add(scopeId); entry.scoped = true; }
   }
 
   private scopesForKey(type: AssetType, key: string): Set<string> {
@@ -543,6 +755,18 @@ export class AssetManager {
     return out;
   }
 
+  /** CPU 图片驻留单独量，不能把 source.unload 的 GPU 统计当成 CPU 已释放。 */
+  getTextureResidency(): { retainedEntries: number; retainedBytes: number; cachedEntries: number; cachedBytes: number; unscopedEntries: number } {
+    let retainedBytes = 0;
+    for (const texture of this.ownedTextures) retainedBytes += textureBytes(texture);
+    const cached = this.buckets.texture.entries;
+    let unscopedEntries = 0;
+    for (const texture of this.ownedTextures) {
+      if (![...cached.values()].some(entry => entry.value === texture && entry.scoped)) unscopedEntries++;
+    }
+    return { retainedEntries: this.ownedTextures.size, retainedBytes, cachedEntries: cached.size, cachedBytes: this.bucketBytes(this.buckets.texture), unscopedEntries };
+  }
+
   /**
    * 丢掉一张已缓存的纹理（连同显存）。DEV 的热重载专用：草木工作台每推一次都换 `?v=`，
    * 同一张图会在缓存里各占一份，不主动丢就等着 LRU 把别人的东西挤出去（几 MB 一张、推几十次）。
@@ -579,6 +803,8 @@ export class AssetManager {
     const types = type ? [type] : Object.keys(this.buckets) as AssetType[];
     for (const t of types) {
       const bucket = this.buckets[t];
+      bucket.generation++;
+      for (const inflight of bucket.inflight.values()) this.inflightConsumers.get(inflight)?.cancel();
       for (const entry of bucket.entries.values()) this.disposeEntry(entry);
       bucket.entries.clear();
       bucket.inflight.clear();
@@ -594,7 +820,12 @@ export class AssetManager {
    */
   dispose(): void {
     this.disposed = true;
+    for (const controller of this.requestControllers) controller.abort(new DOMException('AssetManager disposed', 'AbortError'));
     this.clearCache();
+    for (const texture of [...this.ownedTextures]) {
+      this.ownedTextures.delete(texture);
+      Assets.releaseTexture(texture, this);
+    }
   }
 
   /** 场景媒体路径统一委托 projectPaths（单一实现源）；空引用原样返回、由上层按缺资源处理。 */
@@ -608,8 +839,8 @@ export class AssetManager {
    * worldWidth/worldHeight 定义场景的世界尺寸。
    * 如果某个为 0 或缺失，用背景图尺寸按比例计算。
    */
-  async loadSceneData(sceneId: string): Promise<SceneData> {
-    const cached = await this.loadJson<SceneDataRaw>(sceneJsonUrl(sceneId));
+  async loadSceneData(sceneId: string, options: AssetLoadOptions = {}): Promise<SceneData> {
+    const cached = await this.loadJson<SceneDataRaw>(sceneJsonUrl(sceneId), options);
     const raw = JSON.parse(JSON.stringify(cached)) as SceneDataRaw;
 
     // 背景图文件名强约束：主背景只能叫 `background.png`，**或该场景自己在
@@ -660,7 +891,7 @@ export class AssetManager {
 
     if (raw.backgrounds && raw.backgrounds.length > 0) {
       try {
-        const texture = await this.loadTexture(raw.backgrounds[0].image);
+        const texture = await this.loadTexture(raw.backgrounds[0].image, options);
         const texW = texture.width;
         const texH = texture.height;
         const ratio = texH / texW;
@@ -681,6 +912,7 @@ export class AssetManager {
 
         return { ...raw, worldWidth, worldHeight } as SceneData;
       } catch (_e) {
+        options.signal?.throwIfAborted();
         // 背景加载失败，使用默认尺寸
       }
     }
@@ -693,14 +925,16 @@ export class AssetManager {
   }
 
   private dedupeRefs(refs: AssetRef[]): AssetRef[] {
-    const seen = new Set<string>();
+    const seen = new Map<string, AssetRef>();
     const out: AssetRef[] = [];
     for (const ref of refs) {
       if (!ref.path?.trim()) continue;
       const key = `${ref.type}:${this.keyForRef(ref)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(ref);
+      const previous = seen.get(key);
+      if (previous) { if (!ref.optional) previous.optional = false; continue; }
+      const copy = { ...ref };
+      seen.set(key, copy);
+      out.push(copy);
     }
     return out;
   }

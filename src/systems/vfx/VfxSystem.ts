@@ -177,6 +177,7 @@ export interface VfxInstanceStartInfo {
 }
 
 interface InstanceRuntime {
+  loadFailure?: string;
   def: VfxInstanceDef;
   effect: VfxEffectDef | null;
   sim: VfxInstanceSim | null;
@@ -285,6 +286,9 @@ export class VfxSystem implements IGameSystem {
   private readonly pendingLoads = new Set<Promise<void>>();
   /** 揭幕闸里在途的等待（各带一个定时器）：销毁时逐个撤掉并放行 */
   private readonly revealWaits = new Set<() => void>();
+  private assetScopeId: string | null = null;
+  private sceneLoadController = new AbortController();
+  private libraryFailure: unknown | null = null;
 
   constructor(private readonly deps: VfxSystemDeps) {
     this.onSceneReady = () => { void this.startRebuild(); };
@@ -371,25 +375,41 @@ export class VfxSystem implements IGameSystem {
    * 也不再有哪一帧同步补跑几百毫秒的预热（茶馆 30 个实例原来挤在揭幕后第一帧，实测 361 ms）。
    *
    * - 只备此刻：条件不满足、被停掉的实例不建（它们之后翻真 / `playVfx` 时走 `update` 的分帧预热）；
-   * - 限时：超时就放行揭幕，没跑完的由 `update` 按帧预算接着跑——不把揭幕扣成人质；
-   * - 等待中换了场景（世代变了）立刻收手；系统销毁时在途的等待全部放行。永不悬挂。
+   * - 正式 Loading 闸使用 strict：失败/超时拒绝，不能宣称完整首帧；旧预览调用可显式保留降级路径；
+   * - 等待中换了场景（世代变了）立刻收手；系统销毁时在途等待立即封口。永不悬挂。
    */
-  async prepareForReveal(timeoutMs: number): Promise<void> {
+  async prepareForReveal(timeoutMs: number, options: { signal?: AbortSignal; strict?: boolean } = {}): Promise<void> {
+    options.signal?.throwIfAborted();
+    if (options.strict && !this.eventBus) throw new DOMException('VFX system unavailable', 'AbortError');
     if (!this.enabled || !this.space) return;
     const deadline = performance.now() + Math.max(0, timeoutMs);
     // 载荷的几何项在 scene:ready 同一拍里（排在本系统后面的监听里）才落地：在遮罩下先升级成真 3D，
     // 否则揭幕后第一帧自愈重建，已经预热好的模拟整批作废重来
     if (this.space.kind === 'planar' && this.deps.hasFieldGeometry()) void this.startRebuild();
+    const gen = this.generation;
+    const incomplete = (what: string): void => {
+      options.signal?.throwIfAborted();
+      if (options.strict) {
+        if (gen !== this.generation || !this.eventBus) throw new DOMException('VFX preparation invalidated', 'AbortError');
+        throw new DOMException(`VFX preparation timed out: ${what}`, 'TimeoutError');
+      }
+      this.revealTimedOut(what);
+    };
     // 布置库 → 布置表 → 各实例资产：重建完才登记实例装载，所以等到"没有在途的"为止
     for (;;) {
       const inflight: Promise<unknown>[] = [...this.pendingLoads];
       if (this.rebuilding) inflight.push(this.rebuilding);
       if (inflight.length === 0) break;
-      if (!(await this.revealWait(Promise.all(inflight), deadline))) { this.revealTimedOut('粒子资产装载'); return; }
+      if (!(await this.revealWait(Promise.all(inflight), deadline, options.signal, options.strict))) { incomplete('粒子资产装载'); return; }
+      if (gen !== this.generation) { incomplete('场景已切换'); return; }
     }
     if (!this.enabled || !this.space) return;
-    const gen = this.generation;
+    if (options.strict && this.libraryFailure && !this.libraryOverride) throw new Error(`VFX placement library unavailable: ${String(this.libraryFailure)}`);
     this.refreshConditions();
+    if (options.strict) {
+      const failed = [...this.instances.values()].filter(inst => inst.eligible && !inst.stopped && (inst.loadFailure || !inst.effect || !inst.sim));
+      if (failed.length) throw new Error(`Active VFX assets unavailable: ${failed.map(inst => `${inst.def.id}: ${inst.loadFailure ?? 'simulation unavailable'}`).join('; ')}`);
+    }
     const ctx = this.prewarmContext();
     for (;;) {
       let budget = PREWARM_UNITS_PER_REVEAL_SLICE;
@@ -400,11 +420,29 @@ export class VfxSystem implements IGameSystem {
         budget -= this.advancePrewarm(sim, ctx, budget, PREWARM_UNITS_PER_REVEAL_SLICE);
         if (sim.prewarmRemaining > 0) left++;
       }
-      if (left === 0) return;
-      if (performance.now() >= deadline) { this.revealTimedOut(`粒子预热（还剩 ${left} 个实例）`); return; }
-      if (!(await this.revealWait(null, deadline))) return;
-      if (gen !== this.generation || !this.enabled || !this.space) return;
+      if (left === 0) { this.prepareRenderViews(); return; }
+      if (performance.now() >= deadline) { incomplete(`粒子预热（还剩 ${left} 个实例）`); return; }
+      if (!(await this.revealWait(null, deadline, options.signal))) { incomplete('粒子预热'); return; }
+      if (gen !== this.generation || !this.enabled || !this.space) { incomplete('场景已切换'); return; }
     }
+  }
+
+  /** 在玩法冻结时准备网格与绑定；不推进模拟、世界钟、碰撞、声音或伤害。 */
+  prepareRenderViews(): void {
+    if (!this.enabled || !this.space || !this.renderer) return;
+    const sims: VfxInstanceSim[] = [];
+    const hosts = new Map<string, VfxSortHost>();
+    const alphas = new Map<string, number>();
+    for (const inst of this.instances.values()) {
+      const sim = inst.sim;
+      if (!sim || sim.prewarmRemaining > 0) continue;
+      this.syncViewAnchor(inst);
+      const host = inst.sortHost?.();
+      if (host) hosts.set(sim.id, host);
+      if (inst.fadeOut) alphas.set(sim.id, inst.fadeOut.fromAlpha * Math.max(0, 1 - inst.fadeOut.elapsedMs / inst.fadeOut.durationMs));
+      sims.push(sim);
+    }
+    this.renderer.render(sims, this.sheets, hosts, this.beamTextures, alphas);
   }
 
   /** 预热的上下文：只剩风与外部火焰段（玩家 / 刺激场 / 接触模拟自己剔掉）；时间取系统此刻 */
@@ -433,20 +471,23 @@ export class VfxSystem implements IGameSystem {
    * 揭幕闸里的一次等待：`p` 落地（`null` = 只让出一轮主线程）或到 `deadline`。
    * true = 等到了；false = 超时 / 系统销毁。定时器登记在 `revealWaits`，销毁时撤掉。
    */
-  private revealWait(p: Promise<unknown> | null, deadline: number): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
+  private revealWait(p: Promise<unknown> | null, deadline: number, signal?: AbortSignal, rejectErrors = false): Promise<boolean> {
+    return new Promise<boolean>((resolve, reject) => {
       let open = true;
-      const finish = (ok: boolean): void => {
+      const finish = (ok: boolean, error?: unknown): void => {
         if (!open) return;
         open = false;
         clearTimeout(timer);
         this.revealWaits.delete(cancel);
-        resolve(ok);
+        signal?.removeEventListener('abort', cancel);
+        if (error !== undefined) reject(error); else resolve(ok);
       };
       const cancel = (): void => finish(false);
       const timer = setTimeout(p ? cancel : () => finish(true), p ? Math.max(0, deadline - performance.now()) : 0);
       this.revealWaits.add(cancel);
-      p?.then(() => finish(true), () => finish(true));
+      signal?.addEventListener('abort', cancel, { once: true });
+      if (signal?.aborted) cancel();
+      p?.then(() => finish(true), error => finish(true, rejectErrors ? error : undefined));
     });
   }
 
@@ -469,6 +510,9 @@ export class VfxSystem implements IGameSystem {
 
   private clearScene(): void {
     this.generation++;
+    this.sceneLoadController.abort(new DOMException('VFX scene changed', 'AbortError'));
+    this.sceneLoadController = new AbortController();
+    for (const cancel of [...this.revealWaits]) cancel();
     for (const inst of this.instances.values()) this.retireSim(inst);
     this.instances.clear();
     this.transientHandles.clear();
@@ -492,6 +536,11 @@ export class VfxSystem implements IGameSystem {
     // 旧场景的装载各自按世代作废；揭幕闸不必再等它们
     this.pendingLoads.clear();
     this.renderer?.clear();
+    // 先解除网格/着色器绑定，再放场景租约；成功贴图缓存不能跨场景把整批 CPU 位图永久留住。
+    this.sheetCache.clear();
+    this.beamTextureCache.clear();
+    if (this.assetScopeId) this.deps.assetManager.releaseScope(this.assetScopeId);
+    this.assetScopeId = null;
   }
 
   /** 本场景的表面材质区：工作态（工作台推来的）优先，没推这张图就读盘 */
@@ -546,6 +595,7 @@ export class VfxSystem implements IGameSystem {
   private async rebuildScene(): Promise<void> {
     this.clearScene();
     const gen = this.generation;
+    this.assetScopeId = `vfx:scene:${gen}`;
     const sd = this.deps.getSceneData();
     if (!sd) return;
     this.space = this.deps.buildSpace();
@@ -565,13 +615,17 @@ export class VfxSystem implements IGameSystem {
    */
   private loadLibrary(): Promise<VfxPlacementLibrary | null> {
     if (!this.library) {
-      this.library = this.deps.assetManager.loadJson<VfxPlacementLibrary>(TEXT_URLS.vfxPlacements)
+      const p = this.deps.assetManager.loadJson<VfxPlacementLibrary>(TEXT_URLS.vfxPlacements)
         .then((d) => {
-          if (d && typeof d === 'object' && d.scenes && typeof d.scenes === 'object') return d;
+          if (this.library !== p) return null;
+          if (d && typeof d === 'object' && d.scenes && typeof d.scenes === 'object') { this.libraryFailure = null; return d; }
+          this.libraryFailure = new Error('VFX placement library has no scenes table');
           this.deps.log('vfx: 布置库 vfx_placements.json 没有 scenes 表，当作没有任何布置');
           return null;
         })
-        .catch((e) => { this.deps.log(`vfx: 布置库 vfx_placements.json 装不到（当作没有任何布置）：${String(e)}`); return null; });
+        .catch((e) => { if (this.library !== p) return null; this.libraryFailure = e; this.deps.log(`vfx: 布置库 vfx_placements.json 装不到（当作没有任何布置）：${String(e)}`); return null; });
+      this.library = p;
+      void p.then(value => { if (!value && this.library === p) this.library = null; });
     }
     return this.library;
   }
@@ -641,6 +695,7 @@ export class VfxSystem implements IGameSystem {
         .then((d) => (d && typeof d === 'object' && Array.isArray(d.emitters) ? d : null))
         .catch((e) => { this.deps.log(`vfx: 效果「${id}」加载失败：${String(e)}`); return null; });
       this.effectCache.set(id, p);
+      void p.then(value => { if (!value && this.effectCache.get(id) === p) this.effectCache.delete(id); });
     }
     return p;
   }
@@ -669,10 +724,11 @@ export class VfxSystem implements IGameSystem {
   private loadInstanceEffect(inst: InstanceRuntime): void {
     const gen = this.generation, revision = (inst.loadRevision ?? 0) + 1;
     inst.loadRevision = revision;
+    inst.loadFailure = undefined;
     const current = () => gen === this.generation && inst.loadRevision === revision && this.instances.get(inst.def.id) === inst;
     const loading: Promise<void> = this.loadEffect(inst.def.effect).then(async effect => {
       if (!current()) return;
-      if (!effect) { this.deps.log(`vfx: 实例「${inst.def.id}」的效果「${inst.def.effect}」装不到，跳过`); return; }
+      if (!effect) { inst.loadFailure = `effect ${inst.def.effect} unavailable`; this.deps.log(`vfx: 实例「${inst.def.id}」的效果「${inst.def.effect}」装不到，跳过`); return; }
       const sheets = await Promise.all(effect.emitters.map(async e => [e.id, await this.loadSheet(e.appearance)] as const));
       const cookies = await Promise.all((effect.beams ?? []).map(async b =>
         [b.id, b.cookie?.image ? await this.loadBeamTexture(b.cookie.image) : null, b.cookie?.image] as const));
@@ -682,21 +738,23 @@ export class VfxSystem implements IGameSystem {
         : NO_BURN_TEMPLATES;
       if (!current()) return;
       inst.burnTemplates = burnTemplates;
+      const missingBurn = effect.emitters.map(em => em.plate?.burnable?.template?.trim()).filter((id): id is string => !!id && !burnTemplates.has(id));
+      if (missingBurn.length) inst.loadFailure = `burn templates unavailable: ${missingBurn.join(', ')}`;
       // Publish one coherent effect and sheet set. Earlier preview requests cannot overwrite it.
       for (const key of this.sheets.keys()) if (key.startsWith(`${inst.def.id}/`)) this.sheets.delete(key);
       for (const key of this.beamTextures.keys()) if (key.startsWith(`${inst.def.id}/`)) this.beamTextures.delete(key);
       for (const [id, sheet] of sheets) {
         if (sheet) this.sheets.set(`${inst.def.id}/${id}`, sheet);
-        else this.deps.log(`vfx: 发射器「${effect.id}/${id}」的贴图装不到`);
+        else { inst.loadFailure = `sheet ${effect.id}/${id} unavailable`; this.deps.log(`vfx: 发射器「${effect.id}/${id}」的贴图装不到`); }
       }
       for (const [id, tex, image] of cookies) {
         if (tex) this.beamTextures.set(`${inst.def.id}/${id}`, tex);
-        else if (image) this.deps.log(`vfx: 光柱「${effect.id}/${id}」的图案遮罩「${image}」装不到（先不带图案画）`);
+        else if (image) { inst.loadFailure = `beam cookie ${image} unavailable`; this.deps.log(`vfx: 光柱「${effect.id}/${id}」的图案遮罩「${image}」装不到（先不带图案画）`); }
       }
       inst.effect = effect;
       this.conditionsDirty = true;
     }).catch(error => {
-      if (current()) this.deps.log(`vfx: 实例「${inst.def.id}」加载失败：${String(error)}`);
+      if (current()) { inst.loadFailure = String(error); this.deps.log(`vfx: 实例「${inst.def.id}」加载失败：${String(error)}`); }
     });
     // 上面已兜住一切拒绝：这条只会 resolve
     this.pendingLoads.add(loading);
@@ -731,6 +789,7 @@ export class VfxSystem implements IGameSystem {
         .then((raw) => resolveBurnable(raw, id))
         .catch(() => null);
       this.burnTemplateCache.set(id, p);
+      void p.then(value => { if (!value && this.burnTemplateCache.get(id) === p) this.burnTemplateCache.delete(id); });
     }
     return p;
   }
@@ -760,11 +819,14 @@ export class VfxSystem implements IGameSystem {
 
   /** 光柱图案遮罩（灰度图）：按路径缓存，装不到 = null（由调用方出声） */
   private loadBeamTexture(image: string): Promise<Texture | null> {
+    const signal = this.sceneLoadController.signal;
+    if (this.assetScopeId) this.deps.assetManager.extendScope(this.assetScopeId, [{ type: 'texture', path: image }]);
     let p = this.beamTextureCache.get(image);
     if (!p) {
-      p = this.deps.assetManager.loadTexture(image).then((t: Texture) => t ?? null)
+      p = this.deps.assetManager.loadTexture(image, { signal }).then((t: Texture) => t ?? null)
         .catch((e) => { this.deps.log(`vfx: 光柱图案遮罩「${image}」加载失败：${String(e)}`); return null; });
       this.beamTextureCache.set(image, p);
+      void p.then(value => { if (!value && this.beamTextureCache.get(image) === p) this.beamTextureCache.delete(image); });
     }
     return p;
   }
@@ -776,9 +838,19 @@ export class VfxSystem implements IGameSystem {
     let p = this.sheetCache.get(key);
     if (p) return p;
     // 装法与粒子工作台同一个函数（vfxSpriteSheet.ts）
-    p = loadVfxSpriteSheet(ap, this.deps.assetManager)
+    const gen = this.generation;
+    const signal = this.sceneLoadController.signal;
+    const scope = this.assetScopeId;
+    p = loadVfxSpriteSheet(ap, {
+      loadJson: <T>(path: string) => this.deps.assetManager.loadJson<T>(path, { signal }),
+      loadTexture: (path: string) => {
+        if (scope && gen === this.generation) this.deps.assetManager.extendScope(scope, [{ type: 'texture', path }]);
+        return this.deps.assetManager.loadTexture(path, { signal });
+      },
+    })
       .catch((e) => { this.deps.log(`vfx: 贴图加载失败：${String(e)}`); return null; });
     this.sheetCache.set(key, p);
+    void p.then(value => { if (!value && this.sheetCache.get(key) === p) this.sheetCache.delete(key); });
     return p;
   }
 

@@ -10,7 +10,7 @@ import { resolveDepthPerSy } from '../utils/worldReconstruct';
 import type { AssetManager } from './AssetManager';
 import { depthError, depthLog } from './depthLog';
 import { defaultSceneLighting } from '../data/sceneLightingDefault';
-import { geometryMetaProblems } from './lightingPayloadFiles';
+import { fetchPayloadBytes, geometryMetaProblems, type PayloadLoadOptions } from './lightingPayloadFiles';
 import { sceneBakeDirUrl, sceneRuntimeAssetUrl } from './projectPaths';
 
 const T = 'SceneLighting';
@@ -123,6 +123,8 @@ export const CHARACTER_ALBEDO_REFERENCE = 0.0381;
  * 背景照旧走原来的 Sprite 路径（旧场景零影响）。
  */
 export class SceneLightingSystem {
+  private epoch = 0;
+  private loadController: AbortController | null = null;
   private meta: LightingGeometryMeta | null = null;
   private pass: SceneLightingPass | null = null;
   private litBg: LitBackground | null = null;
@@ -250,6 +252,8 @@ export class SceneLightingSystem {
    * 变的只是"撞到的那面墙现在有多亮"，那是 `GiBouncePass` 每次脏时现查的。
    */
   private async loadGiHitmap(sceneId: string, meta: LightingGeometryMeta): Promise<void> {
+    const epoch = this.epoch;
+    const signal = this.loadController?.signal;
     const gi = meta.gi;
     const pass = this.pass;
     if (!gi || !pass) return;
@@ -257,13 +261,11 @@ export class SceneLightingSystem {
     if (!radiance) return;
     let bytes: ArrayBuffer;
     try {
-      const res = await fetch(`${this.bakeBase}/gi_hitmap.bin`);
-      // ⚠ 本仓库 dev server 上文件不存在返回 **200 + HTML**，判据必须看 content-type
-      if (!res.ok || (res.headers.get('content-type') ?? '').includes('text/html')) return;
-      bytes = await res.arrayBuffer();
+      bytes = await fetchPayloadBytes(`${this.bakeBase}/gi_hitmap.bin`, { signal });
     } catch {
       return;
     }
+    if (epoch !== this.epoch || signal?.aborted) return;
     const [w, h] = gi.size;
     const expect = w * h * 4;
     if (bytes.byteLength !== expect) {
@@ -378,178 +380,215 @@ export class SceneLightingSystem {
     sceneData: SceneData,
     assetManager: AssetManager,
     paintingTexture: Texture,
+    options: PayloadLoadOptions = {},
   ): Promise<boolean> {
     this.unload();
-    // 烘焙产物按**当前生效的第一层背景**索引（2026-08-30「背景与烘焙绑死」）。
-    // 2026-08-31 起几何场与 probe 载荷同住 `lighting/<背景基名>/`，由角色照明实验室
-    // 一个工具产出；**没有回落布局**——找不到就是没烘，让它明说，别静默拿别人的几何。
-    this.bakeBase = sceneBakeDirUrl(
-      sceneId, sceneData.backgrounds?.[0]?.image ?? 'background.png');
-    this.dayNightOn = sceneData.dayNight?.enabled === true;
-    // 没写 lighting 块 ≠ 不打光。块里只装**作者的**灯与显示参数；运行时灯（手持火把、跟随灯）
-    // 与作者写没写这块无关，只要这张画烘了几何场就该照得亮。原来这里直接 return false，
-    // 于是 2026-08-21 那次恒等迁移之后才烘的 6 个场景（崖墓前段 ×4 / 跑马梁 / 牛头凼）
-    // 举着火把一点光都没有，而那次迁移的工具早已停用、再没有别的东西会补这块。
-    const def = sceneData.lighting ?? defaultSceneLighting();
-    if (!sceneData.lighting) depthLog(T, `${sceneId}: 场景没写 lighting 块，按缺省块（无作者灯、画面不变）启用`);
-    const depthCfg = sceneData.depthConfig;
-    if (!depthCfg) {
-      depthError(T, `${sceneId}: 配了 lighting 但没有 depthConfig —— 统一光影依赖深度场`);
-      return false;
-    }
+    const epoch = this.epoch;
+    const controller = new AbortController();
+    this.loadController = controller;
+    const cancel = (): void => controller.abort(options.signal?.reason ?? new DOMException('Scene lighting cancelled', 'AbortError'));
+    options.signal?.addEventListener('abort', cancel, { once: true });
+    if (options.signal?.aborted) cancel();
+    const request = { signal: controller.signal, timeoutMs: options.timeoutMs };
+    const check = (): void => {
+      if (epoch !== this.epoch || controller.signal.aborted) throw controller.signal.reason ?? new DOMException('Scene lighting superseded', 'AbortError');
+    };
+    try {
+      check();
+      // 烘焙产物按**当前生效的第一层背景**索引（2026-08-30「背景与烘焙绑死」）。
+      // 2026-08-31 起几何场与 probe 载荷同住 `lighting/<背景基名>/`，由角色照明实验室
+      // 一个工具产出；**没有回落布局**——找不到就是没烘，让它明说，别静默拿别人的几何。
+      const bakeBase = sceneBakeDirUrl(
+        sceneId, sceneData.backgrounds?.[0]?.image ?? 'background.png');
+      // 没写 lighting 块 ≠ 不打光。块里只装**作者的**灯与显示参数；运行时灯（手持火把、跟随灯）
+      // 与作者写没写这块无关，只要这张画烘了几何场就该照得亮。原来这里直接 return false，
+      // 于是 2026-08-21 那次恒等迁移之后才烘的 6 个场景（崖墓前段 ×4 / 跑马梁 / 牛头凼）
+      // 举着火把一点光都没有，而那次迁移的工具早已停用、再没有别的东西会补这块。
+      const def = sceneData.lighting ?? defaultSceneLighting();
+      if (!sceneData.lighting) depthLog(T, `${sceneId}: 场景没写 lighting 块，按缺省块（无作者灯、画面不变）启用`);
+      const depthCfg = sceneData.depthConfig;
+      if (!depthCfg) {
+        depthError(T, `${sceneId}: 配了 lighting 但没有 depthConfig —— 统一光影依赖深度场`);
+        if (options.strict && sceneData.lighting) throw new Error(`${sceneId}: configured scene lighting has no depthConfig`);
+        return false;
+      }
 
-    // ⚠ 走 loadOptionalJson 不走 loadJson：本仓库 dev server 上文件不存在返回的是
-    //   **200 + HTML** 而不是 404，判据必须看 content-type（optional-asset-probe 机制卡）。
-    const meta = await assetManager.loadOptionalJson<LightingGeometryMeta>(
-      `${this.bakeBase}/geometry.json`,
-    );
-    if (!meta) {
-      depthLog(T, `${sceneId}: 没烘几何场（跑 \`sh scripts/py.sh -m `
-        + `tools.character_lighting_lab.scene_fields --scene ${sceneId}\`）`);
-      return false;
-    }
-    // ---- 几何场的防腐门（2026-08-30 审查抓到：这一层原本**完全没有**）----
-    //
-    // lighting/ 那份 probe 载荷一直有 background_sha1 门，lighting2/ 却没有。
-    // 配上「按图名找不到就回落扁平」之后，后果是**静默拿白天的几何去照夜的原画**：
-    // 法线、天穹可见性、GI 命中图全是白天那张图的，而画面上只表现为"夜里光的走向
-    // 不太对"，作者根本无从下手。
-    //
-    // 与角色侧同口径：**不整份禁用**（烘焙数据可以缺省，缺省不能影响运行），
-    // 而是照常装载 + dev 大声报。回落到扁平布局时尤其要报——那份多半是白天的。
-    {
-      const want = (sceneData.backgrounds?.[0]?.image ?? '').split('/').pop() ?? '';
-      const sha = (meta as { background_sha1?: unknown }).background_sha1;
-      if (typeof sha === 'string' && sha) {
-        try {
-          const r = await fetch(sceneRuntimeAssetUrl(sceneId, want));
-          const buf = await r.arrayBuffer();
-          const dg = await crypto.subtle.digest('SHA-1', buf);
-          const hex = Array.from(new Uint8Array(dg))
-            .map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
-          if (hex !== sha) {
-            depthError(T, `${sceneId}: 几何场与当前背景 ${want} 对不上`
-              + `(烘焙 ${sha} vs 现况 ${hex})`
-              + '。法线/天穹可见性属于另一张图，光的走向会不对。'
-              + `请重烘：\`sh scripts/py.sh -m `
-              + `tools.character_lighting_lab.scene_fields --scene ${sceneId}\``);
+      // ⚠ 走 loadOptionalJson 不走 loadJson：本仓库 dev server 上文件不存在返回的是
+      //   **200 + HTML** 而不是 404，判据必须看 content-type（optional-asset-probe 机制卡）。
+      const meta = await assetManager.loadOptionalJson<LightingGeometryMeta>(
+        `${bakeBase}/geometry.json`, request,
+      );
+      check();
+      if (!meta) {
+        depthLog(T, `${sceneId}: 没烘几何场（跑 \`sh scripts/py.sh -m `
+          + `tools.character_lighting_lab.scene_fields --scene ${sceneId}\`）`);
+        return false;
+      }
+      // ---- 几何场的防腐门（2026-08-30 审查抓到：这一层原本**完全没有**）----
+      //
+      // lighting/ 那份 probe 载荷一直有 background_sha1 门，lighting2/ 却没有。
+      // 配上「按图名找不到就回落扁平」之后，后果是**静默拿白天的几何去照夜的原画**：
+      // 法线、天穹可见性、GI 命中图全是白天那张图的，而画面上只表现为"夜里光的走向
+      // 不太对"，作者根本无从下手。
+      //
+      // 与角色侧同口径：**不整份禁用**（烘焙数据可以缺省，缺省不能影响运行），
+      // 而是照常装载 + dev 大声报。回落到扁平布局时尤其要报——那份多半是白天的。
+      {
+        const want = (sceneData.backgrounds?.[0]?.image ?? '').split('/').pop() ?? '';
+        const sha = (meta as { background_sha1?: unknown }).background_sha1;
+        if (typeof sha === 'string' && sha) {
+          try {
+            const buf = await fetchPayloadBytes(sceneRuntimeAssetUrl(sceneId, want), request);
+            check();
+            const dg = await crypto.subtle.digest('SHA-1', buf);
+            check();
+            const hex = Array.from(new Uint8Array(dg))
+              .map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
+            if (hex !== sha) {
+              depthError(T, `${sceneId}: 几何场与当前背景 ${want} 对不上`
+                + `(烘焙 ${sha} vs 现况 ${hex})`
+                + '。法线/天穹可见性属于另一张图，光的走向会不对。'
+                + `请重烘：\`sh scripts/py.sh -m `
+                + `tools.character_lighting_lab.scene_fields --scene ${sceneId}\``);
+            }
+          } catch (e) {
+            check();
+            depthError(T, `${sceneId}: 几何场哈希门跑不起来`, e);
           }
-        } catch (e) {
-          depthError(T, `${sceneId}: 几何场哈希门跑不起来`, e);
         }
       }
-    }
-    // 不按 `version` 整数判真假：它只是烘焙器给自己留的记录。运行时按**自己真正读的东西**验
-    // （下面的 meta 字段 + 紧接着装的 normal / albedo），缺什么就说缺什么。
-    const metaProblems = geometryMetaProblems(meta);
-    if (metaProblems.length > 0) {
-      depthError(T, `${sceneId}: geometry.json 缺运行时要读的字段（${metaProblems.join('；')}），`
-        + `整包不启用。重烘：\`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene ${sceneId}\``);
-      return false;
-    }
+      // 不按 `version` 整数判真假：它只是烘焙器给自己留的记录。运行时按**自己真正读的东西**验
+      // （下面的 meta 字段 + 紧接着装的 normal / albedo），缺什么就说缺什么。
+      const metaProblems = geometryMetaProblems(meta);
+      if (metaProblems.length > 0) {
+        depthError(T, `${sceneId}: geometry.json 缺运行时要读的字段（${metaProblems.join('；')}），`
+          + `整包不启用。重烘：\`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene ${sceneId}\``);
+        if (options.strict) throw new Error(`${sceneId}: invalid geometry payload (${metaProblems.join(', ')})`);
+        return false;
+      }
 
-    let normal: Texture;
-    let albedo: Texture;
-    try {
-      normal = await assetManager.loadTexture(`${this.bakeBase}/normal.png`);
-      // albedo：灯乘的反照率。**作者可以手改这张图**，所以它跟法线一样是必读项——
-      // 缺了就整份载荷不启用，而不是回落到"现除一个"（那会让手改静默失效）。
-      albedo = await assetManager.loadTexture(`${this.bakeBase}/albedo.png`);
-    } catch (e) {
-      depthError(T, `${sceneId}: 几何场贴图装载失败`, e);
-      return false;
-    }
+      let normal: Texture;
+      let albedo: Texture;
+      try {
+        [normal, albedo] = await Promise.all([
+          assetManager.loadTexture(`${bakeBase}/normal.png`, request),
+        // albedo：灯乘的反照率。**作者可以手改这张图**，所以它跟法线一样是必读项——
+        // 缺了就整份载荷不启用，而不是回落到"现除一个"（那会让手改静默失效）。
+          assetManager.loadTexture(`${bakeBase}/albedo.png`, request),
+        ]);
+        check();
+      } catch (e) {
+        check();
+        depthError(T, `${sceneId}: 几何场贴图装载失败`, e);
+        if (options.strict) throw e;
+        return false;
+      }
 
-    const depthTex = assetManager.getTexture(
-      sceneRuntimeAssetUrl(sceneId, depthCfg.depth_map),
-    );
-    if (!depthTex) {
-      depthError(T, `${sceneId}: 拿不到深度纹理，统一光影不启用`);
-      return false;
-    }
-
-    // 装载期一致性断言：depth_per_sy ≡ tanθ/ppu。这条不成立时画面会**静默错到底**
-    // （角色上半身穿透前景、影子整体偏移），没有任何报错，所以必须在这里响。
-    const R = depthCfg.M.R;
-    const flatR = [R[0][0], R[0][1], R[0][2], R[1][0], R[1][1], R[1][2], R[2][0], R[2][1], R[2][2]];
-    const dps = resolveDepthPerSy(flatR, depthCfg.M.ppu, depthCfg.shader?.depth_per_sy);
-    if (!dps.ok) {
-      depthError(
-        T,
-        `${sceneId}: depth_per_sy 与 M 不自洽（声明 ${dps.declared} vs 由 M 推出 ${dps.expected}）`
-        + ' —— 多半是改了 M.ppu/俯角却没重烘深度',
+      const depthTex = assetManager.getTexture(
+        sceneRuntimeAssetUrl(sceneId, depthCfg.depth_map),
       );
-    }
+      if (!depthTex) {
+        depthError(T, `${sceneId}: 拿不到深度纹理，统一光影不启用`);
+        if (options.strict) throw new Error(`${sceneId}: scene lighting depth texture missing`);
+        return false;
+      }
 
-    const geo: SceneLightingGeometry = {
-      normal,
-      albedo,
-      depth: depthTex,
-      depthSize: [meta.native.w, meta.native.h],
-      cal: [depthCfg.M.ppu, depthCfg.M.cx, depthCfg.M.cy],
-      wuPerQUnit: meta.scale.scene_per_wu,
-      depthMapping: [
-        depthCfg.depth_mapping.invert ? 1 : 0,
-        depthCfg.depth_mapping.scale,
-        depthCfg.depth_mapping.offset,
-      ],
-      mRows: [
-        [R[0][0], R[0][1], R[0][2]],
+      // 装载期一致性断言：depth_per_sy ≡ tanθ/ppu。这条不成立时画面会**静默错到底**
+      // （角色上半身穿透前景、影子整体偏移），没有任何报错，所以必须在这里响。
+      const R = depthCfg.M.R;
+      const flatR = [R[0][0], R[0][1], R[0][2], R[1][0], R[1][1], R[1][2], R[2][0], R[2][1], R[2][2]];
+      const dps = resolveDepthPerSy(flatR, depthCfg.M.ppu, depthCfg.shader?.depth_per_sy);
+      if (!dps.ok) {
+        depthError(
+          T,
+          `${sceneId}: depth_per_sy 与 M 不自洽（声明 ${dps.declared} vs 由 M 推出 ${dps.expected}）`
+          + ' —— 多半是改了 M.ppu/俯角却没重烘深度',
+        );
+      }
+
+      const geo: SceneLightingGeometry = {
+        normal,
+        albedo,
+        depth: depthTex,
+        depthSize: [meta.native.w, meta.native.h],
+        cal: [depthCfg.M.ppu, depthCfg.M.cx, depthCfg.M.cy],
+        wuPerQUnit: meta.scale.scene_per_wu,
+        depthMapping: [
+          depthCfg.depth_mapping.invert ? 1 : 0,
+          depthCfg.depth_mapping.scale,
+          depthCfg.depth_mapping.offset,
+        ],
+        mRows: [
+          [R[0][0], R[0][1], R[0][2]],
+          [R[1][0], R[1][1], R[1][2]],
+          [R[2][0], R[2][1], R[2][2]],
+        ],
+        haze: meta.haze
+          ? {
+            k: meta.haze.k,
+            strength: meta.haze.strength,
+            color: meta.haze.color,
+            depthMin: meta.haze.depth_min,
+            depthMax: meta.haze.depth_max,
+          }
+          : undefined,
+      };
+
+      check();
+      this.bakeBase = bakeBase;
+      this.dayNightOn = sceneData.dayNight?.enabled === true;
+      this.meta = meta;
+      this.def = def;
+      this.geo = geo;
+      this.pass = new SceneLightingPass(paintingTexture, geo);
+      this.pass.applyParams(def, this.filterPhase());
+      this.pass.markDirty();
+      this.applySurfaceMask();
+
+      // LitBackground 采样 pass 的 RT，所以必须先让 pass 建出 RT
+      // （update 时才真正渲染，这里只是把资源建出来）
+      const radiance = this.pass.radiance;
+      if (!radiance) {
+        // ensure() 在 applyParams 里已跑过，理论到不了这
+        depthError(T, `${sceneId}: 辐射场 RT 未建立`);
+        if (options.strict) throw new Error(`${sceneId}: lighting radiance target unavailable`);
+        this.unload();
+        return false;
+      }
+      this.litBg = new LitBackground(
+        radiance, geo,
         [R[1][0], R[1][1], R[1][2]],
-        [R[2][0], R[2][1], R[2][2]],
-      ],
-      haze: meta.haze
-        ? {
-          k: meta.haze.k,
-          strength: meta.haze.strength,
-          color: meta.haze.color,
-          depthMin: meta.haze.depth_min,
-          depthMax: meta.haze.depth_max,
-        }
-        : undefined,
-    };
+        sceneData.worldWidth, sceneData.worldHeight,
+      );
+      this.litBg.applyParams(def);
 
-    this.meta = meta;
-    this.def = def;
-    this.geo = geo;
-    this.pass = new SceneLightingPass(paintingTexture, geo);
-    this.pass.applyParams(def, this.filterPhase());
-    this.pass.markDirty();
-    this.applySurfaceMask();
+      // ⛔ **3D 天穹可见性网格与 GI 命中图不再装载**（2026-08-31 制作人拍板）。
+      //
+      // 这两份载荷的唯一消费者是统一角色路径（`Game.UNIFIED_CHAR_PATH_ENABLED`），
+      // 那条路 2026-08-30 起整条关死。继续装载的代价是实打实的：每次进场景多两次
+      // fetch（gi_hitmap 单场景 240 KB），而 `GiBouncePass` 还会在**每次脏时**
+      // （推时刻 / 开关灯 / F2 调参）跑 3840 点 × 16 方向 = 61440 次纹理取样，
+      // 算出一张没有任何人读的反弹网格。
+      //
+      // 烘焙侧**照旧产出**这两个文件（重烘 28 个场景很贵，将来复活那条路要用），
+      // 只是运行时不读、打包不抽取。复活时把这一段还原即可：
+      // `skyvisGrid` ← skyvis_grid.bin、`loadGiHitmap()` ← gi_hitmap.bin，
+      // 两者的解析代码都原样留着（见 `loadGiHitmap` 与 `skyVisibilityTexture`）。
+      this.skyvisGrid = null;
 
-    // LitBackground 采样 pass 的 RT，所以必须先让 pass 建出 RT
-    // （update 时才真正渲染，这里只是把资源建出来）
-    const radiance = this.pass.radiance;
-    if (!radiance) {
-      // ensure() 在 applyParams 里已跑过，理论到不了这
-      depthError(T, `${sceneId}: 辐射场 RT 未建立`);
+      this.enabled = true;
+      depthLog(T, `${sceneId}: 场景光照已启用（角色高 ${meta.scale.char_wu.toFixed(3)} wu）`);
+      return true;
+    } catch (error) {
+      check();
       this.unload();
+      if (options.strict) throw error;
+      depthError(T, `${sceneId}: 场景光照装载失败，回落原画`, error);
       return false;
+    } finally {
+      options.signal?.removeEventListener('abort', cancel);
+      if (epoch === this.epoch) this.loadController = null;
     }
-    this.litBg = new LitBackground(
-      radiance, geo,
-      [R[1][0], R[1][1], R[1][2]],
-      sceneData.worldWidth, sceneData.worldHeight,
-    );
-    this.litBg.applyParams(def);
-
-    // ⛔ **3D 天穹可见性网格与 GI 命中图不再装载**（2026-08-31 制作人拍板）。
-    //
-    // 这两份载荷的唯一消费者是统一角色路径（`Game.UNIFIED_CHAR_PATH_ENABLED`），
-    // 那条路 2026-08-30 起整条关死。继续装载的代价是实打实的：每次进场景多两次
-    // fetch（gi_hitmap 单场景 240 KB），而 `GiBouncePass` 还会在**每次脏时**
-    // （推时刻 / 开关灯 / F2 调参）跑 3840 点 × 16 方向 = 61440 次纹理取样，
-    // 算出一张没有任何人读的反弹网格。
-    //
-    // 烘焙侧**照旧产出**这两个文件（重烘 28 个场景很贵，将来复活那条路要用），
-    // 只是运行时不读、打包不抽取。复活时把这一段还原即可：
-    // `skyvisGrid` ← skyvis_grid.bin、`loadGiHitmap()` ← gi_hitmap.bin，
-    // 两者的解析代码都原样留着（见 `loadGiHitmap` 与 `skyVisibilityTexture`）。
-    this.skyvisGrid = null;
-
-    this.enabled = true;
-    depthLog(T, `${sceneId}: 场景光照已启用（角色高 ${meta.scale.char_wu.toFixed(3)} wu）`);
-    return true;
   }
 
   /**
@@ -785,6 +824,9 @@ export class SceneLightingSystem {
   }
 
   unload(): void {
+    this.epoch++;
+    this.loadController?.abort(new DOMException('Scene lighting superseded', 'AbortError'));
+    this.loadController = null;
     // ⚠ Pixi 坑②：先拆显示端再销毁它引用的 RT，顺序反了会把 shader 的 BindGroup 永久烧毁
     this.detachSway();
     this.litBg?.destroy();

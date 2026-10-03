@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { Container } from '../engine2d';
 import { UI_LAYER_Z } from '../rendering/uiLayerOrder';
 import { UITheme } from './UITheme';
@@ -7,6 +7,7 @@ import { GuidanceLayerUI } from './GuidanceLayerUI';
 import { EventBus } from '../core/EventBus';
 import type { Renderer } from '../rendering/Renderer';
 import type { Camera } from '../rendering/Camera';
+import { LoadingSurface } from './LoadingSurface';
 
 /**
  * 面板皮肤要在 Graphics 上画径向渐变，`FillGradient` 当场去 `document` 要一张 canvas——
@@ -18,6 +19,162 @@ vi.mock('./PanelSkin', async () => {
     createPanel: (): unknown => new Container(),
     SKINS: { panel: {}, chip: {}, toast: {} },
   };
+});
+
+/** DOM loading curtain semantics, independent of canvas/GPU paint. */
+class LoadingElementStub {
+  id = ''; className = ''; textContent = ''; innerHTML = ''; hidden = false; inert = false; tabIndex = 0;
+  type = ''; dataset: Record<string, string> = {};
+  style = {
+    opacity: '',
+    properties: new Map<string, { value: string; priority: string }>(),
+    setProperty(name: string, value: string, priority = ''): void { this.properties.set(name, { value, priority }); },
+    removeProperty(name: string): string { const old = this.getPropertyValue(name); this.properties.delete(name); return old; },
+    getPropertyValue(name: string): string { return this.properties.get(name)?.value ?? ''; },
+    getPropertyPriority(name: string): string { return this.properties.get(name)?.priority ?? ''; },
+  };
+  ownerDocument = { defaultView: { getComputedStyle: (element: LoadingElementStub) => ({ filter: element.style.getPropertyValue('filter') || 'none' }) } };
+  parentElement: LoadingElementStub | null = null;
+  children: LoadingElementStub[] = [];
+  attributes = new Map<string, string>();
+  classes = new Set<string>();
+  classList = { add: (...names: string[]) => names.forEach(n => this.classes.add(n)), remove: (...names: string[]) => names.forEach(n => this.classes.delete(n)) };
+  listeners = new Map<string, ((event: Event) => void)[]>();
+  append(...children: LoadingElementStub[]): void { for (const c of children) { c.parentElement = this; this.children.push(c); } }
+  replaceChildren(): void { this.children = []; }
+  setAttribute(name: string, value: string): void { this.attributes.set(name, value); }
+  removeAttribute(name: string): void { this.attributes.delete(name); }
+  hasAttribute(name: string): boolean { return name === 'data-loading-action' ? 'loadingAction' in this.dataset : this.attributes.has(name); }
+  contains(el: LoadingElementStub): boolean { return this === el || this.children.some(c => c.contains(el)); }
+  closest(_selector: string): LoadingElementStub | null { return this.hasAttribute('data-loading-action') ? this : this.parentElement?.closest(_selector) ?? null; }
+  querySelector(_selector: string): LoadingElementStub | undefined { return this.children.find(c => c.type === 'button') ?? this.children.flatMap(c => c.querySelector(_selector) ?? [])[0]; }
+  addEventListener(name: string, fn: (event: Event) => void): void { this.listeners.set(name, [...this.listeners.get(name) ?? [], fn]); }
+  removeEventListener(name: string, fn: (event: Event) => void): void { this.listeners.set(name, (this.listeners.get(name) ?? []).filter(item => item !== fn)); }
+  click(): void { for (const fn of this.listeners.get('click') ?? []) fn({} as Event); }
+  focus(): void { (document as unknown as { activeElement: LoadingElementStub }).activeElement = this; }
+  remove(): void { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(c => c !== this); }
+  getBoundingClientRect(): DOMRect { return { x: 0, y: 0, left: 0, top: 0, right: 1280, bottom: 720, width: 1280, height: 720 } as DOMRect; }
+}
+
+function loadingHarness() {
+  const body = new LoadingElementStub();
+  const root = new LoadingElementStub(); root.id = 'game-loading';
+  const game = new LoadingElementStub();
+  body.append(root, game);
+  const listeners = new Map<string, ((event: Event) => void)[]>();
+  vi.stubGlobal('Element', LoadingElementStub);
+  vi.stubGlobal('HTMLElement', LoadingElementStub);
+  vi.stubGlobal('HTMLButtonElement', LoadingElementStub);
+  vi.stubGlobal('document', { body, activeElement: game, getElementById: () => root, createElement: () => new LoadingElementStub() });
+  vi.stubGlobal('window', {
+    addEventListener: (name: string, fn: (event: Event) => void) => listeners.set(name, [...listeners.get(name) ?? [], fn]),
+    removeEventListener: (name: string, fn: (event: Event) => void) => listeners.set(name, (listeners.get(name) ?? []).filter(item => item !== fn)),
+    location: { reload: vi.fn() },
+  });
+  vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+  vi.stubGlobal('cancelAnimationFrame', vi.fn());
+  const surface = new LoadingSurface();
+  return { surface, root, game, listeners };
+}
+
+describe('LoadingSurface 全屏遮幕与生命周期', () => {
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it('采纳boot遮幕，主菜单reveal后仍挡输入，仅finish释放底层DOM', async () => {
+    const h = loadingHarness();
+    h.surface.configure({ revealMs: 0 });
+    expect(h.surface.activeId).toBe('boot');
+    expect(h.game.inert).toBe(true);
+    await h.surface.reveal('boot');
+    expect(h.root.children[0].style.opacity).toBe('0');
+    expect(h.root.style.opacity).toBe(''); // The hit shield remains present and opaque to events.
+    expect(h.root.hidden).toBe(false);
+    expect(h.game.inert).toBe(true);
+    h.surface.finish('stale');
+    expect(h.surface.activeId).toBe('boot');
+    h.surface.finish('boot');
+    expect(h.root.hidden).toBe(true);
+    expect(h.game.inert).toBe(false);
+    h.surface.destroy();
+  });
+
+  it('失败发生在cover的两个await之间，旧动画reject而不覆盖失败界面', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const h = loadingHarness();
+    const waiting = h.surface.cover('boot', undefined, true).catch(e => e);
+    h.surface.fail('boot', new Error('internal stack\n' + 'file.ts:123 '.repeat(1000)));
+    expect(await waiting).toMatchObject({ name: 'AbortError' });
+    expect(h.root.children[0].style.opacity).toBe('1');
+    expect(h.root.children[1].children[0].textContent).toBe('加载未完成，请重试或重新启动。');
+    expect(vi.getTimerCount()).toBe(0);
+    h.surface.destroy();
+  });
+
+  it('就绪前不显示100%，追加请求不倒退进度且重新显示加载文案', async () => {
+    vi.useFakeTimers();
+    const h = loadingHarness();
+    h.surface.configure({ revealMs: 0, fadeOutMs: 0 });
+    h.surface.progress('boot', 0.6, 'assets');
+    h.surface.progress('boot', 0.2, 'assets');
+    expect(h.root.dataset.progress).toBe('0.6');
+    h.surface.progress('boot', 1, 'prepared');
+    expect(Number(h.root.dataset.progress)).toBeLessThan(1);
+    await h.surface.reveal('boot');
+    const next = h.surface.cover('next');
+    await vi.runAllTimersAsync();
+    await next;
+    expect(h.root.classes.has('game-loading-indeterminate')).toBe(true);
+    expect(h.root.children[1].children[0].textContent).toBe('正在加载…');
+    expect(h.game.inert).toBe(true);
+    h.surface.destroy();
+  });
+
+  it('取消/替换/销毁都settle，即使后台没有rAF也以定时器收口', async () => {
+    vi.useFakeTimers();
+    const h = loadingHarness();
+    const controller = new AbortController();
+    h.game.style.setProperty('filter', 'contrast(0.9)', 'important');
+    h.game.style.setProperty('will-change', 'transform', 'important');
+    const cancelled = h.surface.reveal('boot', controller.signal,
+      { transition: 'focus', target: h.game as unknown as HTMLElement }).catch(e => e);
+    expect(h.game.style.getPropertyValue('filter')).toContain('blur(16px)');
+    controller.abort();
+    expect(await cancelled).toMatchObject({ name: 'AbortError' });
+    expect(h.game.style.getPropertyValue('filter')).toBe('contrast(0.9)');
+    expect(h.game.style.getPropertyPriority('filter')).toBe('important');
+    expect(h.game.style.getPropertyValue('will-change')).toBe('transform');
+    const old = h.surface.reveal('boot').catch(e => e);
+    const latest = h.surface.reveal('boot');
+    expect(await old).toMatchObject({ name: 'AbortError' });
+    await vi.runAllTimersAsync();
+    await latest;
+    const destroyed = h.surface.reveal('boot').catch(e => e);
+    h.surface.destroy();
+    expect(await destroyed).toMatchObject({ name: 'AbortError' });
+    expect(vi.getTimerCount()).toBe(0);
+    expect(h.game.inert).toBe(false);
+    expect([...h.listeners.values()].flat()).toHaveLength(0);
+  });
+
+  it('capture屏蔽旧canvas/窗口事件，失败按钮仍可点或用Enter触发', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const h = loadingHarness();
+    const event = { target: h.game, cancelable: true, preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };
+    h.listeners.get('pointerup')![0](event as unknown as Event);
+    expect(event.stopImmediatePropagation).toHaveBeenCalledOnce();
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    const retry = vi.fn();
+    h.surface.fail('boot', new Error('bad'), retry);
+    const button = h.root.querySelector('button')!;
+    const action = { ...event, target: button, stopImmediatePropagation: vi.fn(), preventDefault: vi.fn() };
+    h.listeners.get('pointerdown')![0](action as unknown as Event);
+    expect(action.stopImmediatePropagation).not.toHaveBeenCalled();
+    button.click();
+    h.surface.handleKey({ code: 'Enter' } as KeyboardEvent);
+    expect(retry).toHaveBeenCalledTimes(2);
+    h.surface.destroy();
+  });
 });
 
 /**

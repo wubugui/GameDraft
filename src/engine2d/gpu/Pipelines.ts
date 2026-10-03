@@ -68,6 +68,14 @@ export interface PipelineKey {
   sampleCount: number;
 }
 
+export interface PipelineReadiness {
+  status: 'ready' | 'pending' | 'failed' | 'cancelled' | 'destroyed';
+  required: number;
+  ready: number;
+  pending: string[];
+  failed: Array<{ label: string; error: unknown }>;
+}
+
 /** 快路径键里模板用法的序号(只在带深度 / 模板时参与,同慢键) */
 const STENCIL_INDEX: Record<StencilMode, number> = { disabled: 0, add: 1, remove: 2, active: 3, inverse: 4 };
 
@@ -90,6 +98,9 @@ export class Pipelines {
   /** 正在等的 whenAllReady:销毁时一律以 false 放行(照 master GlProgramWarmup.destroy,R4-7) */
   private readonly waits = new Set<(ready: boolean) => void>();
   private destroyed = false;
+  private readonly states = new Map<RhiRenderPipeline, { status: 'pending' | 'ready' | 'failed'; error?: unknown }>();
+  private readonly collections: Set<RhiRenderPipeline>[] = [];
+  private readonly readinessWaits = new Set<() => void>();
 
   constructor(private readonly scope: RhiResourceScope) {}
 
@@ -114,11 +125,59 @@ export class Pipelines {
     const state = this.stateKey(k);
     if (state >= 0) {
       const hit = byState.get(state);
-      if (hit) return hit;
+      if (hit) { this.trackUse(hit); return hit; }
     }
     const p = this.getSlow(k);
     if (state >= 0) byState.set(state, p);
+    this.trackUse(p);
     return p;
+  }
+
+  private trackUse(pipeline: RhiRenderPipeline): void {
+    for (const collection of this.collections) collection.add(pipeline);
+  }
+
+  /** 只收集一次目标树实际引用的管线；未使用的历史失败不会污染新场景。嵌套 render 也纳入同一次收集。 */
+  collectRequired(render: () => void): Set<RhiRenderPipeline> {
+    const required = new Set<RhiRenderPipeline>();
+    this.collections.push(required);
+    try { render(); } finally { this.collections.pop(); }
+    return required;
+  }
+
+  readiness(required: ReadonlySet<RhiRenderPipeline>): PipelineReadiness {
+    const report: PipelineReadiness = { status: this.destroyed ? 'destroyed' : 'ready', required: required.size, ready: 0, pending: [], failed: [] };
+    for (const p of required) {
+      const state = this.states.get(p);
+      if (p.destroyed) report.failed.push({ label: p.label, error: new Error('Required pipeline destroyed') });
+      else if (state?.status === 'failed') report.failed.push({ label: p.label, error: state.error });
+      else if (state?.status === 'ready' || p.isReady) report.ready++;
+      else report.pending.push(p.label);
+    }
+    if (!this.destroyed) report.status = report.failed.length ? 'failed' : report.pending.length ? 'pending' : 'ready';
+    return report;
+  }
+
+  async whenRequiredReady(required: ReadonlySet<RhiRenderPipeline>, timeoutMs: number, signal?: AbortSignal): Promise<PipelineReadiness> {
+    if (this.destroyed) return this.readiness(required);
+    if (signal?.aborted) return { ...this.readiness(required), status: 'cancelled' };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancel!: () => void;
+    const cut = new Promise<'cancelled' | 'pending' | 'destroyed'>(resolve => {
+      cancel = () => resolve(this.destroyed ? 'destroyed' : signal?.aborted ? 'cancelled' : 'pending');
+      timer = setTimeout(cancel, Math.max(0, timeoutMs));
+    });
+    this.readinessWaits.add(cancel);
+    signal?.addEventListener('abort', cancel, { once: true });
+    try {
+      const outcome = await Promise.race([Promise.allSettled([...required].map(p => p.ready)).then(() => null), cut]);
+      const report = this.readiness(required);
+      return outcome === 'cancelled' || outcome === 'destroyed' ? { ...report, status: outcome } : report;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+      this.readinessWaits.delete(cancel);
+    }
   }
 
   /** 除程序与布局外的状态压成一个整数(各字段互不重叠);串值序号超限返回 -1(只走慢键) */
@@ -161,6 +220,9 @@ export class Pipelines {
         sampleCount: k.sampleCount,
       });
       this.pipelines.set(key, p);
+      const state: { status: 'pending' | 'ready' | 'failed'; error?: unknown } = { status: 'pending' };
+      this.states.set(p, state);
+      p.ready.then(() => { state.status = 'ready'; }, error => { state.status = 'failed'; state.error = error; });
     }
     return p;
   }
@@ -236,6 +298,8 @@ export class Pipelines {
 
   destroy(): void {
     this.destroyed = true;
+    for (const cancel of this.readinessWaits) cancel();
+    this.readinessWaits.clear();
     for (const release of [...this.waits]) release(false);
     this.waits.clear();
     this.reset();
@@ -249,6 +313,7 @@ export class Pipelines {
     for (const p of this.pipelines.values()) p.destroy();
     for (const s of this.shaders.values()) s.destroy();
     this.pipelines.clear();
+    this.states.clear();
     this.shaders.clear();
     this.fast = new WeakMap();
   }

@@ -4,13 +4,14 @@
  *   非动态的 RenderTexture 改尺寸不发 view update,四边形与滤镜 / 命中包围盒一起停在旧尺寸(与 master 一致);
  * - D22 构造参数 anchor 按真值判断:`anchor: 0` / `null` 落到纹理的 defaultAnchor,null 不抛。
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as PIXI from 'pixi.js';
 import { Sprite } from './Sprite';
 import { Texture } from '../textures/Texture';
 import { TextureSource } from '../textures/TextureSource';
 import { RenderTexture } from '../textures/RenderTexture';
 import type { BatchableElement, RenderCollector } from '../core/contracts';
+import { Assets } from '../assets/Assets';
 
 class FakeCollector implements RenderCollector {
   items: BatchableElement[] = [];
@@ -27,6 +28,79 @@ class FakeCollector implements RenderCollector {
 }
 
 type Q = { minX: number; maxX: number; minY: number; maxY: number };
+
+describe('托管TextureSource视图租约', () => {
+  function imageTexture(): { texture: Texture; close: ReturnType<typeof vi.fn> } {
+    const close = vi.fn();
+    return { texture: new Texture({ source: new TextureSource({ resource: { width: 16, height: 16, close } }) }), close };
+  }
+
+  it('先创建的Sprite也能保护后来由manager托管的源，destroy(true)不破坏其他view', () => {
+    const { texture, close } = imageTexture();
+    const source = texture.source;
+    const first = new Sprite(texture);
+    const second = new Sprite(texture);
+    const manager = {};
+    Assets.retainTexture(texture, manager);
+    expect(Assets.releaseTexture(texture, manager)).toBe(false);
+    first.destroy(true);
+    expect(texture.destroyed).toBe(false);
+    expect(source.destroyed).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    second.destroy(true);
+    expect(texture.destroyed).toBe(true);
+    expect(source.destroyed).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+    second.destroy(true);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('动态子纹理换源先保新再放旧，两份根纹理共源时仅最终释放关闭一次', () => {
+    const a = imageTexture();
+    const b = imageTexture();
+    const sourceA = a.texture.source;
+    const sourceB = b.texture.source;
+    const aliasB = new Texture({ source: sourceB });
+    const ownerA = {};
+    const ownerB = {};
+    const aliasOwner = {};
+    Assets.retainTexture(a.texture, ownerA);
+    Assets.retainTexture(b.texture, ownerB);
+    Assets.retainTexture(aliasB, aliasOwner);
+    const frame = new Texture({ source: sourceA, dynamic: true });
+    const sprite = new Sprite(frame);
+    Assets.releaseTexture(a.texture, ownerA);
+    frame.source = sourceB;
+    expect(sourceA.destroyed).toBe(true);
+    expect(a.close).toHaveBeenCalledTimes(1);
+    expect(Assets.releaseTexture(b.texture, ownerB)).toBe(false);
+    expect(Assets.releaseTexture(aliasB, aliasOwner)).toBe(false);
+    expect(sourceB.destroyed).toBe(false);
+    sprite.destroy();
+    expect(sourceB.destroyed).toBe(true);
+    expect(b.close).toHaveBeenCalledTimes(1);
+    expect(b.texture.destroyed).toBe(true);
+    expect(aliasB.destroyed).toBe(true);
+    frame.destroy();
+  });
+
+  it('非托管图片与WHITE/EMPTY不会因解绑自动销毁，非托管destroy选项仍有效', () => {
+    const { texture, close } = imageTexture();
+    const sprite = new Sprite(texture);
+    sprite.texture = Texture.WHITE;
+    sprite.texture = Texture.EMPTY;
+    sprite.destroy(true);
+    expect(texture.destroyed).toBe(false);
+    expect(texture.source.destroyed).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    expect(Texture.WHITE.destroyed).toBe(false);
+    expect(Texture.EMPTY.destroyed).toBe(false);
+    const explicit = new Sprite(texture);
+    explicit.destroy(true);
+    expect(texture.destroyed).toBe(true);
+  });
+});
+
 const quad = (b: Q): number[] => [b.minX, b.minY, b.maxX, b.maxY].map((v) => v + 0); // -0 → 0
 
 function collectQuad(s: Sprite): number[] {

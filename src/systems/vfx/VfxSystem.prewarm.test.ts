@@ -39,7 +39,7 @@ const STEPS = 480;
 const COST = 31;
 const UNITS_PER_FRAME = 4000;
 
-function harness(opts: { placements: unknown[]; hangEffects?: boolean }) {
+function harness(opts: { placements: unknown[]; hangEffects?: boolean; readySheets?: boolean }) {
   const logs: string[] = [];
   const disk: Record<string, unknown> = {
     'vfx/haze.json': HAZE, 'vfx/huge.json': HUGE,
@@ -52,8 +52,10 @@ function harness(opts: { placements: unknown[]; hangEffects?: boolean }) {
     if (!hit) return { ok: false, status: 404, json: async () => null } as unknown as Response;
     return { ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(disk[hit])) } as unknown as Response;
   }));
+  const assets = new AssetManager();
+  if (opts.readySheets) vi.spyOn(assets, 'loadTexture').mockResolvedValue({ width: 10, height: 10 } as never);
   const sys = new VfxSystem({
-    assetManager: new AssetManager(),
+    assetManager: assets,
     getSceneData: () => ({ id: 'x' } as unknown as SceneData),
     buildSpace: () => createPlanarVfxSpace(),
     getPlayerContact: () => null,
@@ -77,7 +79,7 @@ function harness(opts: { placements: unknown[]; hangEffects?: boolean }) {
   const instances = () => (sys as unknown as { instances: Map<string, { sim: VfxInstanceSim | null }> }).instances;
   const sim = (id: string) => instances().get(id)?.sim ?? null;
   const lastRendered = () => rendered[rendered.length - 1];
-  return { sys, eventBus, flush, sim, instances, rendered, lastRendered, logs };
+  return { sys, assets, eventBus, flush, sim, instances, rendered, lastRendered, logs };
 }
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -85,6 +87,29 @@ afterEach(() => { vi.unstubAllGlobals(); });
 const place = (id: string, effect = 'haze', extra: Record<string, unknown> = {}) => ({ id, effect, anchor: { x: 100, y: 100 }, ...extra });
 
 describe('粒子预热不挤在一帧里', () => {
+  it('严格加载闸在世界暂停时先建可绘制视图，不依赖一次玩法update', async () => {
+    const h = harness({ placements: [place('haze_1')], readySheets: true });
+    h.eventBus.emit('scene:ready');
+    await h.sys.prepareForReveal(5000, { strict: true });
+    expect(h.sim('haze_1')?.prewarmRemaining).toBe(0);
+    expect(h.rendered).toEqual([['haze_1']]);
+    const time = h.sim('haze_1')!.time;
+    h.sys.prepareRenderViews();
+    expect(h.sim('haze_1')!.time).toBe(time);
+    h.sys.destroy(); h.assets.dispose();
+  });
+
+  it('严格加载闸资产超时拒绝，消费者取消/场景卸载也拒绝而不假装ready', async () => {
+    const h = harness({ placements: [place('haze_1')], hangEffects: true });
+    h.eventBus.emit('scene:ready');
+    await expect(h.sys.prepareForReveal(20, { strict: true })).rejects.toMatchObject({ name: 'TimeoutError' });
+    const cancel = new AbortController();
+    const waiting = h.sys.prepareForReveal(60_000, { strict: true, signal: cancel.signal });
+    const rejected = expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+    cancel.abort();
+    await rejected;
+    h.sys.destroy(); h.assets.dispose();
+  });
   it('揭幕前闸：遮罩下建好模拟、预热跑完；被停掉的不建；揭幕后第一帧直接画、不再补跑', async () => {
     const h = harness({ placements: [place('haze_1'), place('haze_2'), place('parked', 'haze', { autoStart: false })] });
     h.eventBus.emit('scene:ready');              // 不等资产：闸自己等
@@ -93,8 +118,9 @@ describe('粒子预热不挤在一帧里', () => {
     expect(h.sim('haze_2')?.prewarmRemaining).toBe(0);
     expect(h.sim('haze_1')!.time).toBeGreaterThan(3.9);
     expect(h.sim('parked')).toBeNull();
+    expect(h.rendered).toEqual([['haze_1', 'haze_2']]); // 遮罩下已经建视图，尚未推进玩法帧。
     h.sys.update(1 / 60);
-    expect(h.rendered).toEqual([['haze_1', 'haze_2']]);
+    expect(h.rendered).toEqual([['haze_1', 'haze_2'], ['haze_1', 'haze_2']]);
     expect(h.sys.stats.simMs).toBeLessThan(50);
   });
 

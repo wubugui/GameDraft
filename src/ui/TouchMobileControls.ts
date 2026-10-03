@@ -152,6 +152,7 @@ export class TouchMobileControls {
   private readonly getGameState: () => GameState;
   private readonly root: HTMLDivElement;
   private readonly pointerDir = new Map<number, Dir>();
+  private readonly capturedPointers = new Map<number, HTMLButtonElement>();
   private activeDirs = new Set<Dir>();
   private runHeld = false;
   private destroyed = false;
@@ -235,8 +236,10 @@ export class TouchMobileControls {
     runBtn.textContent = strings.get('touchControls', 'run');
     runBtn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
+      if (!this.acceptsExploreInput()) return;
       try {
         runBtn.setPointerCapture(e.pointerId);
+        this.capturedPointers.set(e.pointerId, runBtn);
       } catch {
         /* ignore */
       }
@@ -245,6 +248,7 @@ export class TouchMobileControls {
     });
     const runUp = (e: PointerEvent) => {
       e.preventDefault();
+      this.capturedPointers.delete(e.pointerId);
       if (e.pointerId !== undefined && runBtn.hasPointerCapture(e.pointerId)) {
         try {
           runBtn.releasePointerCapture(e.pointerId);
@@ -257,7 +261,8 @@ export class TouchMobileControls {
     };
     runBtn.addEventListener('pointerup', runUp);
     runBtn.addEventListener('pointercancel', runUp);
-    runBtn.addEventListener('lostpointercapture', () => {
+    runBtn.addEventListener('lostpointercapture', (e) => {
+      this.capturedPointers.delete(e.pointerId);
       this.runHeld = false;
       this.inputManager.setTouchRunHeld(false);
     });
@@ -268,6 +273,7 @@ export class TouchMobileControls {
     useBtn.textContent = strings.get('touchControls', 'interact');
     useBtn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
+      if (!this.acceptsExploreInput()) return;
       this.inputManager.injectKeyJustPressed('KeyE');
     });
 
@@ -305,6 +311,7 @@ export class TouchMobileControls {
     backBtn.textContent = strings.get('touchControls', 'back');
     backBtn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
+      if (this.destroyed || this.getGameState() !== GameState.UIOverlay) return;
       this.stateController.triggerEscapeFromTouch();
     });
     overlayBar.appendChild(backBtn);
@@ -314,6 +321,7 @@ export class TouchMobileControls {
     this.root.appendChild(actions);
     this.root.appendChild(overlayBar);
     mountEl.appendChild(this.root);
+    this.syncState();
   }
 
   private makePanelToggleBtn(panelName: string, label: string): HTMLButtonElement {
@@ -323,6 +331,7 @@ export class TouchMobileControls {
     btn.textContent = stripStyleMarkup(label);
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
+      if (!this.acceptsExploreInput()) return;
       this.stateController.togglePanel(panelName);
     });
     // 未读点与桌面入口条同一语义（见 HUD.setPanelUnreadProvider）：触屏玩家一样要知道
@@ -350,9 +359,10 @@ export class TouchMobileControls {
     btn.dataset.verbKey = code;
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
+      if (!this.acceptsExploreInput()) return;
       const next = !this.inputManager.isTouchKeyHeld(code);
       this.inputManager.setTouchKeyHeld(code, next);
-      btn.classList.toggle('is-active', next);
+      btn.classList.toggle('is-active', this.inputManager.isTouchKeyHeld(code));
     });
     this.verbToggleBtns.push(btn);
     return btn;
@@ -366,6 +376,7 @@ export class TouchMobileControls {
     btn.textContent = stripStyleMarkup(label);
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
+      if (!this.acceptsExploreInput()) return;
       this.inputManager.injectKeyJustPressed(code);
     });
     return btn;
@@ -380,8 +391,10 @@ export class TouchMobileControls {
 
     const onDown = (e: PointerEvent) => {
       e.preventDefault();
+      if (!this.acceptsExploreInput()) return;
       try {
         btn.setPointerCapture(e.pointerId);
+        this.capturedPointers.set(e.pointerId, btn);
       } catch {
         /* ignore */
       }
@@ -391,6 +404,7 @@ export class TouchMobileControls {
     };
     const onUp = (e: PointerEvent) => {
       e.preventDefault();
+      this.capturedPointers.delete(e.pointerId);
       if (btn.hasPointerCapture(e.pointerId)) {
         try {
           btn.releasePointerCapture(e.pointerId);
@@ -405,6 +419,7 @@ export class TouchMobileControls {
     btn.addEventListener('pointerup', onUp);
     btn.addEventListener('pointercancel', onUp);
     btn.addEventListener('lostpointercapture', (e) => {
+      this.capturedPointers.delete(e.pointerId);
       this.pointerDir.delete(e.pointerId);
       this.rebuildActiveFromMap();
     });
@@ -425,6 +440,13 @@ export class TouchMobileControls {
     this.pointerDir.clear();
     this.activeDirs.clear();
     this.inputManager.setTouchMoveAxes(0, 0);
+    // 加载隐藏按钮时主动交还 capture，旧手指的 move/up 不能在揭幕后续走。
+    for (const [pointerId, btn] of this.capturedPointers) {
+      try {
+        if (btn.hasPointerCapture(pointerId)) btn.releasePointerCapture(pointerId);
+      } catch { /* 浏览器已自行释放 */ }
+    }
+    this.capturedPointers.clear();
     if (this.runHeld) {
       this.runHeld = false;
       this.inputManager.setTouchRunHeld(false);
@@ -438,16 +460,30 @@ export class TouchMobileControls {
     }
   }
 
+  private acceptsExploreInput(): boolean {
+    return !this.destroyed && this.getGameState() === GameState.Exploring;
+  }
+
+  /** 由组装层状态观察者同步调用；不另占 GameStateController 的唯一观察者槽。 */
+  syncState(): void {
+    if (this.destroyed) return;
+    const st = this.getGameState();
+    const mobile = st !== GameState.Loading && useCoarsePointerOrTouchDevice();
+    const explore = mobile && st === GameState.Exploring;
+    const overlay = mobile && st === GameState.UIOverlay;
+    const hidden = !explore && !overlay;
+    this.root.hidden = hidden;
+    this.root.inert = hidden;
+    this.root.classList.toggle('is-loading', st === GameState.Loading);
+    this.root.classList.toggle('is-explore', explore);
+    this.root.classList.toggle('is-overlay', overlay);
+    this.root.setAttribute('aria-hidden', hidden ? 'true' : 'false');
+    if (!explore) this.clearExploreInput();
+  }
+
   update(): void {
     if (this.destroyed) return;
-    const mobile = useCoarsePointerOrTouchDevice();
-    const st = this.getGameState();
-    let explore = false;
-    let overlay = false;
-    if (mobile) {
-      if (st === GameState.Exploring) explore = true;
-      else if (st === GameState.UIOverlay) overlay = true;
-    }
+    this.syncState();
 
     // 未读点（与桌面入口条同一判据）：只在这些 chip 真的显示着时才有意义，
     // 但翻属性无副作用，统一每帧同步一次即可。
@@ -471,13 +507,6 @@ export class TouchMobileControls {
       }
     }
 
-    this.root.classList.toggle('is-explore', explore);
-    this.root.classList.toggle('is-overlay', overlay);
-    this.root.setAttribute('aria-hidden', explore || overlay ? 'false' : 'true');
-
-    if (!explore) {
-      this.clearExploreInput();
-    }
   }
 
   destroy(): void {

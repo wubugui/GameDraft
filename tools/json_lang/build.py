@@ -64,6 +64,7 @@ AUTHORITY_FILES = (
     _extract_mod.ACTION_MANIFEST_TS,
     _extract_mod.EVAL_CONDITION_TS,
     _extract_mod.TYPES_TS,
+    _extract_mod.LOADING_TRANSITIONS_JSON,
 )
 
 

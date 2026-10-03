@@ -85,10 +85,12 @@ const checkWorker = new InlineWorker(CHECK_WORKER_CODE);
 const loadWorker = new InlineWorker(LOAD_WORKER_CODE);
 
 interface QueuedTask {
+  uuid: number;
   id: string;
   arguments: unknown[];
   resolve: (value: unknown) => void;
   reject: (reason?: unknown) => void;
+  cleanup: () => void;
 }
 
 interface WorkerResult {
@@ -105,30 +107,44 @@ class WorkerManagerClass {
   private _createdWorkers = 0;
   private _isImageBitmapSupported?: Promise<boolean>;
   private readonly _workerPool: Worker[] = [];
+  private readonly _workers = new Set<Worker>();
   private readonly _queue: QueuedTask[] = [];
-  private _resolveHash: Record<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }> = {};
+  private _resolveHash: Record<number, QueuedTask & { worker: Worker }> = {};
+  private _cancelCheck: (() => void) | null = null;
 
   /** 当前环境的 worker 里能不能用 createImageBitmap(起一个 worker 试一次,结果缓存) */
   isImageBitmapSupported(): Promise<boolean> {
     if (this._isImageBitmapSupported !== undefined) return this._isImageBitmapSupported;
     this._isImageBitmapSupported = new Promise((resolve) => {
-      const worker = checkWorker.create();
-      worker.addEventListener('message', (event: MessageEvent<boolean>) => {
+      let worker: Worker;
+      try { worker = checkWorker.create(); } catch { resolve(false); return; }
+      let finished = false;
+      const finish = (supported: boolean): void => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
         worker.terminate();
         checkWorker.revokeObjectURL();
-        resolve(event.data);
+        this._cancelCheck = null;
+        resolve(supported);
+      };
+      const timer = setTimeout(() => finish(false), 5000);
+      this._cancelCheck = () => finish(false);
+      worker.addEventListener('message', (event: MessageEvent<boolean>) => {
+        finish(event.data);
       });
+      worker.addEventListener('error', () => finish(false), { once: true });
     });
     return this._isImageBitmapSupported;
   }
 
   /** 在 worker 里载一张图为 ImageBitmap(只把 alphaMode 传过去,决定解码期是否预乘) */
-  loadImageBitmap(src: string, asset?: { data?: { alphaMode?: string } }): Promise<ImageBitmap> {
+  loadImageBitmap(src: string, asset?: { data?: { alphaMode?: string } }, signal?: AbortSignal): Promise<ImageBitmap> {
     // Blob worker has its own blob: base URL. A root-relative game asset can
     // resolve on the page but cannot be parsed by fetch() inside that worker.
     const pageUrl = globalThis.location?.href;
     const workerUrl = pageUrl ? new URL(src, pageUrl).href : src;
-    return this._run('loadImageBitmap', [workerUrl, asset?.data?.alphaMode]) as Promise<ImageBitmap>;
+    return this._run('loadImageBitmap', [workerUrl, asset?.data?.alphaMode], signal) as Promise<ImageBitmap>;
   }
 
   private async _initWorkers(): Promise<void> {
@@ -138,15 +154,31 @@ class WorkerManagerClass {
 
   private _getWorker(): Worker | undefined {
     if (MAX_WORKERS === undefined) {
-      MAX_WORKERS = navigator.hardwareConcurrency || 4;
+      MAX_WORKERS = Math.max(1, Math.min(4, navigator.hardwareConcurrency || 4));
     }
     let worker = this._workerPool.pop();
     if (!worker && this._createdWorkers < MAX_WORKERS) {
-      this._createdWorkers++;
       worker = loadWorker.create();
+      this._createdWorkers++;
+      this._workers.add(worker);
       worker.addEventListener('message', (event: MessageEvent<WorkerResult>) => {
+        if (!this._workers.has(event.target as Worker)) {
+          (event.data.data as ImageBitmap | undefined)?.close?.();
+          return;
+        }
         this._complete(event.data);
         this._returnWorker(event.target as Worker);
+        this._next();
+      });
+      const created = worker;
+      worker.addEventListener('error', event => {
+        for (const [key, task] of Object.entries(this._resolveHash)) {
+          if (task.worker !== created) continue;
+          delete this._resolveHash[Number(key)];
+          task.cleanup();
+          task.reject(event.error ?? new Error('Image decode worker failed'));
+        }
+        this._discardWorker(created);
         this._next();
       });
     }
@@ -154,11 +186,21 @@ class WorkerManagerClass {
   }
 
   private _returnWorker(worker: Worker): void {
+    if (!this._workers.has(worker)) return;
     this._workerPool.push(worker);
   }
 
+  private _discardWorker(worker: Worker): void {
+    if (!this._workers.delete(worker)) return;
+    worker.terminate();
+    this._createdWorkers--;
+    const index = this._workerPool.indexOf(worker);
+    if (index >= 0) this._workerPool.splice(index, 1);
+  }
+
   private _complete(data: WorkerResult): void {
-    if (!this._resolveHash[data.uuid]) return;
+    if (!this._resolveHash[data.uuid]) { (data.data as ImageBitmap | undefined)?.close?.(); return; }
+    this._resolveHash[data.uuid].cleanup();
     if (data.error !== undefined) {
       this._resolveHash[data.uuid].reject(data.error);
     } else {
@@ -167,10 +209,23 @@ class WorkerManagerClass {
     delete this._resolveHash[data.uuid];
   }
 
-  private async _run(id: string, args: unknown[]): Promise<unknown> {
+  private async _run(id: string, args: unknown[], signal?: AbortSignal): Promise<unknown> {
     await this._initWorkers();
+    signal?.throwIfAborted();
     const promise = new Promise((resolve, reject) => {
-      this._queue.push({ id, arguments: args, resolve, reject });
+      const uuid = UUID++;
+      const abort = (): void => {
+        const queued = this._queue.findIndex(task => task.uuid === uuid);
+        if (queued >= 0) this._queue.splice(queued, 1);
+        const active = this._resolveHash[uuid];
+        if (active) { delete this._resolveHash[uuid]; this._discardWorker(active.worker); }
+        cleanup();
+        reject(signal?.reason ?? new DOMException('Image decode cancelled', 'AbortError'));
+        this._next();
+      };
+      const cleanup = (): void => signal?.removeEventListener('abort', abort);
+      signal?.addEventListener('abort', abort, { once: true });
+      this._queue.push({ uuid, id, arguments: args, resolve, reject, cleanup });
     });
     this._next();
     return promise;
@@ -178,27 +233,42 @@ class WorkerManagerClass {
 
   private _next(): void {
     if (!this._queue.length) return;
-    const worker = this._getWorker();
+    let worker: Worker | undefined;
+    try { worker = this._getWorker(); }
+    catch (error) {
+      const failed = this._queue.shift()!;
+      failed.cleanup(); failed.reject(error);
+      this._next();
+      return;
+    }
     if (!worker) return;
-    const toDo = this._queue.pop()!;
+    const toDo = this._queue.shift()!;
     const id = toDo.id;
-    this._resolveHash[UUID] = { resolve: toDo.resolve, reject: toDo.reject };
-    worker.postMessage({
-      data: toDo.arguments,
-      uuid: UUID++,
-      id,
-    });
+    this._resolveHash[toDo.uuid] = { ...toDo, worker };
+    try {
+      worker.postMessage({ data: toDo.arguments, uuid: toDo.uuid, id });
+    } catch (error) {
+      delete this._resolveHash[toDo.uuid];
+      toDo.cleanup(); toDo.reject(error);
+      this._discardWorker(worker);
+      this._next();
+    }
   }
 
   /** 终止全部 worker,拒绝全部在途请求,清空队列 */
   reset(): void {
-    this._workerPool.forEach((worker) => worker.terminate());
+    this._cancelCheck?.();
+    this._isImageBitmapSupported = undefined;
+    this._workers.forEach((worker) => worker.terminate());
+    this._workers.clear();
+    loadWorker.revokeObjectURL();
     this._workerPool.length = 0;
-    Object.values(this._resolveHash).forEach(({ reject }) => {
+    Object.values(this._resolveHash).forEach(({ reject, cleanup }) => {
+      cleanup();
       reject?.(new Error('WorkerManager has been reset before completion'));
     });
     this._resolveHash = {};
-    this._queue.length = 0;
+    for (const task of this._queue.splice(0)) { task.cleanup(); task.reject(new Error('WorkerManager has been reset before completion')); }
     this._initialized = false;
     this._createdWorkers = 0;
   }

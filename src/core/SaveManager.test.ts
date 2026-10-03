@@ -493,6 +493,91 @@ describe('SaveManager load atomicity', () => {
     expect(distributor).not.toHaveBeenCalled();
     expect(reloader).not.toHaveBeenCalled();
   });
+
+  it('keeps the restore wrapper around rollback and serializes the next restore after that wrapper exits', async () => {
+    const events: string[] = [];
+    let live = { sceneManager: { currentSceneId: 'safe' } };
+    const manager = await makeManager(
+      () => live,
+      data => { live = data as typeof live; },
+      async id => {
+        events.push(`reload:${id}`);
+        if (id === 'broken') throw new Error('required asset missing');
+      },
+    );
+    manager.setRestoreWrapper(async run => {
+      events.push('cover');
+      try { return await run(); }
+      finally { events.push('handoff'); }
+    });
+    const raw = (id: string) => JSON.stringify({ version: 1, systems: { sceneManager: { currentSceneId: id } } });
+    const failed = manager.loadPayload(raw('broken'));
+    const next = manager.loadPayload(raw('new'));
+    expect(await Promise.all([failed, next])).toEqual([false, true]);
+    expect(events).toEqual(['cover', 'reload:broken', 'reload:safe', 'handoff', 'cover', 'reload:new', 'handoff']);
+    expect(live.sceneManager.currentSceneId).toBe('new');
+  });
+
+  it('rollback owns an independent deep snapshot even when the failed distributor mutated shared objects', async () => {
+    const live = { sceneManager: { currentSceneId: 'safe' }, nested: { count: 10 } };
+    let calls = 0;
+    const manager = await makeManager(
+      () => live,
+      data => {
+        if (++calls === 1) { live.nested.count = 0; throw new Error('partial deserialize'); }
+        Object.assign(live, data);
+      },
+    );
+    const raw = JSON.stringify({ version: 1, systems: { sceneManager: { currentSceneId: 'new' } } });
+    expect(await manager.loadPayload(raw)).toBe(false);
+    expect(live.nested.count).toBe(10);
+    expect(live.sceneManager.currentSceneId).toBe('safe');
+  });
+
+  it('destroy settles active and queued restore requests and never rolls an old timeline into the destroyed world', async () => {
+    const distributed = vi.fn();
+    let started!: () => void;
+    const reached = new Promise<void>(resolve => { started = resolve; });
+    let release!: () => void;
+    const hungReload = new Promise<void>(resolve => { release = resolve; });
+    const reloader = vi.fn(async () => { started(); await hungReload; });
+    const manager = await makeManager(() => ({ sceneManager: { currentSceneId: 'safe' } }), distributed, reloader);
+    const raw = JSON.stringify({ version: 1, systems: { sceneManager: { currentSceneId: 'new' } } });
+    const first = manager.loadPayload(raw);
+    const second = manager.loadPayload(raw);
+    await reached;
+    manager.destroy();
+    expect(await Promise.all([first, second])).toEqual([false, false]);
+    expect(distributed).toHaveBeenCalledTimes(1);
+    expect(reloader).toHaveBeenCalledTimes(1);
+    release();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(distributed).toHaveBeenCalledTimes(1);
+    expect(reloader).toHaveBeenCalledTimes(1);
+    expect(await manager.loadPayload(raw)).toBe(false);
+    expect(manager.capturePayload()).toBeNull();
+  });
+
+  it('a delayed wrapper cannot call its run callback after destroy', async () => {
+    const distributor = vi.fn();
+    const reloader = vi.fn();
+    let entered!: () => void;
+    const reached = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    const delayedCover = new Promise<void>(resolve => { release = resolve; });
+    const manager = await makeManager(() => ({}), distributor, reloader);
+    manager.setRestoreWrapper(async run => { entered(); await delayedCover; return await run(); });
+    const load = manager.loadPayload(JSON.stringify({ version: 1, systems: {} }));
+    await reached;
+    manager.destroy();
+    expect(await load).toBe(false);
+    release();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(distributor).not.toHaveBeenCalled();
+    expect(reloader).not.toHaveBeenCalled();
+  });
 });
 
 describe('SaveManager storage access hardening', () => {

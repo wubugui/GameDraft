@@ -16,6 +16,7 @@
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Texture, setTextureCacheLookup } from '../textures/Texture';
+import type { TextureSource } from '../textures/TextureSource';
 import { Cache, cacheTextureArray } from './cache/Cache';
 import { detectAvif, detectDefaults, detectWebp } from './detections/detections';
 import { Loader } from './loader/Loader';
@@ -39,6 +40,89 @@ import type {
 } from './types';
 
 export class AssetsClass {
+  /** 游戏资产管理器的显式租约；跨 Game 实例共享同 URL 时最后一个租约才销毁 CPU 源。 */
+  private readonly textureOwners = new Map<Texture, Set<object>>();
+  private readonly managedTextureSources = new Map<TextureSource, Set<Texture>>();
+  // 弱键允许先创建 Sprite、后被 AssetManager 接管同一个源；未托管源绝不自动销毁。
+  private readonly textureViewOwners = new WeakMap<TextureSource, Set<object>>();
+
+  private isBuiltinSource(source: TextureSource): boolean {
+    return source === Texture.EMPTY?.source || source === Texture.WHITE?.source;
+  }
+
+  retainTexture(texture: Texture, owner: object): void {
+    if (texture.destroyed || texture.source.destroyed) throw new Error('Cannot retain a destroyed texture');
+    if (this.isBuiltinSource(texture.source)) return;
+    let owners = this.textureOwners.get(texture);
+    if (!owners) this.textureOwners.set(texture, owners = new Set());
+    owners.add(owner);
+    let roots = this.managedTextureSources.get(texture.source);
+    if (!roots) this.managedTextureSources.set(texture.source, roots = new Set());
+    roots.add(texture);
+  }
+
+  releaseTexture(texture: Texture, owner: object): boolean {
+    const owners = this.textureOwners.get(texture);
+    if (!owners?.delete(owner)) return false;
+    if (owners.size > 0) return false;
+    this.textureOwners.delete(texture);
+    return this.releaseUnusedTextureSource(texture.source);
+  }
+
+  isManagedTextureSource(source: TextureSource): boolean {
+    return this.managedTextureSources.has(source);
+  }
+
+  /** Sprite 绑定的是源，动画帧等子纹理必须保住同一份 CPU 图片。 */
+  retainTextureView(source: TextureSource, owner: object): void {
+    if (this.isBuiltinSource(source) || source.destroyed) return;
+    let owners = this.textureViewOwners.get(source);
+    if (!owners) this.textureViewOwners.set(source, owners = new Set());
+    owners.add(owner);
+  }
+
+  releaseTextureView(source: TextureSource, owner: object): boolean {
+    const owners = this.textureViewOwners.get(source);
+    if (!owners?.delete(owner)) return false;
+    if (owners.size === 0) this.textureViewOwners.delete(source);
+    return this.releaseUnusedTextureSource(source);
+  }
+
+  private releaseUnusedTextureSource(source: TextureSource): boolean {
+    const roots = this.managedTextureSources.get(source);
+    if (!roots || this.textureViewOwners.get(source)?.size) return false;
+    for (const root of roots) if (this.textureOwners.get(root)?.size) return false;
+    this.managedTextureSources.delete(source);
+    const resource = source.resource as { close?: () => void } | null;
+    for (const root of roots) {
+      this.loader.forgetLoaded(root);
+      Cache.removeValue(root);
+    }
+    // 所有根先离开装载器，再释放共享源；createTexture 的守卫借 source.destroyed
+    // 区分合法卸载与外部直接销毁 wrapper，不能在源还活着时先销毁根而误报。
+    if (!source.destroyed) source.destroy();
+    for (const root of roots) root.destroy(false);
+    resource?.close?.();
+    return true;
+  }
+
+  /** 含已退出 manager、仍被视图绑定的源；避免把缓存淘汰误报成 CPU 释放。 */
+  getTextureLeaseStats(): { managedSources: number; deferredSources: number; managerLeases: number; viewLeases: number; retainedBytes: number } {
+    let deferredSources = 0;
+    let managerLeases = 0;
+    let viewLeases = 0;
+    let retainedBytes = 0;
+    for (const [source, roots] of this.managedTextureSources) {
+      let managers = 0;
+      for (const root of roots) managers += this.textureOwners.get(root)?.size ?? 0;
+      const views = this.textureViewOwners.get(source)?.size ?? 0;
+      managerLeases += managers;
+      viewLeases += views;
+      if (managers === 0 && views > 0) deferredSources++;
+      retainedBytes += source.pixelWidth * source.pixelHeight * 4;
+    }
+    return { managedSources: this.managedTextureSources.size, deferredSources, managerLeases, viewLeases, retainedBytes };
+  }
   /** 键 → 资源描述 */
   resolver: Resolver;
   /** 装载与去重 */

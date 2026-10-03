@@ -126,6 +126,66 @@ export interface RuntimeNpcHooks {
   onRemoved?: (id: string) => void;
 }
 
+/** One owner and one cancellation scope for every foreground scene load. */
+export interface LoadingRequestContext {
+  readonly id: string;
+  readonly sceneId: string;
+  readonly signal: AbortSignal;
+  readonly kind: 'initial' | 'switch' | 'reload';
+  hasOnEnter: boolean;
+  continuesLoading?: boolean;
+}
+
+export interface LoadingOutcome {
+  status: 'success' | 'recovered' | 'failed' | 'cancelled';
+  error?: unknown;
+  recovered?: boolean;
+  replacement?: boolean;
+  continuesLoading?: boolean;
+  /** Re-enqueue the original request, never the recovery scene or its suppressed onEnter. */
+  retry?: () => Promise<void>;
+}
+
+/** Presentation and game-state ownership are injected by the assembly layer. */
+export interface LoadingLifecycle {
+  /** A surrounding restore may still own Loading after scene preparation has finished. */
+  needsHandoff?(): boolean;
+  begin(context: LoadingRequestContext): Promise<void>;
+  progress(context: LoadingRequestContext, ratio: number, label: string): void;
+  reveal(context: LoadingRequestContext): Promise<void>;
+  end(context: LoadingRequestContext, outcome: LoadingOutcome): void | Promise<void>;
+  runOnEnter?(context: LoadingRequestContext, run: () => Promise<void>): Promise<void>;
+}
+
+export interface SceneLoadOptions {
+  interrupt?: boolean;
+  suppressOnEnter?: boolean;
+  timeoutMs?: number;
+  scopeId?: string;
+}
+
+export interface SafeSceneSnapshot {
+  readonly sceneId: string;
+  readonly position?: Position;
+  readonly camera?: unknown;
+  readonly sceneData: SceneData;
+}
+
+interface SceneLoadRequest {
+  context: LoadingRequestContext;
+  controller: AbortController;
+  spawnPointId?: string;
+  cameraPosition?: Position;
+  fromSceneId?: string | null;
+  progress?: (ratio: number, label: string) => void;
+  onReveal?: () => Promise<void>;
+  options: SceneLoadOptions;
+  queuedGeneration: number;
+  managerEpoch: number;
+  ratio: number;
+  replacement?: boolean;
+}
+
 export class SceneManager implements IGameSystem {
   private assetManager: AssetManager;
   private eventBus: EventBus;
@@ -183,28 +243,38 @@ export class SceneManager implements IGameSystem {
   /** 场景世代号：unloadScene 自增。跨 await 持有实体/场景引用的流程以此判废，防并发卸载竞态产生孤儿容器 */
   private sceneEpoch = 0;
 
-  /** >0 表示正在执行场景根 onEnter 动作批（重入 switchScene 检测用） */
-  private sceneEnterBatchDepth = 0;
-
-  /** onEnter 批内发起的切换请求（fire-and-forget 登记，当前加载完成后 drain） */
-  private pendingReentrantSwitch: {
-    targetSceneId: string;
-    spawnPointId?: string;
-    cameraPosition?: { x: number; y: number };
-  } | null = null;
-
   /** 切场景淡入淡出根节点（黑底 + 可选加载进度条） */
   private transitionOverlay: Container | null = null;
   /** 切场进度条配色（缺省 = UITheme 同色号的一份拷贝，见 setTransitionPalette） */
   private transitionPalette = { track: 0x2a2118, trackBorder: 0x342a1c, fill: 0xccaa44 };
   private transitionBarFill: Graphics | null = null;
+  private transitionBarTrack: Graphics | null = null;
   private transitionBarW = 0;
   private transitionBarH = 8;
   private transitionDebugLabel: Text | null = null;
   private isSwitching: boolean = false;
   /** 切场景请求串行队列，避免并发 switch 静默丢弃或交错 isSwitching */
   private sceneSwitchTail: Promise<void> = Promise.resolve();
+  private loadingLifecycle: LoadingLifecycle | null = null;
+  private loadingHandoffPending = false;
+  private activeLoad: SceneLoadRequest | null = null;
+  private loadSequence = 0;
+  private loadQueueGeneration = 0;
+  private managerEpoch = 0;
+  private loadingTimeoutMs = 120_000;
+  private destroyed = false;
+  private sceneReady = false;
+  private committedScene: SceneData | null = null;
+  private lastSafeScene: SafeSceneSnapshot | null = null;
+  private loadingScopeId: string | null = null;
+  private loadingScopeDepth = 0;
+  private deferredLoads: Array<{ run: () => Promise<void>; resolve: () => void; reject: (error: unknown) => void }> = [];
+  private queuedLoads = new Set<SceneLoadRequest>();
+  private playerPositionGetter: (() => Position) | null = null;
+  private cameraSnapshotGetter: (() => unknown) | null = null;
+  private cameraSnapshotRestorer: ((snapshot: unknown) => void) | null = null;
   private animRafId: number = 0;
+  private transitionAnimResolve: (() => void) | null = null;
   private capturePauseDepth = 0;
   private capturePauseStartedAt = 0;
   private capturePausedMs = 0;
@@ -265,23 +335,23 @@ export class SceneManager implements IGameSystem {
    * 重进场景反而正常（装载循环把它塞进 `currentNpcs`，`scene:ready` 顺手就给挂上了）。
    */
   private runtimeNpcHooks: RuntimeNpcHooks | null = null;
-  private depthLoader: ((sceneId: string, sceneData: SceneData, worldToPixelX: number, worldToPixelY: number) => Promise<void>) | null = null;
+  private depthLoader: ((sceneId: string, sceneData: SceneData, worldToPixelX: number, worldToPixelY: number, context?: LoadingRequestContext) => Promise<void>) | null = null;
   /**
    * 统一光影的装载钩子。在 `depthLoader` **之后**调用（那时深度纹理才就绪），
    * 返回一个替代主背景的 mesh；返回 null = 该场景不启用，背景照旧走 Sprite。
    */
   private lightingLoader:
-    | ((sceneId: string, sceneData: SceneData, primary: Texture) => Promise<Container | null>)
+    | ((sceneId: string, sceneData: SceneData, primary: Texture, context?: LoadingRequestContext) => Promise<Container | null>)
     | null = null;
   private lightingUnloader: (() => void) | null = null;
   /** 揭幕前闸，见 {@link setRevealGate} */
-  private revealGate: ((sceneId: string) => Promise<void>) | null = null;
+  private revealGate: ((sceneId: string, context?: LoadingRequestContext) => Promise<void>) | null = null;
   /**
    * 背景草木摆动的装载钩子（场景风 + 摆动图，见 `rendering/backgroundSway`）。在统一光影**之后**调用：
    * 背景仍是平铺 Sprite 时返回一个替代它的 mesh；点亮的背景自己在 shader 里摆，这里返回 null。
    */
   private swayLoader:
-    | ((sceneId: string, sceneData: SceneData, primary: Texture) => Promise<Container | null>)
+    | ((sceneId: string, sceneData: SceneData, primary: Texture, context?: LoadingRequestContext) => Promise<Container | null>)
     | null = null;
   private swayUnloader: (() => void) | null = null;
   /** 主背景 Sprite 与其纹理（统一光影启用时要把它换掉）。 */
@@ -318,6 +388,7 @@ export class SceneManager implements IGameSystem {
   }
 
   init(_ctx: GameContext): void {
+    this.destroyed = false;
     this.eventBus.on('hotspot:pickup:done', this.onHotspotPickup);
     this.eventBus.on('hotspot:inspected', this.onHotspotInspected);
   }
@@ -326,6 +397,75 @@ export class SceneManager implements IGameSystem {
 
   setPlayerPositionSetter(fn: (x: number, y: number) => void): void {
     this.playerPositionSetter = fn;
+  }
+
+  setPlayerPositionGetter(fn: (() => Position) | null): void {
+    this.playerPositionGetter = fn;
+  }
+
+  setCameraSnapshotHooks(getter: (() => unknown) | null, restorer: ((snapshot: unknown) => void) | null): void {
+    this.cameraSnapshotGetter = getter;
+    this.cameraSnapshotRestorer = restorer;
+  }
+
+  setLoadingLifecycle(lifecycle: LoadingLifecycle | null, options?: { timeoutMs?: number }): void {
+    this.loadingLifecycle = lifecycle;
+    this.configureLoading(options);
+  }
+
+  configureLoading(options?: { timeoutMs?: number }): void {
+    if (Number.isFinite(options?.timeoutMs) && options!.timeoutMs! > 0) {
+      this.loadingTimeoutMs = options!.timeoutMs!;
+    }
+  }
+
+  waitForLoadingIdle(): Promise<void> { return this.sceneSwitchTail; }
+
+  get isLoading(): boolean { return this.activeLoad !== null || this.loadingScopeId !== null || this.hasQueuedLoads(); }
+  get isSceneReady(): boolean { return this.sceneReady && this.activeLoad === null; }
+  get hasPendingLoads(): boolean { return this.hasQueuedLoads() || this.deferredLoads.length > 0; }
+  get committedSceneData(): SceneData | null { return this.committedScene; }
+  get lastSafeSceneSnapshot(): SafeSceneSnapshot | null { return this.lastSafeScene; }
+
+  /** A multi-step restore owns the queue as one operation, without deadlocking its own reloads. */
+  acquireLoadingScope(id: string): () => void {
+    const owner = id.trim();
+    if (!owner) throw new Error('Loading scope requires an owner id');
+    if (this.destroyed) throw new Error('SceneManager is destroyed');
+    if (this.loadingScopeId && this.loadingScopeId !== owner) throw new Error('Another loading scope already owns the scene queue');
+    if (!this.loadingScopeId && this.sceneReady && this.currentScene) {
+      this.recordSafeScene(this.currentScene, this.playerPositionGetter?.(), this.cameraSnapshotGetter?.());
+    }
+    this.loadingScopeId = owner;
+    this.loadingScopeDepth++;
+    const epoch = this.managerEpoch;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (epoch !== this.managerEpoch || this.loadingScopeId !== owner) return;
+      if (--this.loadingScopeDepth > 0) return;
+      this.loadingScopeId = null;
+      if (this.sceneReady && this.currentScene && this.committedScene === this.currentScene) {
+        this.recordSafeScene(this.currentScene, this.playerPositionGetter?.(), this.cameraSnapshotGetter?.());
+      }
+      const deferred = this.deferredLoads;
+      this.deferredLoads = [];
+      for (const item of deferred) void item.run().then(item.resolve, item.reject);
+    };
+  }
+
+  /** Cancels both running work and, by default, requests from the previous timeline. */
+  cancelLoading(reason: unknown = new DOMException('Scene loading cancelled', 'AbortError'), cancelQueued = true, replacement = false): void {
+    if (cancelQueued) {
+      this.loadQueueGeneration++;
+      const deferred = this.deferredLoads;
+      this.deferredLoads = [];
+      for (const item of deferred) item.reject(reason);
+    }
+    if (this.activeLoad && replacement) this.activeLoad.replacement = true;
+    this.activeLoad?.controller.abort(reason);
+    this.cancelTransitionAnimation();
   }
 
   setCameraSetter(fn: (boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void): void {
@@ -380,7 +520,7 @@ export class SceneManager implements IGameSystem {
     n.container.filters = [];
   }
 
-  setDepthLoader(fn: (sceneId: string, sceneData: SceneData, worldToPixelX: number, worldToPixelY: number) => Promise<void>): void {
+  setDepthLoader(fn: (sceneId: string, sceneData: SceneData, worldToPixelX: number, worldToPixelY: number, context?: LoadingRequestContext) => Promise<void>): void {
     this.depthLoader = fn;
   }
 
@@ -390,22 +530,22 @@ export class SceneManager implements IGameSystem {
 
   /**
    * 揭幕前闸：`scene:ready` 之后、`onReveal`（撤遮罩）之前 await。给"必须在遮罩下做完、否则就停在
-   * 可见画面上"的活用——粒子 shader 交给 Pixi、粒子预热。实现方必须自己限时、永不悬挂；抛了照常揭幕。
+   * 可见画面上"的活用——粒子 shader、挂件、完整首帧。失败进入事务恢复，整体 watchdog 保证封口。
    */
-  setRevealGate(fn: ((sceneId: string) => Promise<void>) | null): void {
+  setRevealGate(fn: ((sceneId: string, context?: LoadingRequestContext) => Promise<void>) | null): void {
     this.revealGate = fn;
   }
 
   /** 见 {@link lightingLoader}。 */
   setLightingLoader(
-    fn: (sceneId: string, sceneData: SceneData, primary: Texture) => Promise<Container | null>,
+    fn: (sceneId: string, sceneData: SceneData, primary: Texture, context?: LoadingRequestContext) => Promise<Container | null>,
   ): void {
     this.lightingLoader = fn;
   }
 
   /** 见 {@link swayLoader}。 */
   setSwayLoader(
-    fn: (sceneId: string, sceneData: SceneData, primary: Texture) => Promise<Container | null>,
+    fn: (sceneId: string, sceneData: SceneData, primary: Texture, context?: LoadingRequestContext) => Promise<Container | null>,
   ): void {
     this.swayLoader = fn;
   }
@@ -966,7 +1106,7 @@ export class SceneManager implements IGameSystem {
 
   /** Initial and subsequent scene loads must settle before acquiring a capture freeze. */
   get captureSceneReady(): boolean {
-    return !this.isSwitching && this.transitionOverlay === null;
+    return this.isSceneReady && !this.isLoading && !this.isSwitching && this.transitionOverlay === null;
   }
 
   /**
@@ -976,7 +1116,7 @@ export class SceneManager implements IGameSystem {
    * 初始进场与 switchScene 都走 transitionOverlay，揭幕收尾销毁它；黑幕独立显隐。
    */
   get viewObscured(): boolean {
-    return this.transitionOverlay !== null || this.blackoutOverlay !== null;
+    return this.isLoading || this.transitionOverlay !== null || this.blackoutOverlay !== null;
   }
 
   private emptyEntityOverrides(): SceneEntityRuntimeOverrides {
@@ -1459,11 +1599,13 @@ export class SceneManager implements IGameSystem {
   }
 
   /** 见 {@link BurnableDisplay} */
-  private async burnableDisplayOf(raw: unknown, own: HotspotDisplayImage | undefined, entityId: string): Promise<BurnableDisplay> {
+  private async burnableDisplayOf(raw: unknown, own: HotspotDisplayImage | undefined, entityId: string, request?: SceneLoadRequest): Promise<BurnableDisplay> {
     const host = resolveBurnableHost(raw);
     if (!host) return undefined;
     const t = this.burnTemplateResolver ? await this.burnTemplateResolver(host.template).catch(() => null) : null;
+    if (request) this.assertLoadCurrent(request);
     if (!t) {
+      if (request) throw new Error(`Required burnable template could not load: ${host.template}`);
       console.warn(`SceneManager: 实体 "${entityId}" 开了可燃，模板「${host.template}」装不到——它画不出来`);
       return null;
     }
@@ -1475,10 +1617,11 @@ export class SceneManager implements IGameSystem {
     };
   }
 
-  private async instantiateHotspot(def: HotspotDef, overrides: HotspotRuntimeOverride | undefined): Promise<Hotspot> {
+  private async instantiateHotspot(def: HotspotDef, overrides: HotspotRuntimeOverride | undefined, request?: SceneLoadRequest): Promise<Hotspot> {
     let defToUse = applyHotspotRuntimeOverride(def, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
     // 开了可燃：展示图换成模板的（渲染由可燃物实例接管；模板装不到 = 不画图）
-    const burnDi = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, defToUse.id);
+    const burnDi = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, defToUse.id, request);
+    if (request) this.assertLoadCurrent(request);
     if (burnDi !== undefined) {
       defToUse = { ...defToUse };
       if (burnDi) defToUse.displayImage = burnDi;
@@ -1487,25 +1630,29 @@ export class SceneManager implements IGameSystem {
     const hotspot = new Hotspot(defToUse);
     hotspot.setAuthoringMarkersVisible(this.authoringMarkersVisible);
     this.applySessionOverrideOnInstantiate('hotspot', hotspot);
-    this.renderer.entityLayer.addChild(hotspot.container);
     const di = defToUse.displayImage;
     if (di?.image && di.worldWidth > 0 && di.worldHeight > 0) {
       try {
-        const tex = await this.assetManager.loadTexture(di.image);
+        const tex = await this.assetManager.loadTexture(di.image, { signal: request?.context.signal });
+        if (request) this.assertLoadCurrent(request);
         hotspot.setDisplayTexture(tex, di.worldWidth, di.worldHeight);
       } catch (_e) {
+        if (request) { hotspot.destroy(); throw _e; }
         console.warn(`SceneManager: hotspot "${def.id}" displayImage failed`, di.image);
       }
     }
+    if (request) this.assertLoadCurrent(request);
+    this.renderer.entityLayer.addChild(hotspot.container);
     return hotspot;
   }
 
-  private async instantiateNpc(npcDef: NpcDef, overrides: NpcRuntimeOverride | undefined): Promise<Npc> {
+  private async instantiateNpc(npcDef: NpcDef, overrides: NpcRuntimeOverride | undefined, request?: SceneLoadRequest): Promise<Npc> {
     // 合并顺序：角色注册表默认（base）→ 运行时字段覆盖（session/sceneMemory，最高优先）
     const withChar = applyCharacterDefaults(npcDef, this.characterRegistry);
     let defToUse = applyNpcRuntimeOverride(withChar, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
     // 开了可燃：动画包 / 角色模板的动画 / 自己的展示图一律不画，按模板的图合成单帧（不再播动画）
-    const burnDi = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, defToUse.id);
+    const burnDi = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, defToUse.id, request);
+    if (request) this.assertLoadCurrent(request);
     if (burnDi !== undefined) {
       defToUse = { ...defToUse };
       delete defToUse.animFile;
@@ -1517,13 +1664,17 @@ export class SceneManager implements IGameSystem {
     this.applySessionOverrideOnInstantiate('npc', npc);
     if (defToUse.animFile) {
       try {
-        const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile);
+        const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile, { signal: request?.context.signal });
+        if (request) this.assertLoadCurrent(request);
         const sheetPath = resolvePathRelativeToAnimManifest(defToUse.animFile, animRaw.spritesheet);
-        const tex = await this.assetManager.loadTexture(sheetPath);
+        const tex = await this.assetManager.loadTexture(sheetPath, { signal: request?.context.signal });
+        if (request) this.assertLoadCurrent(request);
         const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height, sheetPath);
         const sockets = await loadSocketsForAnim(this.assetManager, defToUse.animFile, animDef);
+        if (request) this.assertLoadCurrent(request);
         npc.loadSprite(tex, animDef, defToUse.initialAnimState, sockets);
       } catch (_e) {
+        if (request) { npc.destroy(); throw _e; }
         // 加载失败时保留占位外观
       }
     } else {
@@ -1544,7 +1695,8 @@ export class SceneManager implements IGameSystem {
           );
         }
         try {
-          const tex = await this.assetManager.loadTexture(di.image);
+          const tex = await this.assetManager.loadTexture(di.image, { signal: request?.context.signal });
+          if (request) this.assertLoadCurrent(request);
           const animDef = normalizeAnimationSetDef(
             buildStaticDisplayAnimationSet(di), tex.width, tex.height, di.image,
           );
@@ -1556,10 +1708,12 @@ export class SceneManager implements IGameSystem {
             npc.setFacing(-1, 0);
           }
         } catch (_e) {
+          if (request) { npc.destroy(); throw _e; }
           // 加载失败时保留占位外观（与 animFile 分支同口径）
         }
       }
     }
+    if (request) this.assertLoadCurrent(request);
     if (overrides && burnDi === undefined) {
       const anim = (overrides as NpcRuntimeOverride).animState?.trim();
       if (anim) {
@@ -1609,7 +1763,7 @@ export class SceneManager implements IGameSystem {
     return { bgLayers, hotspots, npcs };
   }
 
-  private async buildSceneResourceManifest(sceneId: string, sceneData: SceneData): Promise<AssetManifest> {
+  private async buildSceneResourceManifest(sceneId: string, sceneData: SceneData, request?: SceneLoadRequest): Promise<AssetManifest> {
     const refs: AssetRef[] = [];
     const add = (ref: AssetRef | null | undefined): void => {
       if (!ref?.path?.trim()) return;
@@ -1622,13 +1776,13 @@ export class SceneManager implements IGameSystem {
 
     const committedMemory = this.getCommittedMemory(sceneId);
     const activeCutsceneId = this.cutsceneStaging?.sceneId === sceneId ? this.cutsceneStaging.cutsceneId : null;
-    for (const def of sceneData.hotspots ?? []) {
+    await Promise.all((sceneData.hotspots ?? []).map(async (def) => {
       const boundToActive = !!(activeCutsceneId && isEntityBoundToCutscene(def, activeCutsceneId));
       if (!boundToActive) {
-        if (isCutsceneOnlyEntity(def)) continue;
-        if (committedMemory?.pickedUpHotspots.includes(def.id)) continue;
+        if (isCutsceneOnlyEntity(def)) return;
+        if (committedMemory?.pickedUpHotspots.includes(def.id)) return;
         const ovr = this.getRuntimeOverrideForContext(sceneId, 'hotspot', def.id, def, 'outer');
-        if (ovr?.enabled === false) continue;
+        if (ovr?.enabled === false) return;
       }
       const defToUse = applyHotspotRuntimeOverride(
         def,
@@ -1640,21 +1794,23 @@ export class SceneManager implements IGameSystem {
           boundToActive ? 'cutscene' : 'outer',
         ) as Record<string, SceneEntityRuntimeValue> | undefined,
       );
-      const hsBurn = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, def.id);
+      const hsBurn = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, def.id, request);
       const hsImage = hsBurn !== undefined ? hsBurn?.image : defToUse.displayImage?.image;
       if (hsImage) {
         add({ type: 'texture', path: hsImage, label: `Hotspot: ${def.id}` });
         // 法线图与展示图同批预载（离线烘焙产物），挂滤镜时只做同步缓存读
         const normalPath = normalAtlasUrlFor(hsImage);
         if (normalPath) {
-          add({ type: 'texture', path: normalPath, label: `Hotspot 法线: ${def.id}` });
+          add({ type: 'texture', path: normalPath, label: `Hotspot 法线: ${def.id}`, optional: true });
         }
       }
-    }
+    }));
 
-    for (const npcDef of sceneData.npcs ?? []) {
+    const savedNpcs = Object.values(committedMemory?.spawnedNpcs ?? {}).filter(n =>
+      !(sceneData.npcs ?? []).some(def => def.id === n.id));
+    await Promise.all([...(sceneData.npcs ?? []), ...savedNpcs].map(async (npcDef) => {
       const boundToActive = !!(activeCutsceneId && isEntityBoundToCutscene(npcDef, activeCutsceneId));
-      if (!boundToActive && isCutsceneOnlyEntity(npcDef)) continue;
+      if (!boundToActive && isCutsceneOnlyEntity(npcDef)) return;
       const snap = this.getRuntimeOverrideForContext(
         sceneId,
         'npc',
@@ -1666,15 +1822,15 @@ export class SceneManager implements IGameSystem {
         applyCharacterDefaults(npcDef, this.characterRegistry),
         snap as Record<string, SceneEntityRuntimeValue> | undefined,
       );
-      const npcBurn = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, npcDef.id);
+      const npcBurn = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, npcDef.id, request);
       if (npcBurn !== undefined) {
         // 开了可燃：只预载模板的图（+ 法线），动画包不装
         if (npcBurn) {
           add({ type: 'texture', path: npcBurn.image, label: `NPC 可燃模板图: ${npcDef.id}` });
           const bn = normalAtlasUrlFor(npcBurn.image);
-          if (bn) add({ type: 'texture', path: bn, label: `NPC 可燃模板图法线: ${npcDef.id}` });
+          if (bn) add({ type: 'texture', path: bn, label: `NPC 可燃模板图法线: ${npcDef.id}`, optional: true });
         }
-        continue;
+        return;
       }
       if (!defToUse.animFile) {
         // 静态贴图实体：预载展示图 + 同批预载法线图（挂滤镜时只做同步缓存读）。
@@ -1684,26 +1840,27 @@ export class SceneManager implements IGameSystem {
           add({ type: 'texture', path: sdi.image, label: `NPC 静态贴图: ${npcDef.id}` });
           const staticNormalPath = normalAtlasUrlFor(sdi.image);
           if (staticNormalPath) {
-            add({ type: 'texture', path: staticNormalPath, label: `NPC 静态贴图法线: ${npcDef.id}` });
+            add({ type: 'texture', path: staticNormalPath, label: `NPC 静态贴图法线: ${npcDef.id}`, optional: true });
           }
         }
-        continue;
+        return;
       }
       add({ type: 'json', path: defToUse.animFile, label: `NPC 动画清单: ${npcDef.id}` });
       try {
-        const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile);
+        const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile, { signal: request?.context.signal });
+        if (request) this.assertLoadCurrent(request);
         if (animRaw.spritesheet) {
           const sheetPath = resolvePathRelativeToAnimManifest(defToUse.animFile, animRaw.spritesheet);
           add({ type: 'texture', path: sheetPath, label: `NPC 图集: ${npcDef.id}` });
           const normalPath = normalAtlasUrlFor(sheetPath);
           if (normalPath) {
-            add({ type: 'texture', path: normalPath, label: `NPC 法线图集: ${npcDef.id}` });
+            add({ type: 'texture', path: normalPath, label: `NPC 法线图集: ${npcDef.id}`, optional: true });
           }
         }
-      } catch {
-        // 实例化时仍会降级为占位；manifest 只做尽力收集。
+      } catch (error) {
+        if (request) throw error;
       }
-    }
+    }));
 
     if (sceneData.depthConfig) {
       const basePath = `resources/runtime/scenes/${sceneId}/`;
@@ -1720,27 +1877,30 @@ export class SceneManager implements IGameSystem {
     }
 
     for (const ref of this.audioManifestResolver?.(sceneData.bgm, sceneData.ambientSounds) ?? []) {
-      add(ref);
+      add({ ...ref, optional: true });
     }
 
     return { scopeId: `scene:${sceneId}`, refs };
   }
 
-  async loadScene(
+  loadScene(
     sceneId: string,
     spawnPointId?: string,
     cameraPosition?: { x: number; y: number },
     fromSceneId?: string | null,
     onLoadProgress?: (ratio01: number, debugLabel: string) => void,
-    /**
-     * 揭幕回调：场景资源装载、实体滤镜/光照就绪（scene:ready）之后、**onEnter 之前**调用，
-     * 用于撤掉切场过渡遮罩把场景显示出来。传入者（switchScene）借此保证 onEnter 里的成段演出
-     * 落在可见场景之上、且长演出不再把揭幕与进度收尾扣为人质。不传（初始进场/重载）= 无遮罩，跳过。
-     */
     onReveal?: () => Promise<void>,
   ): Promise<void> {
+    return this.enqueueSceneLoad('reload', sceneId, spawnPointId, cameraPosition, {}, fromSceneId, onLoadProgress, onReveal);
+  }
+
+  private async prepareScene(request: SceneLoadRequest, suppliedScene?: SceneData): Promise<SceneData> {
+    const { context, spawnPointId, cameraPosition, fromSceneId } = request;
+    const sceneId = context.sceneId;
+    const onLoadProgress = (ratio: number, label: string): void => this.reportLoadProgress(request, ratio, label);
     onLoadProgress?.(0, `场景 JSON · ${sceneId}`);
-    const sceneData = await this.assetManager.loadSceneData(sceneId);
+    const sceneData = suppliedScene ?? await this.awaitLoad(request, this.assetManager.loadSceneData(sceneId, { signal: context.signal }));
+    this.assertLoadCurrent(request);
     // ---- 时段外观：**在装任何资源之前**就把该时段的那一份定下来 ----
     //
     // 必须在这儿而不是装完再换：读档回到夜、或切场景时已经是夜，都要**一步落到正确
@@ -1768,7 +1928,7 @@ export class SceneManager implements IGameSystem {
       applied: resolveSceneAppearance(baseSnapshot, phase0),
     };
     this.currentScene = sceneData;
-    const manifest = await this.buildSceneResourceManifest(sceneId, sceneData);
+    const manifest = await this.awaitLoad(request, this.buildSceneResourceManifest(sceneId, sceneData, request));
 
     const committedMemory = this.getCommittedMemory(sceneId);
     const activeCutsceneId = this.cutsceneStaging?.sceneId === sceneId ? this.cutsceneStaging.cutsceneId : null;
@@ -1776,16 +1936,15 @@ export class SceneManager implements IGameSystem {
     let doneSteps = 0;
     let totalSteps = 1;
     const report = (label: string) => {
-      if (!onLoadProgress || totalSteps < 1) return;
+      if (totalSteps < 1) return;
       onLoadProgress(Math.min(1, doneSteps / totalSteps), label);
     };
     const advance = (label: string) => {
-      if (!onLoadProgress) return;
       doneSteps++;
       onLoadProgress(Math.min(1, doneSteps / totalSteps), label);
     };
 
-    if (onLoadProgress) {
+    {
       const { bgLayers, hotspots: hsN, npcs: npcN } = this.countSceneInstantiateWork(
         sceneData,
         sceneId,
@@ -1793,24 +1952,30 @@ export class SceneManager implements IGameSystem {
         activeCutsceneId,
       );
       const depthBonus = this.depthLoader ? 1 : 0;
+      const lightingBonus = this.lightingLoader && sceneData.backgrounds?.length ? 1 : 0;
+      const swayBonus = this.swayLoader && sceneData.backgrounds?.length ? 1 : 0;
       const filterBonus = sceneData.filterId ? 1 : 0;
-      // onEnter 不再计入加载进度：它在进度打满、场景揭幕之后才跑（见 loadScene 尾部）。
-      totalSteps = 1 + manifest.refs.length + bgLayers + hsN + npcN + depthBonus + filterBonus;
+      const spawnedBonus = Object.values(committedMemory?.spawnedNpcs ?? {}).filter(n =>
+        !(sceneData.npcs ?? []).some(def => def.id === n.id)).length;
+      // Manifest resolution is indeterminate; once known, one immutable work list owns the progress.
+      // Presentation/GPU/first-frame readiness is the final step, never an early 100%.
+      totalSteps = 1 + manifest.refs.length + bgLayers + hsN + npcN + spawnedBonus
+        + depthBonus + lightingBonus + swayBonus + filterBonus + 1;
       if (totalSteps < 1) totalSteps = 1;
       advance(`JSON ✓ · ${sceneData.name ?? sceneId}`);
     }
 
-    await this.assetManager.preloadManifest(manifest, {
+    this.currentSceneScopeId = manifest.scopeId;
+    await this.awaitLoad(request, this.assetManager.preloadManifest(manifest, {
       mode: 'stage',
-      tolerateErrors: true,
+      tolerateErrors: false,
+      signal: context.signal,
       onProgress: (r, label) => {
-        if (!onLoadProgress) return;
         doneSteps = 1 + Math.round(r * manifest.refs.length);
         onLoadProgress(Math.min(1, doneSteps / totalSteps), label);
       },
-    });
-    doneSteps = onLoadProgress ? 1 + manifest.refs.length : doneSteps;
-    this.currentSceneScopeId = manifest.scopeId;
+    }));
+    doneSteps = 1 + manifest.refs.length;
 
     // 计算世界→像素的转换比例（用于碰撞检测）
     let worldToPixelX = 1;
@@ -1827,7 +1992,7 @@ export class SceneManager implements IGameSystem {
         const layer = layers[i];
         report(`背景 ${i + 1}/${layers.length}: ${layer.image}`);
         try {
-          const texture = await this.assetManager.loadTexture(layer.image);
+          const texture = await this.awaitLoad(request, this.assetManager.loadTexture(layer.image, { signal: context.signal }));
           if (i === 0) {
             firstTexWidth = texture.width;
             firstTexHeight = texture.height;
@@ -1847,8 +2012,9 @@ export class SceneManager implements IGameSystem {
             this.primaryBgSprite = sprite;
             this.primaryBgTexture = texture;
           }
-        } catch (_e) {
-          // 加载失败时跳过该层
+        } catch (error) {
+          // Authored backgrounds are required; showing a partial world is not a successful load.
+          throw error;
         }
         advance(`背景层 ${i + 1}/${layers.length} ✓`);
       }
@@ -1868,7 +2034,7 @@ export class SceneManager implements IGameSystem {
           // cutscene context: skip pickedUpHotspots filter, skip committed enabled filter
           const ovr = this.getRuntimeOverrideForContext(sceneId, 'hotspot', def.id, def, 'cutscene');
           report(`Hotspot ${def.id} · cutscene`);
-          const hotspot = await this.instantiateHotspot(def, ovr as HotspotRuntimeOverride | undefined);
+          const hotspot = await this.awaitLoad(request, this.instantiateHotspot(def, ovr as HotspotRuntimeOverride | undefined, request), h => h.destroy());
           this.currentHotspots.push(hotspot);
           advance(`Hotspot ${def.id} ✓`);
         } else {
@@ -1878,7 +2044,7 @@ export class SceneManager implements IGameSystem {
           const ovr = this.getRuntimeOverrideForContext(sceneId, 'hotspot', def.id, def, 'outer');
           if (ovr?.enabled === false) continue;
           report(`Hotspot ${def.id}`);
-          const hotspot = await this.instantiateHotspot(def, ovr as HotspotRuntimeOverride | undefined);
+          const hotspot = await this.awaitLoad(request, this.instantiateHotspot(def, ovr as HotspotRuntimeOverride | undefined, request), h => h.destroy());
           this.currentHotspots.push(hotspot);
           advance(`Hotspot ${def.id} ✓`);
         }
@@ -1892,7 +2058,7 @@ export class SceneManager implements IGameSystem {
           // cutscene context
           const snap = this.getRuntimeOverrideForContext(sceneId, 'npc', npcDef.id, npcDef, 'cutscene') as NpcRuntimeOverride | undefined;
           report(`NPC ${npcDef.id} · cutscene`);
-          const npc = await this.instantiateNpc(npcDef, snap);
+          const npc = await this.awaitLoad(request, this.instantiateNpc(npcDef, snap, request), n => n.destroy());
           this.currentNpcs.push(npc);
           advance(`NPC ${npcDef.id} ✓`);
         } else {
@@ -1900,7 +2066,7 @@ export class SceneManager implements IGameSystem {
           if (isCutsceneOnlyEntity(npcDef)) continue;
           const snap = this.getRuntimeOverrideForContext(sceneId, 'npc', npcDef.id, npcDef, 'outer') as NpcRuntimeOverride | undefined;
           report(`NPC ${npcDef.id}`);
-          const npc = await this.instantiateNpc(npcDef, snap);
+          const npc = await this.awaitLoad(request, this.instantiateNpc(npcDef, snap, request), n => n.destroy());
           this.currentNpcs.push(npc);
           advance(`NPC ${npcDef.id} ✓`);
         }
@@ -1911,7 +2077,7 @@ export class SceneManager implements IGameSystem {
       if (this.currentNpcs.some((n) => n.def.id === npcDef.id)) continue;
       const snap = this.getRuntimeOverrideForContext(sceneId, 'npc', npcDef.id, npcDef, 'outer') as NpcRuntimeOverride | undefined;
       report(`NPC ${npcDef.id} · 演出留下`);
-      const npc = await this.instantiateNpc(npcDef, snap);
+      const npc = await this.awaitLoad(request, this.instantiateNpc(npcDef, snap, request), n => n.destroy());
       this.currentNpcs.push(npc);
       advance(`NPC ${npcDef.id} ✓`);
     }
@@ -1924,7 +2090,7 @@ export class SceneManager implements IGameSystem {
 
     if (this.depthLoader) {
       report(`深度图 · ${sceneId}`);
-      await this.depthLoader(sceneId, sceneData, worldToPixelX, worldToPixelY);
+      await this.awaitLoad(request, this.depthLoader(sceneId, sceneData, worldToPixelX, worldToPixelY, context));
       advance(`深度图 ✓`);
     }
 
@@ -1933,14 +2099,14 @@ export class SceneManager implements IGameSystem {
     if (this.lightingLoader && this.primaryBgTexture && this.sceneContainerBg) {
       report(`统一光影 · ${sceneId}`);
       try {
-        const litMesh = await this.lightingLoader(sceneId, sceneData, this.primaryBgTexture);
+        const litMesh = await this.awaitLoad(request, this.lightingLoader(sceneId, sceneData, this.primaryBgTexture, context), mesh => mesh?.destroy({ children: true }));
         if (litMesh && this.primaryBgSprite) {
           const idx = this.sceneContainerBg.getChildIndex(this.primaryBgSprite);
           this.sceneContainerBg.addChildAt(litMesh, idx);
           this.primaryBgSprite.renderable = false;
         }
       } catch (e) {
-        console.warn('[SceneManager] 统一光影装载失败，回落原背景', e);
+        throw e;
       }
       advance('统一光影 ✓');
     }
@@ -1948,88 +2114,47 @@ export class SceneManager implements IGameSystem {
     // 背景草木摆动：只有背景还是平铺 Sprite（没点亮）时由这里换成摆动 mesh
     if (this.swayLoader && this.primaryBgTexture && this.primaryBgSprite?.renderable && this.sceneContainerBg) {
       try {
-        const swayMesh = await this.swayLoader(sceneId, sceneData, this.primaryBgTexture);
+        const swayMesh = await this.awaitLoad(request, this.swayLoader(sceneId, sceneData, this.primaryBgTexture, context), mesh => mesh?.destroy({ children: true }));
         if (swayMesh && this.primaryBgSprite?.renderable && this.sceneContainerBg) {
           const idx = this.sceneContainerBg.getChildIndex(this.primaryBgSprite);
           this.sceneContainerBg.addChildAt(swayMesh, idx);
           this.primaryBgSprite.renderable = false;
         }
       } catch (e) {
-        console.warn('[SceneManager] 背景摆动装载失败，回落原背景', e);
+        throw e;
       }
     }
+    if (this.swayLoader && sceneData.backgrounds?.length) advance('背景摆动 ✓');
 
     if (sceneData.filterId) {
       report(`世界滤镜 · ${sceneData.filterId}`);
       try {
-        await this.renderer.loadAndSetWorldFilter(sceneData.filterId);
+        await this.awaitLoad(request, this.renderer.loadAndSetWorldFilter(sceneData.filterId));
       } catch (_e) {
         this.renderer.clearWorldFilter();
+        throw _e;
       }
       advance(`世界滤镜 ✓`);
     } else {
       this.renderer.clearWorldFilter();
     }
 
-    if (onLoadProgress) {
-      onLoadProgress(1, `就绪 · ${sceneId}`);
-    }
-
     // scene:ready 会给玩家/NPC/热点挂上深度遮挡与光照滤镜、启动巡逻——必须在**揭幕之前**完成，
     // 揭出来的场景才是完整表现。scene:enter 供 HUD/地图等复位。二者与 onEnter 解耦、先于 onEnter。
     this.eventBus.emit('scene:enter', { sceneId, fromSceneId: fromSceneId ?? null, sceneName: sceneData.name });
     this.eventBus.emit('scene:ready');
+    this.assertLoadCurrent(request);
 
     // 揭幕前闸：scene:ready 的监听都跑完了（实体、载荷几何已就绪），趁遮罩还在把会卡帧的准备做完
-    // （粒子 shader 交给 Pixi、粒子预热）。闸自己限时；抛了只记一笔，照常揭幕——不许把首屏锁在黑幕后。
+    // （粒子 shader、挂件、完整首帧）。失败必须交给事务恢复，不能揭开一个半准备的世界。
     if (this.revealGate) {
-      try {
-        await this.revealGate(sceneId);
-      } catch (e) {
-        console.warn('SceneManager: 揭幕前闸失败（照常揭幕）', e);
-      }
+      report(`画面准备 · ${sceneId}`);
+      await this.awaitLoad(request, this.revealGate(sceneId, context));
     }
-
-    // 揭幕：撤掉切场过渡遮罩，把已就绪的场景显示出来，**再**跑 onEnter。这样 onEnter 里的
-    // 成段演出（过场/对话）落在可见场景之上、而非被加载遮罩盖住；长演出也不再把揭幕/进度收尾扣住。
-    if (onReveal) {
-      try {
-        await onReveal();
-      } catch (e) {
-        console.warn('SceneManager: 场景揭幕失败', e);
-      }
-    }
-
-    // 揭幕完成的中性世界事件（与 scene:enter 同为纯事实通报，SceneManager 不知道谁在听）。
-    // 时序=旧 onEnter 起跑点：场景可见之后、根 onEnter 批之前——供需要"呈现完成后进场编排"的
-    // 消费者（如叙事包导演的开拍评估）对齐旧 onEnter 的视觉时机。
-    this.eventBus.emit('scene:revealed', { sceneId, fromSceneId: fromSceneId ?? null });
-
-    // onEnter 语义 = 场景已进入且呈现完成之后的一次性脚本逻辑（置 flag / 发信号 / 起演出）。
-    const rootEnter = sceneData.onEnter;
-    // cutscene 跨场景 staging：此场景是被 cutscene 借作「舞台」加载的（beginCutsceneStaging 在切场景
-    // 前已置 staging），而非玩家正常走入——跳过其根 onEnter，避免 onEnter 的自动剧情（如
-    // startDialogueGraph）与正在播的 cutscene 抢状态机、造成「从别处入口一进场景就抢播对话、演出
-    // 不串行」。正常玩家走入切场景时 cutsceneStaging 为 null，onEnter 照常执行。
-    const loadedAsCutsceneStage = this.cutsceneStaging?.sceneId === sceneId;
-    if (rootEnter?.length && this.sceneEnterRunner && !loadedAsCutsceneStage) {
-      // 批内的 changeScene 由 switchScene 识别为重入（见 sceneEnterBatchDepth）：
-      // 只登记不排队自等——排队会造成「当前 job 等 onEnter、onEnter 等队尾新 job」的环形死锁
-      this.sceneEnterBatchDepth++;
-      try {
-        await this.sceneEnterRunner(rootEnter);
-      } catch (e) {
-        console.warn('SceneManager: 场景根 onEnter 动作执行失败', e);
-      } finally {
-        this.sceneEnterBatchDepth--;
-      }
-    }
-
-    // 直接 loadScene（初始进场等，不经 switchScene）路径：onEnter 内登记的切换在此 drain；
-    // switchScene 路径由外层 job 完成后统一 drain（此时 isSwitching 为 true，跳过）。
-    if (!this.isSwitching) {
-      this.consumePendingReentrantSwitch();
-    }
+    advance(`完整首帧 ✓ · ${sceneId}`);
+    context.hasOnEnter = !request.options.suppressOnEnter && !!sceneData.onEnter?.length
+      && !!this.sceneEnterRunner && this.cutsceneStaging?.sceneId !== sceneId;
+    return sceneData;
   }
 
   /**
@@ -2041,25 +2166,12 @@ export class SceneManager implements IGameSystem {
    * 揭幕仍走 loadScene 的 onReveal（scene:ready 之后、onEnter 之前），使 onEnter 里的开场演出
    * 落在"已就绪且完整揭幕"的场景上——契约与 switchScene 完全一致（见 scene-onenter-reveal-timing）。
    */
-  async loadInitialScene(sceneId: string, spawnPointId?: string): Promise<void> {
-    this.ensureTransitionOverlay();
-    this.transitionOverlay!.alpha = 1;
-    const reveal = (): Promise<void> => this.fadeIn(400);
-    try {
-      await this.loadScene(
-        sceneId,
-        spawnPointId,
-        undefined,
-        null,
-        (r, label) => this.setTransitionOverlayProgress(r, label),
-        reveal,
-      );
-    } catch (e) {
-      // 装载失败也必须撤掉全黑遮罩，避免锁死首屏
-      console.error(`SceneManager: 初始场景 "${sceneId}" 加载失败`, e);
-      this.removeTransitionOverlay();
-      throw e;
-    }
+  loadInitialScene(sceneId: string, spawnPointId?: string): Promise<void> {
+    return this.enqueueSceneLoad('initial', sceneId, spawnPointId);
+  }
+
+  reloadScene(sceneId: string, spawnPointId?: string, cameraPosition?: Position, options: SceneLoadOptions = {}): Promise<void> {
+    return this.enqueueSceneLoad('reload', sceneId, spawnPointId, cameraPosition, { suppressOnEnter: true, ...options });
   }
 
   /**
@@ -2083,14 +2195,13 @@ export class SceneManager implements IGameSystem {
     this.cameraSetter?.(sceneData.worldWidth, sceneData.worldHeight, posX, posY, sceneData.camera, sceneData.worldScale);
   }
 
-  unloadScene(): void {
+  unloadScene(cancelPending = true): void {
+    if (cancelPending) this.cancelLoading();
+    this.sceneReady = false;
+    this.committedScene = null;
     this.sceneEpoch++;
     this.eventBus.emit('scene:beforeUnload');
     this.interactionSetter?.([], []);
-    if (this.currentSceneScopeId) {
-      this.assetManager.releaseScope(this.currentSceneScopeId);
-      this.currentSceneScopeId = null;
-    }
 
     for (const hotspot of this.currentHotspots) {
       // scene:beforeUnload 通常已摘除热点深度滤镜；此处再摘一次是幂等兜底（detach 返回 null 即跳过）。
@@ -2122,120 +2233,331 @@ export class SceneManager implements IGameSystem {
     this.depthUnloader?.();
     this.zoneSetter?.([]);
     this.currentScene = null;
+    // Resource eviction may destroy GPU views: all consumers must be gone before releasing the scope.
+    if (this.currentSceneScopeId) {
+      this.assetManager.releaseScope(this.currentSceneScopeId);
+      this.currentSceneScopeId = null;
+    }
   }
 
-  async switchScene(targetSceneId: string, spawnPointId?: string, cameraPosition?: { x: number; y: number }): Promise<void> {
-    if (this.sceneEnterBatchDepth > 0) {
-      // 场景根 onEnter 批内的 changeScene（重入）：排队自等会环形死锁——当前加载 job 正 await
-      // 本批动作，本批若再 await 队尾的新 job 即互相等待、永久黑屏。改为登记后立即返回
-      // （fire-and-forget）：onEnter 批内 changeScene 之后的动作仍在旧场景跑完，当前加载
-      // 完成后自动执行登记的切换。连锁多次（B 的 onEnter 又 changeScene C）逐层 drain，同样安全。
-      if (this.pendingReentrantSwitch) {
-        console.warn(
-          `SceneManager: onEnter 批内多次 changeScene，丢弃 "${this.pendingReentrantSwitch.targetSceneId}"、保留 "${targetSceneId}"`,
-        );
-      }
-      this.pendingReentrantSwitch = { targetSceneId, spawnPointId, cameraPosition };
-      return;
-    }
+  switchScene(targetSceneId: string, spawnPointId?: string, cameraPosition?: Position): Promise<void> {
+    return this.enqueueSceneLoad('switch', targetSceneId, spawnPointId, cameraPosition);
+  }
 
-    const job = async (): Promise<void> => {
-      const tid = targetSceneId.trim();
-      if (!tid) {
-        console.warn('SceneManager: switchScene 无效：targetScene 为空');
-        return;
-      }
-
-      const curId = this.currentScene?.id?.trim() ?? '';
-      if (curId === tid) {
-        const wantSpawnOverride = !!(spawnPointId?.trim());
-        const wantCamOverride = cameraPosition != null && (
-          cameraPosition.x !== undefined || cameraPosition.y !== undefined
-        );
-        if (!wantSpawnOverride && !wantCamOverride) {
-          return;
-        }
-        if (!this.currentScene) return;
-        if (!this.cutsceneStaging) {
-          this.saveCurrentSceneMemory();
-        }
-        this.applyPlayerSpawnAndCamera(this.currentScene, spawnPointId, cameraPosition);
-        return;
-      }
-
-      this.isSwitching = true;
-      try {
-        this.eventBus.emit('scene:transition', {
-          fromSceneId: this.currentScene?.id ?? null,
-          toSceneId: tid,
+  private enqueueSceneLoad(
+    kind: LoadingRequestContext['kind'],
+    sceneId: string,
+    spawnPointId?: string,
+    cameraPosition?: Position,
+    options: SceneLoadOptions = {},
+    fromSceneId?: string | null,
+    progress?: (ratio: number, label: string) => void,
+    onReveal?: () => Promise<void>,
+  ): Promise<void> {
+    const target = sceneId?.trim();
+    if (!target) return Promise.reject(new Error('Scene load requires a scene id'));
+    if (this.destroyed) return Promise.reject(new Error('SceneManager is destroyed'));
+    // Requests can wait behind other work; callers must not mutate their future target pose/options.
+    cameraPosition = cameraPosition ? { ...cameraPosition } : undefined;
+    options = { ...options };
+    if (this.loadingScopeId && options.scopeId !== this.loadingScopeId) {
+      return new Promise<void>((resolve, reject) => {
+        this.deferredLoads.push({
+          run: () => this.enqueueSceneLoad(kind, target, spawnPointId, cameraPosition, options, fromSceneId, progress, onReveal),
+          resolve,
+          reject,
         });
-        this.saveCurrentSceneMemory();
-
-        await this.fadeOut(300);
-
-        const fromSceneId = this.currentScene?.id ?? null;
-        this.unloadScene();
-        // 揭幕（fadeIn 撤黑幕）作为 onReveal 交给 loadScene 在 scene:ready 之后、onEnter 之前执行，
-        // 使 onEnter 的成段演出显示在可见场景上；故此处 job 尾部不再另行 fadeIn。
-        const reveal = (): Promise<void> => this.fadeIn(300);
-        try {
-          await this.loadScene(tid, spawnPointId, cameraPosition, fromSceneId, (r, label) => {
-            this.setTransitionOverlayProgress(r, label);
-          }, reveal);
-        } catch (e) {
-          console.error(`SceneManager: 加载场景 "${tid}" 失败`, e);
-          // 清掉半装载的实体/背景，再尝试回载前一场景（其资源通常已在缓存）
-          this.unloadScene();
-          let recovered = false;
-          if (fromSceneId) {
-            try {
-              await this.loadScene(fromSceneId, undefined, undefined, tid, (r, label) => {
-                this.setTransitionOverlayProgress(r, label);
-              }, reveal);
-              recovered = true;
-            } catch (e2) {
-              console.error(`SceneManager: 回载前一场景 "${fromSceneId}" 亦失败`, e2);
-            }
-          }
-          // 引擎级故障提示：此时数据/文案通道本身可能就是故障源，不走 [tag] 文案
-          this.eventBus.emit('notification:show', {
-            text: recovered ? `无法进入「${tid}」，已退回原场景` : `场景「${tid}」加载失败`,
-            type: 'warning',
-          });
-          if (!recovered) {
-            // 双双失败：至少不留 alpha=1 的黑幕锁死画面
-            this.removeTransitionOverlay();
-            return;
-          }
-        }
-      } finally {
-        this.isSwitching = false;
-        // 切场收尾的**必达**事件（成功/失败/双失败都发）：SceneTransition 状态的复位
-        // 兜底挂在它上面——揭幕事件在双失败路径不会发生，没有这条就是输入永久锁死（审批红线）。
-        this.eventBus.emit('scene:transitionEnd', { toSceneId: tid });
-      }
+      });
+    }
+    if (options.interrupt) {
+      if (this.activeLoad) this.activeLoad.replacement = true;
+      this.cancelLoading();
+    }
+    const controller = new AbortController();
+    const request: SceneLoadRequest = {
+      context: { id: `load:${++this.loadSequence}`, sceneId: target, signal: controller.signal, kind, hasOnEnter: false },
+      controller, spawnPointId, cameraPosition, fromSceneId, progress, onReveal, options,
+      queuedGeneration: this.loadQueueGeneration, ratio: 0,
+      managerEpoch: this.managerEpoch,
     };
+    this.queuedLoads.add(request);
+    let deferred: Promise<void> | null = null;
+    const job = (): Promise<SceneData | null> => {
+      this.queuedLoads.delete(request);
+      if (!this.destroyed && request.managerEpoch === this.managerEpoch
+        && request.queuedGeneration === this.loadQueueGeneration
+        && this.loadingScopeId && request.options.scopeId !== this.loadingScopeId) {
+        // A scope acquired after registration must not let this old external job block its own reloads.
+        deferred = this.enqueueSceneLoad(kind, target, spawnPointId, cameraPosition, options, fromSceneId, progress, onReveal);
+        return Promise.resolve(null);
+      }
+      return this.runSceneLoad(request);
+    };
+    const loaded = this.sceneSwitchTail.then(job, job);
+    // The queue owns resource/scene/presentation work, never a game-clock-driven onEnter batch.
+    // Reentrant changeScene can consequently await its own transaction instead of returning early.
+    this.sceneSwitchTail = loaded.then(() => undefined, () => undefined);
+    return loaded.then(async scene => {
+      if (deferred) return await deferred;
+      if (!scene || !request.context.hasOnEnter || request.context.signal.aborted) return;
+      const epoch = this.sceneEpoch;
+      const run = async (): Promise<void> => {
+        if (this.destroyed || this.sceneEpoch !== epoch || this.currentScene !== scene) return;
+        await this.sceneEnterRunner!(scene.onEnter!);
+      };
+      if (this.loadingLifecycle?.runOnEnter) {
+        await this.loadingLifecycle.runOnEnter(request.context, run);
+      } else {
+        await run();
+      }
+    });
+  }
 
-    const p = this.sceneSwitchTail.then(job, job);
-    this.sceneSwitchTail = p.catch((e) => {
-      console.warn('SceneManager: switchScene failed', e);
+  private hasQueuedLoads(): boolean {
+    return [...this.queuedLoads].some(request => request.managerEpoch === this.managerEpoch
+      && request.queuedGeneration === this.loadQueueGeneration);
+  }
+
+  private assertLoadCurrent(request: SceneLoadRequest): void {
+    if (this.destroyed || request.managerEpoch !== this.managerEpoch || this.activeLoad !== request || request.context.signal.aborted) {
+      throw request.context.signal.reason ?? new DOMException('Stale scene load', 'AbortError');
+    }
+  }
+
+  /** Abort races settle the consumer; late results are discarded before they can attach. */
+  private async awaitLoad<T>(request: SceneLoadRequest, work: Promise<T>, disposeLate?: (value: T) => void): Promise<T> {
+    const signal = request.context.signal;
+    if (signal.aborted) {
+      void work.then(value => disposeLate?.(value), () => undefined);
+      this.assertLoadCurrent(request);
+    }
+    let abort: (() => void) | undefined;
+    const aborted = new Promise<never>((_, reject) => {
+      abort = () => reject(signal.reason ?? new DOMException('Scene load cancelled', 'AbortError'));
+      signal.addEventListener('abort', abort, { once: true });
     });
     try {
-      await p;
+      const value = await Promise.race([work, aborted]);
+      this.assertLoadCurrent(request);
+      return value;
+    } catch (error) {
+      if (signal.aborted) void work.then(value => disposeLate?.(value), () => undefined);
+      throw error;
     } finally {
-      // onEnter 批内登记的切换在当前 job 结束后执行（无论成败）
-      this.consumePendingReentrantSwitch();
+      if (abort) signal.removeEventListener('abort', abort);
     }
   }
 
-  /** 执行 onEnter 批内登记的切换请求（fire-and-forget；原调用方早已返回，失败仅日志）。 */
-  private consumePendingReentrantSwitch(): void {
-    const req = this.pendingReentrantSwitch;
-    if (!req) return;
-    this.pendingReentrantSwitch = null;
-    void this.switchScene(req.targetSceneId, req.spawnPointId, req.cameraPosition).catch((e) => {
-      console.warn('SceneManager: 延后的 onEnter changeScene 失败', e);
-    });
+  private reportLoadProgress(request: SceneLoadRequest, ratio: number, label: string): void {
+    this.assertLoadCurrent(request);
+    request.ratio = Math.max(request.ratio, Math.max(0, Math.min(1, ratio)));
+    request.progress?.(request.ratio, label);
+    if (this.loadingLifecycle) this.loadingLifecycle.progress(request.context, request.ratio, label);
+    else this.setTransitionOverlayProgress(request.ratio, label);
+  }
+
+  private renewLoadScope(request: SceneLoadRequest, sceneId = request.context.sceneId): SceneLoadRequest {
+    const controller = new AbortController();
+    const renewed: SceneLoadRequest = {
+      ...request,
+      controller,
+      context: { ...request.context, sceneId, signal: controller.signal, hasOnEnter: false, continuesLoading: false },
+      options: { ...request.options },
+    };
+    // Identity, not a mutable signal field, invalidates all late writes from the failed request.
+    this.activeLoad = renewed;
+    return renewed;
+  }
+
+  private recordSafeScene(sceneData: SceneData, position?: Position, camera?: unknown): void {
+    if (this.loadingScopeId) return;
+    this.lastSafeScene = {
+      sceneId: sceneData.id,
+      sceneData: JSON.parse(JSON.stringify(sceneData)) as SceneData,
+      position: position ? { ...position } : undefined,
+      camera,
+    };
+  }
+
+  private async runSceneLoad(request: SceneLoadRequest): Promise<SceneData | null> {
+    if (this.destroyed || request.managerEpoch !== this.managerEpoch || request.queuedGeneration !== this.loadQueueGeneration) {
+      throw new DOMException('Queued scene load cancelled', 'AbortError');
+    }
+    const reusePreparedScene = request.context.kind === 'switch' && this.sceneReady
+      && this.currentScene?.id === request.context.sceneId && !request.spawnPointId && !request.cameraPosition;
+    const needsHandoff = this.loadingLifecycle?.needsHandoff?.()
+      ?? (this.loadingHandoffPending || this.transitionOverlay !== null);
+    if (reusePreparedScene && !needsHandoff) return null;
+    // Recovery replaces request/context and its pose. Keep retry intent independent of that object.
+    const original = {
+      kind: request.context.kind,
+      sceneId: request.context.sceneId,
+      spawnPointId: request.spawnPointId,
+      cameraPosition: request.cameraPosition ? { ...request.cameraPosition } : undefined,
+      fromSceneId: request.fromSceneId,
+      options: { ...request.options },
+      progress: request.progress,
+      onReveal: request.onReveal,
+      managerEpoch: request.managerEpoch,
+    };
+    const retry = (): Promise<void> => {
+      if (this.destroyed || this.managerEpoch !== original.managerEpoch) {
+        return Promise.reject(new DOMException('Stale scene retry', 'AbortError'));
+      }
+      return this.enqueueSceneLoad(original.kind, original.sceneId, original.spawnPointId,
+        original.cameraPosition, {
+          ...original.options,
+          interrupt: true,
+          // A completed restore no longer owns the queue when its failure UI is retried.
+          scopeId: this.loadingScopeId === original.options.scopeId ? original.options.scopeId : undefined,
+        }, original.fromSceneId, original.progress, original.onReveal);
+    };
+    const requestedTarget = request.context.sceneId;
+    const previousScene = this.currentScene;
+    const previousAppearance = this.appearanceBase;
+    const previousReady = this.sceneReady;
+    const previousPosition = this.playerPositionGetter?.();
+    const previousCamera = this.cameraSnapshotGetter?.();
+    const previousId = previousScene?.id ?? null;
+    if (previousScene && previousReady) this.recordSafeScene(previousScene, previousPosition, previousCamera);
+    if (request.fromSceneId === undefined) request.fromSceneId = previousId;
+    if (request.context.kind === 'switch' && previousId === request.context.sceneId) {
+      request.options.suppressOnEnter = true;
+    }
+    this.activeLoad = request;
+    this.isSwitching = true;
+    this.sceneReady = false;
+    let tornDown = false;
+    let prepared: SceneData | null = null;
+    let outcome: LoadingOutcome = { status: 'failed' };
+    const timeoutMs = Number.isFinite(request.options.timeoutMs) && request.options.timeoutMs! > 0
+      ? request.options.timeoutMs! : this.loadingTimeoutMs;
+    let watchdog = setTimeout(() => request.controller.abort(new Error(`Scene loading exceeded ${timeoutMs} ms`)), timeoutMs);
+    try {
+      this.eventBus.emit('scene:transition', { fromSceneId: previousId, toSceneId: request.context.sceneId, requestId: request.context.id });
+      if (this.loadingLifecycle) {
+        await this.awaitLoad(request, this.loadingLifecycle.begin(request.context));
+      } else if (request.context.kind === 'initial' || !previousScene) {
+        this.ensureTransitionOverlay();
+        this.transitionOverlay!.alpha = 1;
+      } else {
+        await this.awaitLoad(request, this.fadeOut(300));
+      }
+      this.assertLoadCurrent(request);
+      if (reusePreparedScene) {
+        // The prior request/scope left a fully prepared world covered. Finish its presentation only.
+        prepared = previousScene!;
+        this.reportLoadProgress(request, 1, '场景已就绪');
+      } else {
+        this.saveCurrentSceneMemory();
+        this.unloadScene(false);
+        tornDown = true;
+        prepared = await this.prepareScene(request);
+      }
+      request.context.continuesLoading = !request.context.hasOnEnter && this.hasQueuedLoads();
+      if (request.onReveal && !request.context.continuesLoading) await this.awaitLoad(request, request.onReveal());
+      if (this.loadingLifecycle && !request.context.continuesLoading) await this.awaitLoad(request, this.loadingLifecycle.reveal(request.context));
+      else if (request.context.continuesLoading) { /* Keep the same opaque loading surface for the next job. */ }
+      else if (request.onReveal) this.removeTransitionOverlay();
+      else await this.awaitLoad(request, this.fadeIn(request.context.kind === 'initial' ? 400 : 300));
+      this.assertLoadCurrent(request);
+      this.committedScene = prepared;
+      this.sceneReady = true;
+      outcome = { status: 'success', continuesLoading: request.context.continuesLoading };
+      // State handoff precedes observers/onEnter; no observer may release an unfinished load.
+      if (this.loadingLifecycle) await this.awaitLoad(request, Promise.resolve(this.loadingLifecycle.end(request.context, outcome)));
+      this.loadingHandoffPending = !!request.context.continuesLoading;
+      this.recordSafeScene(prepared, this.playerPositionGetter?.(), this.cameraSnapshotGetter?.());
+      if (!request.context.continuesLoading) {
+        this.eventBus.emit('scene:revealed', { sceneId: prepared.id, fromSceneId: request.fromSceneId ?? null, requestId: request.context.id });
+      }
+      return prepared;
+    } catch (error) {
+      clearTimeout(watchdog);
+      const wasCancelled = request.context.signal.aborted;
+      // Stop every still-running task even on an ordinary resource/gate failure.
+      request.controller.abort(error);
+      if (request.managerEpoch === this.managerEpoch) this.cancelTransitionAnimation();
+      let recovered = !this.destroyed && request.managerEpoch === this.managerEpoch
+        && !tornDown && previousReady && previousScene != null;
+      if (tornDown && !this.destroyed && request.managerEpoch === this.managerEpoch) {
+        this.unloadScene(false);
+        if (previousScene && previousReady && !request.replacement) {
+          // A recovery has its own cancellation scope but keeps the same Loading owner.
+          request = this.renewLoadScope(request, previousScene.id);
+          request.spawnPointId = undefined;
+          request.cameraPosition = previousPosition;
+          request.options = { ...request.options, suppressOnEnter: true };
+          watchdog = setTimeout(() => request.controller.abort(new Error('Scene recovery timed out')), this.loadingTimeoutMs);
+          try {
+            if (this.loadingLifecycle) await this.awaitLoad(request, this.loadingLifecycle.begin(request.context));
+            this.reportLoadProgress(request, request.ratio, '恢复原场景');
+            const restoreData = JSON.parse(JSON.stringify({
+              ...previousScene,
+              ...(previousAppearance?.scene ?? {}),
+            })) as SceneData;
+            // Avoid fetching a failed timeline's JSON and never replay root onEnter on recovery.
+            await this.prepareScene(request, restoreData);
+            if (previousCamera !== undefined) this.cameraSnapshotRestorer?.(previousCamera);
+            if (previousCamera !== undefined && this.revealGate) {
+              await this.awaitLoad(request, this.revealGate(previousScene.id, request.context));
+            }
+            request.context.continuesLoading = this.hasQueuedLoads();
+            if (!request.context.continuesLoading) {
+              if (this.loadingLifecycle) await this.awaitLoad(request, this.loadingLifecycle.reveal(request.context));
+              else await this.awaitLoad(request, this.fadeIn(300));
+            }
+            this.committedScene = this.currentScene;
+            this.sceneReady = true;
+            recovered = true;
+          } catch (recoveryError) {
+            request.controller.abort(recoveryError);
+            this.unloadScene(false);
+            console.error('SceneManager: recovery failed', recoveryError);
+          }
+        }
+      } else if (recovered) {
+        this.currentScene = previousScene;
+        this.committedScene = previousScene;
+        this.sceneReady = true;
+        if (this.loadingLifecycle && !this.destroyed && request.managerEpoch === this.managerEpoch) {
+          // The world was never dismantled: reveal it through an independent recovery signal.
+          request = this.renewLoadScope(request, previousScene!.id);
+          watchdog = setTimeout(() => request.controller.abort(new Error('Scene recovery timed out')), this.loadingTimeoutMs);
+          try {
+            await this.awaitLoad(request, this.loadingLifecycle.begin(request.context));
+            request.context.continuesLoading = this.hasQueuedLoads();
+            if (!request.context.continuesLoading) await this.awaitLoad(request, this.loadingLifecycle.reveal(request.context));
+          } catch (recoveryError) {
+            request.controller.abort(recoveryError);
+            recovered = false;
+            console.error('SceneManager: recovery presentation failed', recoveryError);
+          }
+        } else this.removeTransitionOverlay();
+      }
+      request.context.continuesLoading = this.hasQueuedLoads();
+      outcome = { status: wasCancelled ? 'cancelled' : recovered ? 'recovered' : 'failed', error, recovered,
+        replacement: request.replacement, continuesLoading: request.context.continuesLoading, retry };
+      request.context.hasOnEnter = false;
+      if (!this.destroyed && request.managerEpoch === this.managerEpoch && this.loadingLifecycle) {
+        // End hooks should normally be synchronous; give even a faulty injected hook a hard limit.
+        request = this.renewLoadScope(request);
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => request.controller.abort(new Error('Loading state handoff timed out')), this.loadingTimeoutMs);
+        await this.awaitLoad(request, Promise.resolve(this.loadingLifecycle.end(request.context, outcome)));
+      }
+      this.loadingHandoffPending = !!outcome.continuesLoading;
+      if (request.managerEpoch === this.managerEpoch && !this.loadingLifecycle) this.removeTransitionOverlay();
+      // Recovery restores operability; the original request still failed and must reject.
+      throw error;
+    } finally {
+      clearTimeout(watchdog);
+      if (this.activeLoad === request) this.activeLoad = null;
+      if (request.managerEpoch === this.managerEpoch) {
+        this.isSwitching = false;
+        this.eventBus.emit('scene:transitionEnd', { toSceneId: requestedTarget, requestId: request.context.id, outcome });
+      }
+    }
   }
 
 
@@ -2283,6 +2605,9 @@ export class SceneManager implements IGameSystem {
   private async fadeIn(durationMs: number): Promise<void> {
     this.ensureTransitionOverlay();
     this.transitionOverlay!.alpha = 1;
+    if (this.transitionBarFill) this.transitionBarFill.visible = false;
+    if (this.transitionBarTrack) this.transitionBarTrack.visible = false;
+    if (this.transitionDebugLabel) this.transitionDebugLabel.visible = false;
     await this.animateAlpha(this.transitionOverlay!, 1, 0, durationMs);
     this.removeTransitionOverlay();
   }
@@ -2341,6 +2666,7 @@ export class SceneManager implements IGameSystem {
     track.fill({ color: this.transitionPalette.track, alpha: 0.92 });
     track.stroke({ color: this.transitionPalette.trackBorder, width: 1, alpha: 0.7 });
     root.addChild(track);
+    this.transitionBarTrack = track;
 
     const fill = new Graphics();
     fill.x = bx;
@@ -2384,14 +2710,15 @@ export class SceneManager implements IGameSystem {
       this.transitionOverlay.destroy({ children: true });
       this.transitionOverlay = null;
       this.transitionBarFill = null;
+      this.transitionBarTrack = null;
       this.transitionDebugLabel = null;
     }
   }
 
   private animateAlpha(target: { alpha: number }, from: number, to: number, durationMs: number): Promise<void> {
-    cancelAnimationFrame(this.animRafId);
-    this.animRafId = 0;
+    this.cancelTransitionAnimation();
     return new Promise(resolve => {
+      this.transitionAnimResolve = resolve;
       const startTime = this.captureClockNow();
       target.alpha = from;
 
@@ -2404,12 +2731,22 @@ export class SceneManager implements IGameSystem {
         } else {
           this.animRafId = 0;
           this.captureTransitionTick = null;
+          this.transitionAnimResolve = null;
           resolve();
         }
       };
       this.captureTransitionTick = tick;
       if (this.capturePauseDepth === 0) this.animRafId = requestAnimationFrame(tick);
     });
+  }
+
+  private cancelTransitionAnimation(): void {
+    if (this.animRafId) cancelAnimationFrame(this.animRafId);
+    this.animRafId = 0;
+    this.captureTransitionTick = null;
+    const finish = this.transitionAnimResolve;
+    this.transitionAnimResolve = null;
+    finish?.();
   }
 
   private ensureBlackoutOverlay(): Graphics {
@@ -2458,7 +2795,7 @@ export class SceneManager implements IGameSystem {
   /** 取消在途黑幕动画并封口其 Promise（打断/销毁路径共用），保证不留悬挂 await 与残留 RAF。 */
   private cancelBlackoutAnim(): void {
     this.captureBlackoutTick = null;
-    cancelAnimationFrame(this.blackoutRafId);
+    if (this.blackoutRafId) cancelAnimationFrame(this.blackoutRafId);
     this.blackoutRafId = 0;
     const resolve = this.blackoutAnimResolve;
     this.blackoutAnimResolve = null;
@@ -2680,7 +3017,7 @@ export class SceneManager implements IGameSystem {
       if (mem.spawnedNpcs && Object.keys(mem.spawnedNpcs).length) row.spawned = mem.spawnedNpcs;
       data[sceneId] = row;
     });
-    return { currentSceneId: this.currentScene?.id ?? null, memory: data };
+    return { currentSceneId: this.isLoading ? this.lastSafeScene?.sceneId ?? null : this.currentScene?.id ?? null, memory: data };
   }
 
   deserialize(data: {
@@ -2731,13 +3068,19 @@ export class SceneManager implements IGameSystem {
   }
 
   destroy(): void {
-    cancelAnimationFrame(this.animRafId);
-    this.animRafId = 0;
+    this.destroyed = true;
+    this.managerEpoch++;
+    this.cancelLoading();
+    this.loadingScopeId = null;
+    this.loadingScopeDepth = 0;
+    this.queuedLoads.clear();
+    this.activeLoad = null;
+    this.loadingHandoffPending = false;
+    this.isSwitching = false;
     this.zoneSessionDisabled.clear();
     this.entitySessionOverrides.clear();
     this.groupSessionDisabled.clear();
     this.pendingTimeZoneRefresh = null;
-    this.pendingReentrantSwitch = null;
     // 铁律 8：重 init() 行为须与首次一致——调试开关不得跨销毁残留
     this.authoringMarkersVisible = false;
     this.eventBus.off('hotspot:pickup:done', this.onHotspotPickup);
@@ -2746,8 +3089,14 @@ export class SceneManager implements IGameSystem {
     this.removeTransitionOverlay();
     this.removeBlackoutOverlay();
     this.sceneMemory.clear();
+    this.lastSafeScene = null;
     this.cutsceneStaging = null;
     this.playerPositionSetter = null;
+    this.playerPositionGetter = null;
+    this.cameraSnapshotGetter = null;
+    this.cameraSnapshotRestorer = null;
+    this.loadingLifecycle = null;
+    this.revealGate = null;
     this.cameraSetter = null;
     this.boundsOnlySetter = null;
     this.audioApplier = null;

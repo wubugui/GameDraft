@@ -53,6 +53,12 @@ export interface ActionExecutionPolicy {
   label: string;
 }
 
+/** A captured owner remains observable after it settles while Loading holds control. */
+export interface ExploreActionLockOwner {
+  readonly generation: number;
+  readonly settled: boolean;
+}
+
 export class ActionExecutor {
   private handlers: Map<string, ActionHandler> = new Map();
   private paramNamesMap: Map<string, string[]> = new Map();
@@ -65,10 +71,12 @@ export class ActionExecutor {
   private destroyed = false;
   private warnedAfterDestroy = false;
   private generation = 0;
+  private exploreLockOwner: { generation: number; settled: boolean } | null = null;
 
   /** 死亡/读档使旧批的后续动作失效；已进入的异步系统由各自生命周期闸门收尾。 */
   cancelPending(): void { this.generation++; }
   getGeneration(): number { return this.generation; }
+  getExploreLockOwner(): ExploreActionLockOwner | null { return this.exploreLockOwner; }
   /**
    * dev 叙事调试器的动作挂点（见 src/dev/narrativeDebugBridge.ts）。
    * 默认 null——生产环境无任何设置方，行为与从前一致。
@@ -303,15 +311,19 @@ export class ActionExecutor {
     const gen = this.generation;
     const sc = this.gameStateController;
     if (!sc || scope.detached) return work();
-    let appliedExploreLock = false;
+    let owner: { generation: number; settled: boolean } | null = null;
     if (sc.currentState === GameState.Exploring) {
+      owner = { generation: gen, settled: false };
+      this.exploreLockOwner = owner;
       sc.setState(GameState.ActionSequence);
-      appliedExploreLock = true;
     }
     try {
       return await work();
     } finally {
-      if (gen === this.generation && appliedExploreLock && sc.currentState === GameState.ActionSequence) {
+      if (owner) owner.settled = true;
+      const stillOwnsLock = owner !== null && this.exploreLockOwner === owner;
+      if (stillOwnsLock) this.exploreLockOwner = null;
+      if (gen === this.generation && stillOwnsLock && sc.currentState === GameState.ActionSequence) {
         sc.setState(GameState.Exploring);
       }
     }

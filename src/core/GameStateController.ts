@@ -40,6 +40,11 @@ interface PanelEntry {
   openGuard?: () => boolean;
 }
 
+interface LoadingSession {
+  id: string;
+  resumeState: GameState;
+}
+
 export class GameStateController {
   private _currentState: GameState = GameState.Exploring;
   private _previousState: GameState = GameState.Exploring;
@@ -59,6 +64,9 @@ export class GameStateController {
   /** requestPanelOpen 在非探索态下挂起的面板：状态回到 Exploring 那一刻开（见 applyCurrentState）。 */
   private pendingPanelOpen: string | null = null;
   private isDepleted: () => boolean = () => false;
+  private loadingSession: LoadingSession | null = null;
+  private releaseLoadingInput: (() => void) | null = null;
+  private destroyed = false;
 
   /** 旧演出/对话收尾不得把死亡还原成探索；完整读档恢复生命后自动解除。 */
   setDepletionGuard(predicate: () => boolean): void { this.isDepleted = predicate; }
@@ -66,14 +74,70 @@ export class GameStateController {
   constructor(
     private readonly inputManager: InputManager,
     private readonly eventBus?: EventBus,
+    initialState: GameState = GameState.Exploring,
   ) {
     this.unsubKeyDown = inputManager.subscribeKeyDown((e) => {
       this.handleKeyDown(e);
     });
+    this.applyCurrentState(initialState);
   }
 
   get currentState(): GameState { return this._currentState; }
   get previousState(): GameState { return this._previousState; }
+  get activeLoadingId(): string | null { return this.loadingSession?.id ?? null; }
+  get loadingId(): string | null { return this.loadingSession?.id ?? null; }
+  get loadingResumeState(): GameState | null { return this.loadingSession?.resumeState ?? null; }
+
+  /** 新请求接管旧请求的遮幕；只有匹配当前 id 的完成才可还权。 */
+  beginLoading(id: string, resume?: GameState): void {
+    if (this.destroyed) return;
+    if (!id) throw new Error('GameStateController.beginLoading requires a request id');
+    if (this.loadingSession?.id === id) {
+      if (resume !== undefined) this.setLoadingResumeState(id, resume);
+      return;
+    }
+    const resumeState = this.isLoadingResumeState(resume)
+      ? resume
+      : this.loadingSession?.resumeState ?? this.getUnderlyingState();
+    this.loadingSession = { id, resumeState };
+    this._previousState = resumeState;
+    // 先取得控制权再收旧 UI：close() 发出的旧收尾事件只能看到 Loading。
+    this.applyCurrentState(GameState.Loading);
+    this.pendingPanelOpen = null;
+    this.overlayReturnStack = [];
+    this.closeAllPanels();
+  }
+
+  /** 明确交接只归当前请求；普通 setState 的旧 finally 不得暗改续接态。 */
+  setLoadingResumeState(id: string, state: GameState): boolean {
+    if (this.destroyed || this.loadingSession?.id !== id || !this.isLoadingResumeState(state)) return false;
+    this.loadingSession.resumeState = state;
+    return true;
+  }
+
+  /** 调用方在首帧和入场效果真正完成后提交；失败/取消也必须给合法的退出目的态。 */
+  finishLoading(id: string, resume?: GameState): boolean {
+    if (this.destroyed || this.loadingSession?.id !== id) return false;
+    if (resume !== undefined && !this.isLoadingResumeState(resume)) return false;
+    const next = resume ?? this.loadingSession.resumeState;
+    this.loadingSession = null;
+    this._previousState = next;
+    this.applyCurrentState(next, true);
+    return true;
+  }
+
+  private isLoadingResumeState(state: GameState | undefined): state is GameState {
+    return state !== undefined && state !== GameState.Loading && state !== GameState.UIOverlay;
+  }
+
+  /** UI 返回栈只用于找底层所有者，加载不恢复已关闭的面板与旧返回栈。 */
+  private getUnderlyingState(): GameState {
+    if (this.isLoadingResumeState(this._currentState)) return this._currentState;
+    for (const state of this.overlayReturnStack) {
+      if (this.isLoadingResumeState(state)) return state;
+    }
+    return this.isLoadingResumeState(this._previousState) ? this._previousState : GameState.Exploring;
+  }
 
   /**
    * 状态变更旁听席（只一个，后设的顶替）。给"状态一变就必须立刻收摊"的东西用——
@@ -95,12 +159,19 @@ export class GameStateController {
    * Exploring，那条沿就会被下一 tick 的探索态消费者（跳/踢/交互/嗅）再吃一次。
    * 见 [InputManager.clearInputEdges]。
    */
-  private applyCurrentState(next: GameState): void {
-    if (this.isDepleted() && next !== GameState.UIOverlay && next !== GameState.MainMenu) next = GameState.Dead;
+  private applyCurrentState(next: GameState, loadingExit = false): void {
+    if (this.destroyed) return;
+    if (this._currentState === GameState.Loading && next !== GameState.Loading && !loadingExit) return;
+    if (this.isDepleted() && next !== GameState.Loading && next !== GameState.UIOverlay && next !== GameState.MainMenu) next = GameState.Dead;
     if (this._currentState === next) return;
     const previous = this._currentState;
+    if (next === GameState.Loading) this.releaseLoadingInput ??= this.inputManager.suspendForLoading();
     this._currentState = next;
     this.inputManager.clearInputEdges();
+    if (previous === GameState.Loading) {
+      this.releaseLoadingInput?.();
+      this.releaseLoadingInput = null;
+    }
     /**
      * 状态真的变了才通知。观察者是**同步**跑的——脱手演出要在"过场第一拍演出去之前"
      * 就把自己收干净，晚一个微任务就会闪在过场上面。
@@ -125,6 +196,7 @@ export class GameStateController {
    * 只挂一个：后到的请求覆盖先到的。
    */
   requestPanelOpen(name: string): void {
+    if (this.destroyed || this._currentState === GameState.Loading) return;
     const entry = this.panels.get(name);
     if (!entry || entry.panel.isOpen) return;
     if (this._currentState === GameState.Exploring) {
@@ -134,8 +206,9 @@ export class GameStateController {
     this.pendingPanelOpen = name;
   }
 
-  getDebugState(): { overlayReturnStack: GameState[]; openPanels: string[] } {
+  getDebugState(): { overlayReturnStack: GameState[]; openPanels: string[]; loading: LoadingSession | null } {
     return {
+      loading: this.loadingSession ? { ...this.loadingSession } : null,
       overlayReturnStack: [...this.overlayReturnStack],
       openPanels: [...this.panels.entries()]
         .filter(([, entry]) => entry.panel.isOpen)
@@ -145,11 +218,14 @@ export class GameStateController {
   }
 
   setState(newState: GameState): void {
+    // Loading 只能由带世代的 API 进出；直接设 Loading 也会漏掉请求归属。
+    if (this.destroyed || this._currentState === GameState.Loading || newState === GameState.Loading) return;
     this._previousState = this._currentState;
     this.applyCurrentState(newState);
   }
 
   restorePreviousState(): void {
+    if (this.destroyed || this._currentState === GameState.Loading) return;
     const s = this.overlayReturnStack.pop();
     this.applyCurrentState(s !== undefined ? s : this._previousState);
   }
@@ -190,6 +266,7 @@ export class GameStateController {
    * 打不开的场合（对话/遭遇/openGuard 拒绝）仍由 `togglePanel` 的既有闸门兜住。
    */
   switchToPanel(name: string): void {
+    if (this.destroyed || this._currentState === GameState.Loading) return;
     const entry = this.panels.get(name);
     if (!entry) return;
     if (entry.panel.isOpen) {
@@ -215,7 +292,9 @@ export class GameStateController {
     this.pendingPanelOpen = null;
     for (const [, entry] of this.panels) {
       if (entry.panel.isOpen) {
-        entry.panel.close();
+        try { entry.panel.close(); } catch (e) {
+          console.warn('GameStateController: 面板关闭失败（继续清理）', e);
+        }
       }
     }
     this.openOrder = [];
@@ -238,13 +317,24 @@ export class GameStateController {
     if (!opts?.silent) {
       this.eventBus?.emit('ui:panelClose', { name });
     }
-    if (entry.overlaysGameState) {
+    if (entry.overlaysGameState && this._currentState !== GameState.Loading) {
       const restored = this.overlayReturnStack.pop();
       this.applyCurrentState(restored ?? GameState.Exploring);
     }
   }
 
   togglePanel(name: string): void {
+    if (this.destroyed || this._currentState === GameState.Loading) return;
+    this.togglePanelInternal(name);
+  }
+
+  /** 明确的开发诊断入口，仅允许不覆盖游戏状态的面板；不经玩家快捷键通道。 */
+  toggleDiagnosticPanel(name: string): void {
+    if (this.destroyed || this.panels.get(name)?.overlaysGameState !== false) return;
+    this.togglePanelInternal(name);
+  }
+
+  private togglePanelInternal(name: string): void {
     const entry = this.panels.get(name);
     if (!entry) return;
 
@@ -274,6 +364,7 @@ export class GameStateController {
   }
 
   private handleKeyDown(e: KeyboardEvent): void {
+    if (this.destroyed || this._currentState === GameState.Loading) return;
     // 避免按住键时首拍打开、重复 keydown 立即再关（如 F2 调试侧栏）
     if (e.repeat) return;
     // 模态（确认框）在场：整帧让路——Esc/快捷键全归模态，不许一键连关两层
@@ -333,6 +424,7 @@ export class GameStateController {
    * 过场的 Esc 在 CutsceneManager 自己的监听里（二次确认跳过），不走到这。
    */
   private handleEscape(): void {
+    if (this.destroyed || this._currentState === GameState.Loading) return;
     // ui:confirm/ui:cancel 映射约定（B4）：Esc 关闭面板=取消音（此处发）；对话/遭遇选项
     // 点选=确认音（EventBridge 发）；打开面板不算确认，不发。
     const top = this.findTopOpenPanel();
@@ -363,11 +455,15 @@ export class GameStateController {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.closeAllPanels();
     for (const [, entry] of this.panels) {
       const p = entry.panel as ToggleablePanel & { destroy?: () => void };
       if (typeof p.destroy === 'function') {
-        p.destroy();
+        try { p.destroy(); } catch (error) {
+          console.warn('GameStateController: 面板销毁失败（继续释放状态资源）', error);
+        }
       }
     }
     this.panels.clear();
@@ -375,5 +471,11 @@ export class GameStateController {
     this.openOrder = [];
     this.unsubKeyDown?.();
     this.unsubKeyDown = null;
+    this.loadingSession = null;
+    this.releaseLoadingInput?.();
+    this.releaseLoadingInput = null;
+    this.stateChangeObserver = null;
+    this.escapeFallback = null;
+    this.keySuppressor = null;
   }
 }

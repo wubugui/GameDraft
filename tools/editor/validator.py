@@ -29,6 +29,7 @@ from .shared.move_entity_map_picker import normalize_move_entity_waypoints
 from .shared.item_tags import is_known_item_tag
 from .shared.audio_library import audio_id_problem
 from .shared.narrative_catalog import emitted_signal_ids
+from .shared.loading_transition_catalog import loading_transition_choices
 from .shared.project_paths import URL_KIND_MEDIA
 from .shared.entity_transform_math import (
     perspective_camera_follow_info as _perspective_camera_follow_info,
@@ -530,7 +531,20 @@ def validate(model: ProjectModel) -> list[Issue]:
     _validate_scenarios_catalog(model, issues)
 
     # --- scenes ---
+    try:
+        loading_transition_ids = {kind for kind, _label in loading_transition_choices()}
+    except (OSError, ValueError) as exc:
+        loading_transition_ids = set()
+        issues.append(Issue("error", "loadingTransition", "loadingTransitions.json",
+                            f"转场目录读取失败: {exc}"))
     for sid, sc in model.scenes.items():
+        if "loadingTransition" in sc and loading_transition_ids:
+            transition = sc["loadingTransition"]
+            if not isinstance(transition, str) or transition not in loading_transition_ids:
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"loadingTransition {transition!r} 不在转场目录中；运行时按未配置随机选择。",
+                ))
         # 背景图文件名强约束：场景主背景只能叫 background.png（编辑器导入时统一迁入并命名）。
         # 名字不对运行时直接 throw 不加载，这里作为作者期硬错误提前拦截。
         bgs = sc.get("backgrounds")

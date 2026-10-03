@@ -62,7 +62,7 @@ import { STRIKE_BRANCH_LIGHTS, STRIKE_CHANNEL_LIGHT_SEGMENTS, StrikeLightRig, se
 import { boltInstanceSeed, boltLightPolylines, createBolt } from '../systems/vfx/vfxBolt';
 import type { VfxInstanceStartInfo } from '../systems/vfx/VfxSystem';
 import { GameClock } from '../systems/gameClock';
-import type { ActionExecScope } from './ActionExecutor';
+import type { ActionExecScope, ExploreActionLockOwner } from './ActionExecutor';
 import type { PerformanceSession } from '../systems/performanceSession';
 import { PerformanceSessionManager } from '../systems/performanceSession';
 import { isPresentationOnlyAction } from './actionParamManifest';
@@ -127,6 +127,8 @@ import { MenuUI } from '../ui/MenuUI';
 import { RuleUseUI } from '../ui/RuleUseUI';
 import { DebugPanelUI } from '../ui/DebugPanelUI';
 import { GameStateController } from './GameStateController';
+import { LoadingSurface } from '../ui/LoadingSurface';
+import type { LoadingRequestContext } from '../systems/SceneManager';
 import { StringsProvider } from './StringsProvider';
 import { TextDisplaySettings } from './TextDisplaySettings';
 import { SmellDisplaySettings } from './SmellDisplaySettings';
@@ -281,7 +283,6 @@ import { VfxRenderer, vfxPipelineSpecs, type VfxSortHost } from '../rendering/vf
 import { VfxConfineOverlay } from '../rendering/vfx/VfxConfineOverlay';
 import { socketLightWorld, viewDirWorld, worldToScene } from '../utils/sceneSpace';
 import { FireHintMarker } from '../rendering/FireHintMarker';
-import { awaitPipelinesForReveal } from '../rendering/pipelineRevealGate';
 
 /**
  * 揭幕前闸的限时（毫秒）。过了就先揭幕：没编完的管线第一次用到的那一帧等它编完（会卡），
@@ -521,6 +522,17 @@ function mapListenerConfig(c: AudioListenerConfig): {
 }
 
 export class Game {
+  private loadingSurface: LoadingSurface | null = null;
+  private loadingSources = new Map<string, GameState>();
+  private restoreLoadDepth = 0;
+  private restoreLoadSerial = 0;
+  private restoreScopeId: string | undefined;
+  private swayLoadGeneration = 0;
+  private loadingEntryOwners = new Map<string, number>();
+  private loadingEntryResumeGeneration: number | null = null;
+  private loadingExploreLockOwner: ExploreActionLockOwner | null = null;
+  private sceneReadyPreparation: Promise<void> = Promise.resolve();
+  private lastSafeSaveData: Record<string, object> | null = null;
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private stringsProvider: StringsProvider;
@@ -625,6 +637,8 @@ export class Game {
    */
   private readonly presentationRandom = new DeterministicRandom('gamedraft-presentation-v1');
   private playerAnimDef: AnimationSetDef | null = null;
+  private playerAvatarScope = 'startup:player';
+  private playerAvatarRequest = 0;
 
   private interactionCoordinator!: InteractionCoordinator;
   private eventBridge!: EventBridge;
@@ -979,7 +993,8 @@ export class Game {
     this.stringsProvider = new StringsProvider();
     this.inputManager = new InputManager();
     this.assetManager = new AssetManager();
-    this.stateController = new GameStateController(this.inputManager, this.eventBus);
+    this.stateController = new GameStateController(this.inputManager, this.eventBus, GameState.Loading);
+    this.stateController.beginLoading('boot', GameState.Exploring);
     this.actionExecutor = new ActionExecutor(this.eventBus, this.flagStore, this.stateController);
     this.ruleOfferRegistry = new RuleOfferRegistry();
     this.renderer = new Renderer();
@@ -2182,7 +2197,180 @@ export class Game {
     }
   }
 
+  private assertLoadingActive(context?: LoadingRequestContext): void {
+    if (this.tearDownComplete || context?.signal.aborted) {
+      throw context?.signal.reason ?? new DOMException('Game loading was cancelled', 'AbortError');
+    }
+  }
+
+  private installLoadingLifecycle(): void {
+    this.renderer.app.playerLoopPaused = true;
+    this.sceneManager.setPlayerPositionGetter(() => ({ x: this.player?.x ?? 0, y: this.player?.y ?? 0 }));
+    this.sceneManager.setCameraSnapshotHooks(
+      () => ({ x: this.camera.getX(), y: this.camera.getY(), zoom: this.camera.getZoom(),
+        overridden: this.camera.isZoomOverridden() }),
+      (raw) => {
+        const snapshot = raw as { x: number; y: number; zoom: number; overridden: boolean };
+        this.camera.setZoom(snapshot.zoom);
+        if (!snapshot.overridden) this.camera.releaseZoomOverride();
+        this.camera.snapTo(snapshot.x, snapshot.y);
+        this.camera.update(0);
+      },
+    );
+    this.sceneManager.setLoadingLifecycle({
+      needsHandoff: () => this.stateController.currentState === GameState.Loading,
+      begin: async (context) => {
+        this.assertLoadingActive(context);
+        // Ignition is scene-bound and will be cancelled by unload. Return its control
+        // before Loading captures the destination, rather than reviving a dead performer.
+        this.ignitePerformer?.abort();
+        if (this.stateController.currentState !== GameState.Loading) {
+          this.loadingExploreLockOwner = this.stateController.currentState === GameState.ActionSequence
+            ? this.actionExecutor.getExploreLockOwner() : null;
+        }
+        if (this.stateController.currentState !== GameState.Loading && this.player && this.saveManager) {
+          this.lastSafeSaveData = this.collectSaveData();
+        }
+        const from = this.stateController.currentState === GameState.Loading
+          ? this.stateController.loadingResumeState ?? GameState.Exploring
+          : this.stateController.currentState;
+        this.stateController.beginLoading(context.id, this.restoreLoadDepth > 0 ? GameState.Exploring : from);
+        this.loadingSources.set(context.id, this.stateController.loadingResumeState ?? GameState.Exploring);
+        this.renderer.app.playerLoopPaused = true;
+        this.playerNavTarget = null;
+        this.touchMobileControls?.syncState();
+        await this.loadingSurface?.cover(context.id, context.signal, context.kind === 'initial');
+      },
+      progress: (context, ratio, label) => this.loadingSurface?.progress(context.id, ratio, label),
+      reveal: async (context) => {
+        this.assertLoadingActive(context);
+        if (this.restoreLoadDepth === 0 && !context.continuesLoading) await this.revealLoadingScene(context.id, context.signal);
+      },
+      end: async (context, outcome) => {
+        if (this.tearDownComplete || this.stateController.loadingId !== context.id) return;
+        if (this.restoreLoadDepth > 0 || outcome.replacement || outcome.continuesLoading) {
+          this.loadingSources.delete(context.id);
+          return;
+        }
+        if (outcome.status === 'success' || outcome.recovered) {
+          const source = this.loadingSources.get(context.id) ?? GameState.Exploring;
+          let resume = context.hasOnEnter && source === GameState.Exploring ? GameState.ActionSequence : source;
+          const actionOwner = this.loadingExploreLockOwner;
+          if (resume === GameState.ActionSequence && actionOwner?.settled
+            && actionOwner.generation === this.actionExecutor.getGeneration()) {
+            resume = context.hasOnEnter ? GameState.ActionSequence : GameState.Exploring;
+            // A new scene's onEnter now owns the control returned by the settled action.
+            if (context.hasOnEnter) this.loadingSources.set(context.id, GameState.Exploring);
+          }
+          if (!context.hasOnEnter && resume === GameState.ActionSequence && this.loadingEntryOwners.size === 0
+            && this.loadingEntryResumeGeneration === this.actionExecutor.getGeneration()) {
+            resume = GameState.Exploring;
+            this.loadingEntryResumeGeneration = null;
+          }
+          if (this.stateController.finishLoading(context.id, resume)) {
+            this.loadingExploreLockOwner = null;
+            this.renderer.app.playerLoopPaused = false;
+            this.loadingSurface?.finish(context.id);
+          }
+          if (!context.hasOnEnter) this.loadingSources.delete(context.id);
+        } else {
+          this.loadingSources.delete(context.id);
+          const retry = outcome.retry;
+          this.loadingSurface?.fail(context.id, outcome.error ?? new Error('加载已取消'), retry && (() => {
+            void retry()
+              .catch((error) => console.error('Game: loading retry failed', error));
+          }));
+        }
+      },
+      runOnEnter: async (context, run) => {
+        const ownsEntry = this.loadingSources.get(context.id) === GameState.Exploring;
+        const generation = this.actionExecutor.getGeneration();
+        this.loadingEntryOwners.set(context.id, generation);
+        if (ownsEntry) this.loadingEntryResumeGeneration = generation;
+        try { await run(); }
+        finally {
+          this.loadingSources.delete(context.id);
+          this.loadingEntryOwners.delete(context.id);
+          const currentGeneration = this.actionExecutor.getGeneration();
+          const hasLiveEntry = [...this.loadingEntryOwners.values()].some(g => g === currentGeneration);
+          if (!hasLiveEntry && this.loadingEntryResumeGeneration === currentGeneration
+            && !this.sceneManager.isLoading && this.stateController.currentState === GameState.ActionSequence) {
+            this.loadingEntryResumeGeneration = null;
+            this.stateController.setState(GameState.Exploring);
+          }
+        }
+      },
+    });
+  }
+
+  private async revealLoadingScene(id: string, signal?: AbortSignal): Promise<void> {
+    const canvas = this.renderer.app.canvas as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    const point = this.player?.sprite.container.getGlobalPosition();
+    const origin = point && Number.isFinite(point.x) && Number.isFinite(point.y) ? {
+      x: rect.left + point.x * rect.width / this.renderer.screenWidth,
+      y: rect.top + point.y * rect.height / this.renderer.screenHeight,
+    } : undefined;
+    await this.loadingSurface?.reveal(id, signal, {
+      transition: this.sceneManager.currentSceneData?.loadingTransition,
+      target: canvas,
+      origin,
+    });
+  }
+
+  private async runSaveRestore(run: () => Promise<boolean>): Promise<boolean> {
+    this.assertLoadingActive();
+    const bootRestore = this.stateController.loadingId === 'boot' && !this.sceneManager.lastSafeSceneSnapshot;
+    const id = `restore:${++this.restoreLoadSerial}`;
+    const source = this.stateController.loadingResumeState ?? this.stateController.currentState;
+    if (this.stateController.currentState !== GameState.Loading) this.lastSafeSaveData = this.collectSaveData();
+    const releaseScope = this.sceneManager.acquireLoadingScope(id);
+    this.restoreScopeId = id;
+    this.restoreLoadDepth++;
+    this.stateController.beginLoading(id, GameState.Exploring);
+    this.renderer.app.playerLoopPaused = true;
+    let result = false;
+    try {
+      await this.loadingSurface?.cover(id);
+      this.sceneManager.cancelLoading(new DOMException('Save restore superseded scene loading', 'AbortError'), true, true);
+      await this.sceneManager.waitForLoadingIdle();
+      this.assertLoadingActive();
+      result = await run();
+      this.assertLoadingActive();
+      const activeId = this.stateController.loadingId ?? id;
+      // Failed boot restore falls through to normal startup; keep it covered across both operations.
+      if (!result && bootRestore) return false;
+      if (this.sceneManager.isSceneReady) {
+        if (this.sceneManager.hasPendingLoads) return result;
+        await this.revealLoadingScene(activeId);
+        // Release the restore scope while Loading still owns input; any request that arrived
+        // during reveal continues the loading session instead of briefly returning control.
+        releaseScope();
+        if (this.sceneManager.isLoading) return result;
+        // Restore cancels old dialogue/actions; only their safe world facts can be rolled back.
+        const safeSource = source === GameState.Dead || source === GameState.MainMenu ? source : GameState.Exploring;
+        this.stateController.finishLoading(activeId, result ? GameState.Exploring : safeSource);
+        this.renderer.app.playerLoopPaused = false;
+        this.loadingSurface?.finish(activeId);
+      } else this.loadingSurface?.fail(activeId, new Error('存档场景及恢复场景均未能加载完成'));
+      return result;
+    } catch (error) {
+      if (!this.tearDownComplete) {
+        this.loadingSurface?.fail(this.stateController.loadingId ?? id, error);
+      }
+      throw error;
+    } finally {
+      this.restoreLoadDepth--;
+      this.restoreScopeId = undefined;
+      this.loadingSources.clear();
+      releaseScope();
+    }
+  }
+
   async start(options: GameStartOptions = {}): Promise<void> {
+    this.loadingSurface = new LoadingSurface();
+    this.inputManager.setLoadingKeyHandler((event) => this.loadingSurface?.handleKey(event));
+    this.installLoadingLifecycle();
     this.isDevMode = !!options.devMode;
     /** DEV 构建暴露实例句柄供页内诊断直读（运行时命令通道配方：严肃断言直读 __game 私有字段，
      *  不经共享快照通道）。prod 构建不挂。 */
@@ -2194,6 +2382,8 @@ export class Game {
     await this.renderer.init(options.visualCapture ? { resolution: 1 } : {});
     /** P3：start 期间被 destroy（HMR / 秒关页）后不再继续装配，各主要 await 后同样早退 */
     if (this.tearDownComplete) return;
+    this.loadingSurface.setViewport(this.renderer.app.canvas as HTMLCanvasElement,
+      () => ({ width: this.renderer.screenWidth, height: this.renderer.screenHeight }));
     this.emoteBubbleManager.setEntityAttachLayer(this.renderer.entityLayer);
     // 实体层就是 worldContainer 的直接子节点（同一坐标），屏幕左上角换成世界点 + 视野宽高 = 看得见的那块
     this.emoteBubbleManager.setViewRectProvider(() => {
@@ -2244,16 +2434,25 @@ export class Game {
      * 同一个闸里把本场景的粒子预热也跑完（原来挤在揭幕后第一帧）。两件都限时、永不悬挂。
      */
     this.renderer.app.renderer.prewarmPipelines(vfxPipelineSpecs());
-    this.sceneManager.setRevealGate(async () => {
-      await Promise.all([
-        awaitPipelinesForReveal(
-          this.renderer.app.renderer,
-          REVEAL_GATE_SHADER_TIMEOUT_MS,
-          (m) => { if (import.meta.env.DEV) console.warn(m); this.debugPanelUI?.log(m); },
-          () => this.tearDownComplete,
-        ),
-        this.vfxSystem.prepareForReveal(REVEAL_GATE_VFX_TIMEOUT_MS),
-      ]);
+    this.sceneManager.setRevealGate(async (_sceneId, context) => {
+      await this.sceneReadyPreparation;
+      this.assertLoadingActive(context);
+      this.player.sprite.syncPositionNow();
+      this.camera.update(0);
+      this.heldPropSystem.update(0);
+      await this.vfxSystem.prepareForReveal(REVEAL_GATE_VFX_TIMEOUT_MS, { signal: context?.signal, strict: true });
+      this.assertLoadingActive(context);
+      this.syncScenePresentation();
+      this.charLitFrameSync?.();
+      // New entities have no rendered transform history. Prepare their current bounds before
+      // discovering required pipelines; ordinary ticks keep their established culling semantics.
+      this.updateFrustumCulling(false);
+      await this.renderer.app.renderer.prepareForReveal({
+        container: this.renderer.app.stage,
+        timeoutMs: REVEAL_GATE_SHADER_TIMEOUT_MS,
+        signal: context?.signal,
+      });
+      this.assertLoadingActive(context);
       // Static sampling geometry belongs to loading, never to the first visible bolt.
       const space = this.vfxSystem.currentSpace;
       const shell = this.sceneDepthSystem.depthShellField;
@@ -2273,6 +2472,10 @@ export class Game {
     await this.stringsProvider.load(this.assetManager);
 
     await this.loadGameConfig();
+    this.loadingSurface.configure(this.gameConfig.loading);
+    this.sceneManager.configureLoading(this.gameConfig.loading);
+    this.assetManager.configureLoading({ concurrency: this.gameConfig.loading?.resourceConcurrency,
+      timeoutMs: this.gameConfig.loading?.resourceTimeoutMs });
     if (this.tearDownComplete) return;
     if (this.gameConfig.windowSize) {
       this.renderer.setWindowSize(this.gameConfig.windowSize.width, this.gameConfig.windowSize.height);
@@ -2280,6 +2483,8 @@ export class Game {
     if (this.gameConfig.viewport) {
       this.renderer.setViewportSize(this.gameConfig.viewport.width, this.gameConfig.viewport.height);
     }
+    this.loadingSurface.setViewport(this.renderer.app.canvas as HTMLCanvasElement,
+      () => ({ width: this.renderer.screenWidth, height: this.renderer.screenHeight }));
     // 文本语义色板（缺省回落到内置档位）。必须排在任何 UI 建 Text 之前——
     // tagStyles 是建 Text 时快照进样式的，色板晚到的话先建出来的文字永远不上色。
     setTextPalette(this.gameConfig.textPalette);
@@ -2404,11 +2609,11 @@ export class Game {
     // **只有过场与切场加载**压住提示条出队（电影化静默；priority='system' 的过场跳过确认
     // 仍越过静默）。面板开着时提示必须**立即、最顶层**弹出——玩家在册子里点词条采集，
     // 回执推迟到关面板之后等于没回执（2026-08-18 制作人拍板，推翻早前「UIOverlay 也压」
-    // 的做法；toast 的 z 恒在面板之上，遮挡由车道位承担）。SceneTransition 沿袭旧「切场
+    // 的做法；toast 的 z 恒在面板之上，遮挡由车道位承担）。Loading 沿袭旧「切场
     // 假 Cutscene 锁」时代的行为：加载遮罩下入队、揭幕补冒，不弹在黑幕上。
     this.notificationUI.setSuppressed(() => {
       const s = this.stateController?.currentState;
-      return s === 'Cutscene' || s === 'SceneTransition';
+      return s === 'Cutscene' || s === 'Loading';
     });
     this.questPanelUI = new QuestPanelUI(
       this.renderer, this.questManager, this.stringsProvider, this.eventBus,
@@ -2621,11 +2826,12 @@ export class Game {
       // 只挂在 SaveManager 这条线上：F2 调试重载与其它 reloadScene 调用方语义不变。
       (sceneId) => {
         this.zoneSystem.clearActiveZonesForRestore();
-        return this.reloadScene(sceneId);
+        return this.reloadScene(sceneId, { restore: true });
       },
       this.stringsProvider,
       this.gameConfig.fallbackScene,
     );
+    this.saveManager.setRestoreWrapper((run) => this.runSaveRestore(run));
     // 存档现在落在文件里（见 storage/persistentStore.ts），读盘是异步的，而
     // `hasAnySave()` / `getSlotMeta()` 被紧接着构造的 MenuUI 在**同步渲染路径**里调用
     // ——标题页要靠它决定「继续」按不按得亮。所以必须在 MenuUI 之前把三个槽水化进内存镜像。
@@ -2644,13 +2850,14 @@ export class Game {
     this.saveManager.setCanSavePredicate(() => {
       const s = this.stateController.currentState;
       if (this.healthSystem.isDepleted() || this.systemNotePauseDepth > 0) return false;
+      if (!this.sceneManager.isSceneReady || this.sceneManager.isLoading) return false;
       if (s !== GameState.Exploring && s !== GameState.UIOverlay) return false;
       return this.narrativeStateManager.isIdle();
     });
     this.retrySystem.configure(this.gameConfig.health?.retry);
     this.retrySystem.connect({
       canCapture: () => this.stateController.currentState === GameState.Exploring
-        && !!this.sceneManager.currentSceneData && this.saveManager.canSaveNow(),
+        && this.sceneManager.isSceneReady && this.saveManager.canSaveNow(),
       capture: () => this.saveManager.capturePayload(),
       load: (raw) => this.saveManager.loadPayload(raw),
       isDepleted: () => this.healthSystem.isDepleted(),
@@ -2891,7 +3098,7 @@ export class Game {
       this.audioManager.clearAudioDucks();
       /**
        * 脱手演出：兜底再打断一次。
-       * 主路是状态旁听席上的 `SceneTransition`，但不是每条换场景都经过它
+       * 主路是状态旁听席上的 `Loading`，但不是每条换场景都经过它
        * （过场内部的换场景沿用 Cutscene 锁，位面切换也自己走）。这一刀是幂等的：
        * 已经收过的会话再来一次是安静 no-op。
        */
@@ -3471,23 +3678,7 @@ export class Game {
       })();
     });
 
-    // 切场/加载 = 独立状态 SceneTransition（2026-08-18 制作人拍板：加载中绝不能是
-    // Exploring——移动/交互/嗅探等探索输入在遮罩下全活着，乱按有实害）。
-    // 只从 Exploring 进：过场/对话驱动的跨场景切换由各自状态锁住，这里不抢；
-    // 揭幕即还权（onEnter 开场演出从 Exploring 正常起跳）；switch job 的必达收尾事件
-    // 兜双失败路径——绝不把 SceneTransition 留成永久状态（输入锁死是审批红线）。
-    this.listenEvent('scene:transition', () => {
-      if (this.stateController.currentState === GameState.Exploring) {
-        this.stateController.setState(GameState.SceneTransition);
-      }
-    });
-    const endSceneTransition = (): void => {
-      if (this.stateController.currentState === GameState.SceneTransition) {
-        this.stateController.setState(GameState.Exploring);
-      }
-    };
-    this.listenEvent('scene:revealed', endSceneTransition);
-    this.listenEvent('scene:transitionEnd', endSceneTransition);
+    // Only the Loading lifecycle may release control; scene observers never write Exploring.
 
     // K7 线索采集动作批（与 archive:firstView 同一范式）：采集=内容事件，
     // collectActions 经统一执行器跑——解锁文书/推 flag/起对话都行，入册只是默认呈现之一。
@@ -4237,7 +4428,7 @@ export class Game {
     }
     this.saveManager.setFallbackScene(this.gameConfig.fallbackScene || this.gameConfig.initialScene);
 
-    await this.setupPlayer({ deferAvatar: this.isDevMode });
+    await this.setupPlayer();
     if (this.tearDownComplete) return;
     this.setupRuntimeDebugSnapshotPublishing();
     // 气味调试 hook（平时关；URL 加 ?smellDebug 开启）：console 里 __smell(scent,intensity,dir,flicker) /
@@ -4346,8 +4537,13 @@ export class Game {
       // 之后点「新游戏 / 继续」都会再整页重启一次，由那一次走正常引导（见 EventBridge）。
       this.eventBridge.markSessionStarted();
       this.hud.setHidden(true);
-      this.stateController.setState(GameState.MainMenu);
       this.menuUI.openMainMenu();
+      await this.renderer.app.renderer.prepareForReveal({
+        container: this.renderer.app.stage, timeoutMs: REVEAL_GATE_SHADER_TIMEOUT_MS,
+      });
+      await this.loadingSurface.reveal('boot');
+      this.stateController.finishLoading('boot', GameState.MainMenu);
+      this.loadingSurface.finish('boot');
     } else if (await this.tryBootFromSaveSlot(options.loadSlot)) {
       /* 存档已读进来（场景也由 SaveManager 装好），不再走任何开局引导 */
     } else if (import.meta.env.DEV && this.isDevMode) {
@@ -4646,7 +4842,7 @@ export class Game {
       return { ready: false, reason: '游戏渲染尚未就绪' };
     }
     if (!this.runtimeReady) return { ready: false, reason: '游戏启动及场景初始化尚未完成' };
-    if (this.stateController.currentState === GameState.SceneTransition || !this.sceneManager.captureSceneReady) {
+    if (this.stateController.currentState === GameState.Loading || !this.sceneManager.captureSceneReady) {
       return { ready: false, reason: '场景正在加载或切换，完成后才能抓帧' };
     }
     return { ready: true, reason: '' };
@@ -5100,7 +5296,6 @@ export class Game {
       console.warn(`Game: 存档槽 ${slot} 读取失败，按正常开局启动`);
       return false;
     }
-    this.stateController.setState(GameState.Exploring);
     return true;
   }
 
@@ -5202,7 +5397,7 @@ export class Game {
         // 法线图集与图集同批预载：挂滤镜时只做同步缓存读，取不到即走平面法线兜底
         const normalPath = normalAtlasUrlFor(sheetPath);
         if (normalPath) {
-          refs.push({ type: 'texture', path: normalPath, label: `${labelPrefix}法线图集` });
+          refs.push({ type: 'texture', path: normalPath, label: `${labelPrefix}法线图集`, optional: true });
         }
       }
     } catch {
@@ -5398,13 +5593,15 @@ export class Game {
     });
 
     this.stateController.setStateChangeObserver((next, previous) => {
+      this.touchMobileControls?.syncState();
+      this.renderer.app.playerLoopPaused = next === GameState.Loading;
       // 控制权从玩家手上收走的那一刻，腿也要收住：不然走路动画在非探索态里继续循环，
       // 人不动、脚步声（与跟脚声）照响（见 Player.settleLocomotion）。
       if (previous === GameState.Exploring && next !== GameState.Exploring) this.player.settleLocomotion();
       // 全屏接管 / 换世界 / 没命了：背景里的演出必须当场收摊（结算补齐、归位做满）
       if (next === GameState.Cutscene) this.performanceSessions.interruptAll('cutscene');
       else if (next === GameState.Minigame) this.performanceSessions.interruptAll('minigame');
-      else if (next === GameState.SceneTransition) this.performanceSessions.interruptAll('scene');
+      else if (next === GameState.Loading) this.performanceSessions.interruptAll('scene');
       else if (next === GameState.Dead) this.performanceSessions.interruptAll('death');
       else if (next === GameState.MainMenu) this.performanceSessions.interruptAll('teardown');
     });
@@ -6116,6 +6313,9 @@ export class Game {
   private socketFlameViews = new Map<string, Sprite>();
   /** 帧动画火苗图集切出来的帧包装：`图集|列|帧数` → Texture[]（源归 AssetManager，包装归这里） */
   private flameFrameCache = new Map<string, Texture[]>();
+  private socketViewRequests = new Map<string, AbortController>();
+  private socketViewScopes = new Map<string, string>();
+  private socketViewSerial = 0;
 
   /**
    * 用火种点火的结果 → 玩家看得见的反馈（A3.7「火种」）：开始点不出字（火边的符号在装）；点着了放点火声；
@@ -6184,29 +6384,35 @@ export class Game {
       console.warn(`attachToSocket: 找不到实体 "${targetId}"`);
       return;
     }
+    const key = `${targetId}::${socket}`;
+    this.socketViewRequests.get(key)?.abort();
+    const request = new AbortController();
+    this.socketViewRequests.set(key, request);
+    const scopeId = `socket:${key}:${++this.socketViewSerial}`;
+    const refs = [...resolved.images, ...(resolved.flame ? [resolved.flame.image] : [])]
+      .map(path => ({ type: 'texture' as const, path }));
+    this.assetManager.pinScope(scopeId, refs);
+    let committed = false;
+    try {
     const textures: Texture[] = [];
     // 可燃挂件（A3.8）：贴图取模板、挂点对准模板握点、大小 = 模板真实宽 × 预设 scale（挂件是等比的，按宽算）
     let burnTemplate: ResolvedBurnable | null = null;
     if (resolved.burnable) {
       burnTemplate = await this.burnSystem.loadTemplate(resolved.burnable.template);
+      request.signal.throwIfAborted();
       if (!burnTemplate) {
-        console.warn(`attachToSocket: 可燃挂件的模板「${resolved.burnable.template}」装不到，挂不上`);
-        return;
+        throw new Error(`挂件模板加载失败: ${resolved.burnable.template}`);
       }
+      this.assetManager.extendScope(scopeId, [{ type: 'texture', path: burnTemplate.image }]);
     }
     for (const url of burnTemplate ? [burnTemplate.image] : resolved.images) {
-      try {
-        textures.push(await this.assetManager.loadTexture(url));
-      } catch (e) {
-        console.warn(`attachToSocket: 贴图加载失败 ${url}`, e);
-      }
+      textures.push(await this.assetManager.loadTexture(url, { signal: request.signal }));
     }
     if (textures.length === 0) return;
-    const flameFrames = resolved.flame ? await this.loadFlameFrames(resolved.flame) : null;
+    const flameFrames = resolved.flame ? await this.loadFlameFrames(resolved.flame, request.signal) : null;
+    request.signal.throwIfAborted();
     // 加载是异步的：期间可能已切场景/卸实体，落地前再确认一次目标还在
-    if (this.spriteEntityOf(targetId) !== sprite) return;
-
-    const key = `${targetId}::${socket}`;
+    if (this.tearDownComplete || this.spriteEntityOf(targetId) !== sprite) return;
     this.destroySocketView(key);
     const view = new Sprite(textures[0]);
     // 支点缺省图心，由 anchorX/anchorY 覆盖（刀剑给刀柄）——每帧由 syncAttachments 施加
@@ -6235,6 +6441,12 @@ export class Game {
       firePoint: resolved.firePoint ?? undefined,
       flame,
     });
+    this.socketViewScopes.set(key, scopeId);
+    committed = true;
+    } finally {
+      if (!committed) this.assetManager.releaseScope(scopeId);
+      if (this.socketViewRequests.get(key) === request) this.socketViewRequests.delete(key);
+    }
   }
 
   /**
@@ -6242,17 +6454,19 @@ export class Game {
    * 切状态会整个重挂视图，不缓存就是每切一次状态造一批 Texture 包装。
    * 纹理源归 AssetManager；这里只持有切出来的包装，Game 销毁时一并收。失败只 warn、这件挂件没有火苗。
    */
-  private async loadFlameFrames(flame: PropFlameDef): Promise<Texture[] | null> {
+  private async loadFlameFrames(flame: PropFlameDef, signal?: AbortSignal): Promise<Texture[] | null> {
+    signal?.throwIfAborted();
     const cacheKey = `${flame.image}|${flame.cols}|${flame.frames}`;
     const hit = this.flameFrameCache.get(cacheKey);
     if (hit) return hit;
     let tex: Texture;
     try {
-      tex = await this.assetManager.loadTexture(flame.image);
+      tex = await this.assetManager.loadTexture(flame.image, { signal });
     } catch (e) {
-      console.warn(`attachToSocket: 火苗图集加载失败 ${flame.image}`, e);
-      return null;
+      throw new Error(`挂件火苗图集加载失败: ${flame.image}: ${String(e)}`);
     }
+    signal?.throwIfAborted();
+    if (this.tearDownComplete) throw new DOMException('Game destroyed', 'AbortError');
     const cols = Math.max(1, flame.cols);
     const rows = Math.max(1, Math.ceil(flame.frames / cols));
     const fw = Math.floor(tex.width / cols);
@@ -6271,6 +6485,7 @@ export class Game {
       }));
     }
     this.flameFrameCache.set(cacheKey, frames);
+    this.assetManager.extendScope('game:flame-frames', [{ type: 'texture', path: flame.image }]);
     return frames;
   }
 
@@ -6286,6 +6501,7 @@ export class Game {
 
   /** 只拆视图（挂件系统的回调走这条，不要回头再调 `detach`，那是死循环）。 */
   private detachSocketView(targetId: string, socket: string): void {
+    this.socketViewRequests.get(`${targetId}::${socket}`)?.abort();
     this.spriteEntityOf(targetId)?.detachFromSocket(socket);
     this.destroySocketView(`${targetId}::${socket}`);
   }
@@ -6298,18 +6514,26 @@ export class Game {
       flame.destroy({ children: true });
     }
     const old = this.socketAttachViews.get(key);
-    if (!old) return;
-    this.socketAttachViews.delete(key);
-    old.destroy({ children: true });
+    if (old) {
+      this.socketAttachViews.delete(key);
+      old.destroy({ children: true });
+    }
+    const scope = this.socketViewScopes.get(key);
+    if (scope) this.assetManager.releaseScope(scope);
+    this.socketViewScopes.delete(key);
   }
 
   /** 切场景/销毁：挂件的显示对象归 Game 所有，必须自己收（SpriteEntity 只摘不毁）。 */
   private destroyAllSocketViews(): void {
+    for (const request of this.socketViewRequests.values()) request.abort();
+    this.socketViewRequests.clear();
     for (const key of [...this.socketAttachViews.keys()]) this.destroySocketView(key);
   }
 
   /** 切场景：只收场景实体（NPC）身上的挂件；玩家跨场景存活，它的挂件留着。 */
   private destroySceneSocketViews(): void {
+    for (const request of this.socketViewRequests.values()) request.abort();
+    this.socketViewRequests.clear();
     for (const key of [...this.socketAttachViews.keys()]) {
       if (key.startsWith('player::')) continue;
       this.destroySocketView(key);
@@ -6324,14 +6548,28 @@ export class Game {
   ): Promise<void> {
     const path = manifestPath.trim();
     if (!path) return;
-    const loaded = await this.loadPlayerAvatarResources(path);
-    if (!loaded) {
-      console.warn('applyPlayerAvatar: 无法加载', path);
-      return;
+    const request = ++this.playerAvatarRequest;
+    const generation = this.actionExecutor.getGeneration();
+    const scope = `player:avatar:${request}`;
+    let committed = false;
+    try {
+      const refs = await this.buildAnimationManifestRefs(path, '玩家动画');
+      this.assertLoadingActive();
+      if (request !== this.playerAvatarRequest || generation !== this.actionExecutor.getGeneration()) return;
+      await this.assetManager.preloadManifest({ scopeId: scope, refs }, { mode: 'stage', tolerateErrors: false });
+      const loaded = await this.loadPlayerAvatarResources(path);
+      this.assertLoadingActive();
+      if (request !== this.playerAvatarRequest || generation !== this.actionExecutor.getGeneration()) return;
+      if (!loaded) throw new Error(`玩家资源加载失败: ${path}`);
+      const sm = stateMap && Object.keys(stateMap).length > 0 ? stateMap : undefined;
+      this.mountPlayerAvatar(loaded.texture, loaded.animDef, sm, path, true, portraitSlug, loaded.sockets);
+      const previousScope = this.playerAvatarScope;
+      this.playerAvatarScope = scope;
+      committed = true;
+      this.assetManager.releaseScope(previousScope);
+    } finally {
+      if (!committed) this.assetManager.releaseScope(scope);
     }
-    const sm =
-      stateMap && Object.keys(stateMap).length > 0 ? stateMap : undefined;
-    this.mountPlayerAvatar(loaded.texture, loaded.animDef, sm, path, true, portraitSlug, loaded.sockets);
   }
 
   /** 按 game_config.playerAvatar 恢复（与开局 setupPlayer 数据源一致）。 */
@@ -6342,42 +6580,25 @@ export class Game {
     await this.applyPlayerAvatarFromAction(path, avatar?.stateMap ?? null, avatar?.portraitSlug ?? null);
   }
 
-  private async setupPlayer(options: { deferAvatar?: boolean } = {}): Promise<void> {
+  private async setupPlayer(): Promise<void> {
     const avatar = this.gameConfig.playerAvatar;
     const defaultManifest = '/resources/runtime/animation/player_anim/anim.json';
     const playerAnimPath = (avatar?.animManifest?.trim() || defaultManifest);
 
-    if (options.deferAvatar) {
-      const { texture, animDef } = this.placeholderPlayerAvatar();
-      this.mountPlayerAvatar(texture, animDef, undefined, playerAnimPath, false, avatar?.portraitSlug);
-      void (async () => {
-        await this.assetManager.preloadManifest({
-          scopeId: 'startup:player',
-          refs: await this.buildAnimationManifestRefs(playerAnimPath, '玩家动画'),
-        }, { mode: 'runtime', tolerateErrors: true });
-        const loaded = await this.loadPlayerAvatarResources(playerAnimPath);
-        if (!loaded || this.tearDownComplete || !this.renderer.isInitialized()) return;
-        this.mountPlayerAvatar(
-          loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true,
-          avatar?.portraitSlug, loaded.sockets,
-        );
-      })();
-    } else {
       await this.assetManager.preloadManifest({
         scopeId: 'startup:player',
         refs: await this.buildAnimationManifestRefs(playerAnimPath, '玩家动画'),
-      }, { mode: 'stage', tolerateErrors: true });
+      }, { mode: 'stage', tolerateErrors: false });
       const loaded = await this.loadPlayerAvatarResources(playerAnimPath);
+      this.assertLoadingActive();
       if (loaded) {
         this.mountPlayerAvatar(
           loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true,
           avatar?.portraitSlug, loaded.sockets,
         );
       } else {
-        const { texture, animDef } = this.placeholderPlayerAvatar();
-        this.mountPlayerAvatar(texture, animDef, undefined, playerAnimPath, false, avatar?.portraitSlug);
+        throw new Error(`玩家资源加载失败: ${playerAnimPath}`);
       }
-    }
     this.renderer.entityLayer.addChild(this.player.sprite.container);
 
     const playerPosGetter = () => ({ x: this.player.x, y: this.player.y });
@@ -6572,7 +6793,8 @@ export class Game {
       },
     });
 
-    this.sceneManager.setDepthLoader(async (sceneId, sceneData, worldToPixelX, worldToPixelY) => {
+    this.sceneManager.setDepthLoader(async (sceneId, sceneData, worldToPixelX, worldToPixelY, context) => {
+      this.assertLoadingActive(context);
       if (sceneData.depthConfig) {
         const dc = sceneData.depthConfig;
         const mapPath = `resources/runtime/scenes/${sceneId}/${dc.depth_map}`;
@@ -6580,7 +6802,9 @@ export class Game {
           sceneId, dc, this.assetManager,
           sceneData.worldWidth, sceneData.worldHeight,
           worldToPixelX, worldToPixelY,
+          { signal: context?.signal, strict: true, timeoutMs: this.gameConfig.loading?.resourceTimeoutMs },
         );
+        this.assertLoadingActive(context);
         const en = this.sceneDepthSystem.isEnabled;
         const dt = this.sceneDepthSystem.currentDepthTexture;
         this.logDepthDiag(
@@ -6607,14 +6831,19 @@ export class Game {
       await this.characterLighting.load(
         sceneId, sceneData.worldWidth, sceneData.worldHeight, primaryBg,
         this.geometryFallbackBackground(sceneData, primaryBg),
+        undefined, { signal: context?.signal, strict: true, timeoutMs: this.gameConfig.loading?.resourceTimeoutMs },
       );
+      this.assertLoadingActive(context);
       this.refreshPlayerWorldCollision();
     });
 
     // 统一光影（lighting-rebuild）。装载在 depthLoader **之后**——它要用深度纹理。
     // 场景没配 lighting 块、或没烘几何场载荷时安静地不启用，背景照旧走 Sprite。
-    this.sceneManager.setLightingLoader(async (sceneId, sceneData, primary) => {
-      const ok = await this.sceneLighting.load(sceneId, sceneData, this.assetManager, primary);
+    this.sceneManager.setLightingLoader(async (sceneId, sceneData, primary, context) => {
+      this.assertLoadingActive(context);
+      const ok = await this.sceneLighting.load(sceneId, sceneData, this.assetManager, primary,
+        { signal: context?.signal, strict: true, timeoutMs: this.gameConfig.loading?.resourceTimeoutMs });
+      this.assertLoadingActive(context);
       if (!ok) return null;
       // ⚠ 顺序即正确性：先渲一次缓存（顺带建出 GI 反弹 RT），再接角色。
       //   反过来的话角色拿到的 `giBounceTexture` 是 null（RT 是懒建的），
@@ -6636,10 +6865,12 @@ export class Game {
       this.swayReadySceneId = null;                 // 装完（scene:ready）之前不收草木推送
       this.swaySync?.resetSeen();
       try {
-        await this.buildSway(sceneId, sceneData, primary, undefined, 'lit');
+        await this.buildSway(sceneId, sceneData, primary, undefined, 'lit', context);
       } catch (e) {
+        this.assertLoadingActive(context);
         console.warn('[sway] 打光场景的草木装载失败，草木不动', e);
       }
+      this.assertLoadingActive(context);
       if (!this.swayBackground) this.reportForegroundWithoutSway(sceneId, sceneData);
       return this.sceneLighting.backgroundMesh;
     });
@@ -6661,17 +6892,20 @@ export class Game {
 
     // 背景草木摆动（场景风 + 摆动图）：背景没点亮时由这里换成摆动 mesh；缺风 / 缺图就不摆。
     // 风在这里就按新场景重设——装载期间摆动 mesh 已经在画，别让它吃上一个场景的风。
-    this.sceneManager.setSwayLoader(async (sceneId, sceneData, primary) => {
+    this.sceneManager.setSwayLoader(async (sceneId, sceneData, primary, context) => {
+      this.assertLoadingActive(context);
       this.swayReadySceneId = null;                 // 装完（scene:ready）之前不收草木推送
       this.sceneWind.reset(sceneData.wind);
       this.swayPrimary = primary;
       this.swaySync?.resetSeen();
-      const root = await this.buildSway(sceneId, sceneData, primary);
+      const root = await this.buildSway(sceneId, sceneData, primary, undefined, 'composite', context);
+      this.assertLoadingActive(context);
       if (!root) this.reportForegroundWithoutSway(sceneId, sceneData);
       return root;
     });
     // 与光影同一拍：先于背景容器与纹理拆（绑着原画 / 深度 / 摆动图三张按场景走的纹理）
     this.sceneManager.setSwayUnloader(() => {
+      ++this.swayLoadGeneration;
       // 前景层先拆（绑着位移图与 id / matte，覆盖图绑在遮挡滤镜上）
       this.teardownForegroundLayers();
       // ⚠ 先解绑再销毁：打光的背景读着位移图（BindGroup 见死即自毁，pixi-v8-traps）
@@ -6889,7 +7123,10 @@ export class Game {
   private async buildSway(
     sceneId: string, sceneData: SceneData, primary: Texture, cacheBust?: string,
     mode: 'composite' | 'lit' = 'composite',
+    context?: LoadingRequestContext,
   ): Promise<Container | null> {
+    const generation = ++this.swayLoadGeneration;
+    this.assertLoadingActive(context);
     const dc = sceneData.depthConfig;
     if (!this.sceneWind.params || !dc) return null;
     const bg = sceneData.backgrounds?.[0]?.image ?? 'background.png';
@@ -6900,11 +7137,18 @@ export class Game {
     // ⚠ 导出之后不带戳的话，走出场景再进来 JSON 桶按旧 URL 还回导出之前的 sway.json、配上新读的 id 图（#28）
     const bust = cacheBust
       ?? (preview ? String(preview.rev) : (import.meta.env.DEV ? this.swaySync?.bustFor(sceneId) : undefined));
-    const inp = await loadBackgroundSwayInput(this.assetManager, sceneData, {
+    const loadOptions = { signal: context?.signal, timeoutMs: this.gameConfig.loading?.resourceTimeoutMs };
+    const inp = await loadBackgroundSwayInput({
+      loadOptionalJson: <T>(path: string) => this.assetManager.loadOptionalJson<T>(path, loadOptions),
+      loadTexture: (path: string) => this.assetManager.loadTexture(path, loadOptions),
+      getTexture: (path: string) => this.assetManager.getTexture(path),
+    }, sceneData, {
       bakeDir: preview ? swayPreviewDirUrl(sceneId, bakeKeyFromBackground(bg)) : sceneBakeDirUrl(sceneId, bg),
       depth: sceneRuntimeAssetUrl(sceneId, dc.depth_map),
       cacheBust: bust,
     }, (m) => { if (import.meta.env.DEV) console.warn(`[sway] ${sceneId}: ${m}`); this.debugPanelUI?.log(`[sway] ${m}`); });
+    this.assertLoadingActive(context);
+    if (generation !== this.swayLoadGeneration) return null;
     if (!inp) return null;
     if (mode === 'lit' && !inp.litPlate) {
       const msg = '打光场景缺补图（sway_plate_normal / albedo / depth），草木不接——重跑 sway_field';
@@ -7431,7 +7675,7 @@ export class Game {
    * 关闭时一次性清 culled 复原。必须在 depth 驱动块**之前**调用:同帧内屏外实体既跳渲染、
    * 也跳着色驱动,而重回画面当帧已被 uncull → 当帧即驱动,零残帧。
    */
-  private updateFrustumCulling(): void {
+  private updateFrustumCulling(skipUpdateTransform = true): void {
     const layer = this.renderer.entityLayer;
     if (!this.frustumCullingEnabled) {
       if (this.frustumCullingWasActive) {
@@ -7451,7 +7695,7 @@ export class Game {
     const m = Game.FRUSTUM_CULL_MARGIN;
     const screen = this.renderer.app.screen;
     const view = screen.clone().pad(screen.width * m, screen.height * m);
-    Culler.shared.cull(layer, view);
+    Culler.shared.cull(layer, view, skipUpdateTransform);
   }
 
   private driveBakedShading(
@@ -8187,6 +8431,7 @@ export class Game {
     // 读档 = 换时间线：在途的点火表演作废（状态由读档流程恢复，不在这里还）
     this.listenEvent('save:restoring', () => { this.ignitePerformer.abort(false); });
     this.listenEvent('scene:beforeUnload', () => {
+      this.destroySceneSocketViews();
       this.burnSceneReadyId = null;
       this.ignitePerformer.abort();
       this.patrolGeneration++;
@@ -8216,17 +8461,19 @@ export class Game {
       this.playerActionSystem.onSceneChanged();
       // 旧场景的 NPC 连同它们身上的挂件一起没了：挂件显示对象归 Game 所有，自己收。
       // 玩家身上的挂件例外——玩家跨场景存活，重挂由内容侧决定。
-      this.destroySceneSocketViews();
       /**
        * 手持挂件重派生：演出挂件散掉，手持物（persistent 预设）按玩法事实重挂 ——
        * 实体是新建出来的，视图、灯、效果都要重贴。同时换上本场景配了 `follow` 的作者灯。
        * 与位面对账器同一个形状：每个边界重派生一次，系统自己零表现态持久化。
        */
-      this.heldPropSystem.onSceneChanged(
-        (this.sceneManager.currentSceneData?.lighting?.lights ?? []).filter((l) => l.follow),
-      );
-      // 动词提示要同步答"这张图有没有 kick 入口"，先把本场景的图拉进缓存
-      this.preloadSceneDialogueGraphs();
+      this.sceneReadyPreparation = Promise.all([
+        this.heldPropSystem.onSceneChanged(
+          (this.sceneManager.currentSceneData?.lighting?.lights ?? []).filter((l) => l.follow),
+        ),
+        this.preloadSceneDialogueGraphs(),
+      ]).then(() => {});
+      // A listener cannot return an awaited Promise; the reveal gate owns this preparation.
+      void this.sceneReadyPreparation.catch(() => {});
       // 透视缩放注入须在光照滤镜/阴影创建之前：probe 采样高度按**有效**尺寸烘焙
       this.perspectiveScaleResolver = createPerspectiveScaleResolver(
         this.sceneManager.currentSceneData?.perspectiveScale,
@@ -8962,6 +9209,9 @@ export class Game {
   }
 
   private collectSaveData(): Record<string, object> {
+    if (this.stateController.currentState === GameState.Loading && this.lastSafeSaveData) {
+      return JSON.parse(JSON.stringify(this.lastSafeSaveData)) as Record<string, object>;
+    }
     const data: Record<string, object> = {
       flagStore: this.flagStore.serialize(),
     };
@@ -9577,46 +9827,30 @@ export class Game {
    * 揭幕放在 `finally`：重载失败也必须揭，否则玩家卡在纯黑屏里，比看到硬切糟得多。
    */
   private async reloadSceneForPhase(sceneId: string, transition: TimeTransition): Promise<void> {
-    const covered = transitionIsCovered(transition);
-    const ms = Game.PHASE_SWAP_FADE_MS;
     this.phaseSwapInFlight = true;
     try {
-      if (covered && !this.sceneManager.viewObscured) {
-        await this.sceneManager.showBlackout(ms);
-      }
       try {
-        await this.reloadScene(sceneId);
+        await this.reloadScene(sceneId, { preservePosition: true });
       } catch (e) {
         // 失败必须响，且不能把待落位留给下一次真正的读档（会把人送回旧坐标）。
         this.pendingRestorePlayerPosition = null;
         console.error('[Game] 时段换装失败', e);
-      } finally {
-        if (covered) await this.sceneManager.hideBlackout(ms);
       }
     } finally {
       this.phaseSwapInFlight = false;
     }
   }
 
-  private async reloadScene(sceneId: string): Promise<void> {
-    this.sceneManager.unloadScene();
+  private async reloadScene(sceneId: string, options: { restore?: boolean; preservePosition?: boolean } = {}): Promise<void> {
     /** 读档落位：存档里的玩家坐标覆盖出生点。走 loadScene 的位置覆盖参数（与 changeScene 的
      *  cameraX/cameraY 同一条），落点在 onEnter **之前**，开场演出看到的就已经是存档站位。
      *  非读档路径（F2 重载、dev 跳场景）待落位恒为 null，语义不变。 */
     const restorePos = this.pendingRestorePlayerPosition;
     this.pendingRestorePlayerPosition = null;
-    await this.sceneManager.loadScene(sceneId, undefined, restorePos ?? undefined);
-    /** η2a 交接：读档后 onEnter 可能已自动开演（对话/过场/遭遇/小游戏）——
-     *  仅在没有进行中的子状态时才盖写回 Exploring，避免顶掉刚开播的演出。 */
-    const s = this.stateController.currentState;
-    if (
-      s !== GameState.Dialogue &&
-      s !== GameState.Cutscene &&
-      s !== GameState.Encounter &&
-      s !== GameState.Minigame
-    ) {
-      this.stateController.setState(GameState.Exploring);
-    }
+    await this.sceneManager.reloadScene(sceneId, undefined,
+      restorePos ?? (options.preservePosition ? { x: this.player.x, y: this.player.y } : undefined),
+      { suppressOnEnter: options.restore === true || options.preservePosition === true,
+        ...(options.restore ? { scopeId: this.restoreScopeId } : {}) });
   }
 
   private playerNavTarget: { x: number; y: number } | null = null;
@@ -9673,7 +9907,7 @@ export class Game {
    * 把本场景实体引用到的对话图拉进 JSON 缓存，供 graphHasEntry 同步作答。
    * 容错：单张图加载失败只是它不出动词提示，不影响场景。
    */
-  private preloadSceneDialogueGraphs(): void {
+  private async preloadSceneDialogueGraphs(): Promise<void> {
     const ids = new Set<string>();
     for (const npc of this.sceneManager.getCurrentNpcs()) {
       const gid = (npc.def.dialogueGraphId || '').trim();
@@ -9685,11 +9919,7 @@ export class Game {
       const gid = typeof d.graphId === 'string' ? d.graphId.trim() : '';
       if (gid) ids.add(gid);
     }
-    for (const gid of ids) {
-      void this.assetManager
-        .loadJson(dialogueGraphJsonUrl(gid))
-        .catch(() => { /* 该图不出动词提示即可，不打断场景 */ });
-    }
+    await Promise.all([...ids].map((gid) => this.assetManager.loadJson(dialogueGraphJsonUrl(gid))));
   }
 
   private updatePlayerNav(): void {
@@ -9727,7 +9957,7 @@ export class Game {
   private getPlayerView(): Record<string, unknown> {
     const gs = String(this.stateController.currentState);
     const modeMap: Record<string, string> = {
-      MainMenu: 'menu', Exploring: 'exploring', ActionSequence: 'busy',
+      MainMenu: 'menu', Exploring: 'exploring', Loading: 'loading', ActionSequence: 'busy',
       Dialogue: 'dialogue', Encounter: 'encounter', Cutscene: 'cutscene',
       UIOverlay: 'menu', Minigame: 'minigame', Dead: 'dead',
     };
@@ -10500,6 +10730,15 @@ export class Game {
     this.vfxConfineOverlay = null;
 
     this.stateController.destroy();
+    this.saveManager?.destroy();
+    this.inputManager.setLoadingKeyHandler(null);
+    this.loadingSurface?.destroy();
+    this.loadingSurface = null;
+    this.loadingSources.clear();
+    this.lastSafeSaveData = null;
+    this.loadingEntryOwners.clear();
+    this.loadingExploreLockOwner = null;
+    this.loadingEntryResumeGeneration = null;
 
     this.touchMobileControls?.destroy();
     this.touchMobileControls = null;
@@ -10530,7 +10769,10 @@ export class Game {
     // 帧动画火苗帧包装：源归 AssetManager（不毁源），包装归这里
     for (const frames of this.flameFrameCache.values()) for (const t of frames) t.destroy(false);
     this.flameFrameCache.clear();
+    this.assetManager.releaseScope('game:flame-frames');
     this.actionExecutor.destroy();
+    this.player?.cancelMotion();
+    this.player?.sprite.destroy();
     this.flagStore.destroy();
     this.inputManager.destroy();
     this.renderer.destroy();
@@ -10687,11 +10929,158 @@ export class Game {
    * 从前这套判据在 tick 里散着写了两份（轨迹那一闸列了三个状态、说明卡与死亡另走早返回），
    * 加一个暂停源就得记得改两处——2026-09-19 收成这一处。
    */
+  /** Synchronizes presentation without advancing gameplay or the world clock. */
+  private syncScenePresentation(): void {
+    // 视锥剔除:先于下方 depth 驱动块——同帧内屏外实体既跳 GPU 渲染,也跳着色驱动。
+    this.updateFrustumCulling();
+
+    // 燃烧滤镜的相机 uniform：相机本帧已定稿（早于这里推，镜头一动烧痕就滑一帧）；限速上传燃烧场纹理
+    this.burnRenderer.update(this.captureClockNow(), {
+      x: this.renderer.worldContainer.x,
+      y: this.renderer.worldContainer.y,
+      scale: this.camera.getProjectionScale(),
+    });
+
+    this.syncEntityPixelDensityMatch();
+
+    if (this.sceneDepthSystem.isActive) {
+      const S = this.camera.getProjectionScale();
+      this.sceneDepthSystem.updatePerFrame(
+        this.renderer.worldContainer.x,
+        this.renderer.worldContainer.y,
+        S,
+      );
+      // depth_floor 直读场景 zones、不经 ZoneSystem——位面归属在此消费点单独过滤
+      //（standard zone 的位面过滤在 shouldRegisterZoneWithZoneSystem）。
+      // exclusive（独立世界型）激活时缺省 zone 也不存在，须无条件走过滤。
+      const zonesRaw = this.sceneManager.currentSceneData?.zones;
+      const zonesInPlane = zonesRaw?.some((z) => z.planes?.length)
+          || this.planeReconciler.getActivePlaneMembership() === 'exclusive'
+        ? zonesRaw?.filter((z) => this.sceneManager.isEntityInActivePlane(z))
+        : zonesRaw;
+      const zones = zonesInPlane?.filter(
+        (z) => this.sceneManager.isCurrentSceneGroupEnabled(z.group),
+      );
+      /** F2 性能：深度 floor 偏移的条件上下文每帧建一次，玩家/NPC/热点三处循环共享；
+       *  统一走中央工厂（律5），plane/@scene/@owner 叶子与其它条件入口口径一致。 */
+      const floorCondCtx = this.buildConditionEvalContext();
+      const floorGroupConditions = (groupId: string) =>
+        this.sceneManager.getCurrentSceneGroupConditions(groupId);
+      if (this.playerDepthFilter) {
+        // 深度遮挡 / 逐像素着色的"脚点"一律取**接地点**（缺省锚点时 = 位置，见 NpcDef.anchor）
+        const pFootX = this.player.contactX;
+        const pFootY = this.player.contactY;
+        const ex = resolveDepthFloorOffsetBoost(
+          zones,
+          pFootX,
+          pFootY,
+          this.flagStore,
+          floorCondCtx,
+          floorGroupConditions,
+        );
+        this.sceneDepthSystem.updateEntityDepthOcclusion(
+          this.playerDepthFilter,
+          pFootX,
+          pFootY,
+          ex,
+        );
+        const ps = this.player.sprite;
+        const pSize = ps.getWorldSize();
+        const pInfo = ps.getShadingFrameInfo();
+        this.driveBakedShading(this.playerDepthFilter, pFootX, pFootY, {
+          worldW: pSize.width,
+          worldH: pSize.height,
+          flipX: (pInfo?.flipX ?? false) !== (ps.container.scale.x < 0),
+          nrmRect: pInfo?.rect ?? null,
+          sheetUrl: pInfo?.sheetUrl ?? null,      // 换图集(背尸/道士)时法线跟着换
+        });
+      }
+      const npcByContainer = new Map<unknown, Npc>();
+      for (const npc of this.sceneManager.getCurrentNpcs()) npcByContainer.set(npc.container, npc);
+      for (const child of this.renderer.entityLayer.children) {
+        if (child.culled) continue;   // 剔除:屏外实体跳过着色驱动(重回画面当帧已 uncull)
+        const c = child as unknown as {
+          filters?: readonly { _isDepthOcclusion?: boolean }[];
+          x: number;
+          y: number;
+        };
+        if (c.filters) {
+          const npc = npcByContainer.get(child);
+          // 脚点取**接地点**：锚点在圆心的物件（铜钱一族）按锚点采深度会差半个身高，
+          // 表现是"影子/遮挡对不上、而画面上物件位置是对的"。非 NPC 容器无锚点概念，
+          // 回落容器坐标（= 改造前的行为）。
+          const fx = npc ? npc.contactX : c.x;
+          const fy = npc ? npc.contactY : c.y;
+          for (const f of c.filters) {
+            if (f._isDepthOcclusion && f !== this.playerDepthFilter) {
+              const ex = resolveDepthFloorOffsetBoost(
+                zones, fx, fy, this.flagStore, floorCondCtx, floorGroupConditions,
+              );
+              this.sceneDepthSystem.updateEntityDepthOcclusion(
+                f as unknown as IEntityShadingFilter,
+                fx,
+                fy,
+                ex,
+              );
+              const size = npc?.getWorldSize();
+              const info = npc?.getShadingFrameInfo() ?? null;
+              this.driveBakedShading(f as unknown as IEntityShadingFilter, fx, fy, npc ? {
+                worldW: size!.width,
+                worldH: size!.height,
+                flipX: info?.flipX ?? false,
+                nrmRect: info?.rect ?? null,
+                sheetUrl: info?.sheetUrl ?? null,   // NPC 经 setEntityField 换动画时同上
+                // NPC 容器还挂着名字标签,包围盒比 sprite 高一截 → 必须换算
+                spriteRect: npc.normalUvSpriteRect() ?? undefined,
+              } : null);
+            }
+          }
+        }
+      }
+      for (const h of this.sceneManager.getCurrentHotspots()) {
+        if (h.container.culled) continue;   // 剔除:屏外热点跳过着色驱动
+        const hf = h.getDepthOcclusionFilter();
+        if (!hf) continue;
+        const footY = h.depthOcclusionFootWorldY();
+        const ex = resolveDepthFloorOffsetBoost(
+          zones, h.container.x, footY, this.flagStore, floorCondCtx, floorGroupConditions,
+        );
+        this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex);
+        // 烘焙场景:热点也走 CHAR_FS,逐帧喂脚点/尺寸/法线(单张静图 → 整帧 rect)。
+        // 展示图翻转经 sprite.scale.x(滤镜外),法线图集为未翻转原图 → flipX 传当前朝向。
+        const size = h.getWorldSize();
+        this.driveBakedShading(hf, h.container.x, footY, {
+          worldW: size.width,
+          worldH: size.height,
+          flipX: h.getFacing() < 0,
+          nrmRect: [0, 0, 1, 1],
+          sheetUrl: h.def.displayImage?.image ?? null,   // 热点换图同理
+        });
+      }
+    }
+
+    this.updateLightEnvFromCurve();
+    // 草木位移图：这一帧的网格渲进离屏 uv 图（不打光的合成面与打光的背景都读它）。
+    // 必须在主画面渲染之前、与光照缓存同一拍——放进场景树里渲染离屏目标会串台（pixi-v8-traps）。
+    if (this.swayBackground?.renderUv(this.renderer.app.renderer)) this.foregroundLayers?.markCoverageDirty();
+    // 前景网格跟着这株此刻的真实最大位移扩 / 缩（按档量化，不变档是一次比较）
+    this.foregroundLayers?.updateDisplacement();
+    // 前景层覆盖图（蒙版 + 前景面深度，遮挡在蒙版里拿它顶替深度图）：读这一帧的位移图，所以紧跟在它后面、主画面之前
+    this.foregroundLayers?.renderCoverage(this.renderer.app.renderer);
+    // 水面细波纹的钟（只在落雷的灯亮着、本来就重烘的那几帧起作用）
+    this.sceneLighting.setSurfaceTime(this.gameClock.now / 1000);
+    // 统一光影：脏才重算场景辐射缓存，稳态是一次布尔判断（零光照计算）。
+    this.sceneLighting.update(this.renderer.app.renderer);
+    this.updateEntityShadows();
+
+    this.renderer.sortEntityLayer(this.player.x, this.player.y);
+  }
+
   private isWorldPaused(): boolean {
     if (this.captureFreezeDepth > 0 && !this.captureFrameStepActive) return true;
     if (this.systemNotePauseDepth > 0) return true;
     const s = this.stateController.currentState;
-    return s === GameState.SceneTransition
+    return s === GameState.Loading
       || s === GameState.MainMenu
       || s === GameState.UIOverlay
       || s === GameState.Dead;
@@ -10706,6 +11095,12 @@ export class Game {
      * （位置重算跟着世界暂停停没关系：暂停时镜头也不动。）
      */
     this.guidanceLayerUI?.applyVisibility();
+    if (this.stateController.currentState === GameState.Loading) {
+      this.touchMobileControls?.syncState();
+      this.camera.update(0);
+      this.inputManager.endFrame();
+      return;
+    }
     // 说明卡阅读与死亡期间冻结世界时钟（火把、阵风、侵袭、主动防护），UI 仍可点击。
     if (this.systemNotePauseDepth > 0 || this.stateController.currentState === GameState.Dead) {
       this.inputManager.endFrame();
@@ -10940,149 +11335,7 @@ export class Game {
       }
     }
 
-    // 视锥剔除:先于下方 depth 驱动块——同帧内屏外实体既跳 GPU 渲染,也跳着色驱动。
-    this.updateFrustumCulling();
-
-    // 燃烧滤镜的相机 uniform：相机本帧已定稿（早于这里推，镜头一动烧痕就滑一帧）；限速上传燃烧场纹理
-    this.burnRenderer.update(this.captureClockNow(), {
-      x: this.renderer.worldContainer.x,
-      y: this.renderer.worldContainer.y,
-      scale: this.camera.getProjectionScale(),
-    });
-
-    this.syncEntityPixelDensityMatch();
-
-    if (this.sceneDepthSystem.isActive) {
-      const S = this.camera.getProjectionScale();
-      this.sceneDepthSystem.updatePerFrame(
-        this.renderer.worldContainer.x,
-        this.renderer.worldContainer.y,
-        S,
-      );
-      // depth_floor 直读场景 zones、不经 ZoneSystem——位面归属在此消费点单独过滤
-      //（standard zone 的位面过滤在 shouldRegisterZoneWithZoneSystem）。
-      // exclusive（独立世界型）激活时缺省 zone 也不存在，须无条件走过滤。
-      const zonesRaw = this.sceneManager.currentSceneData?.zones;
-      const zonesInPlane = zonesRaw?.some((z) => z.planes?.length)
-          || this.planeReconciler.getActivePlaneMembership() === 'exclusive'
-        ? zonesRaw?.filter((z) => this.sceneManager.isEntityInActivePlane(z))
-        : zonesRaw;
-      const zones = zonesInPlane?.filter(
-        (z) => this.sceneManager.isCurrentSceneGroupEnabled(z.group),
-      );
-      /** F2 性能：深度 floor 偏移的条件上下文每帧建一次，玩家/NPC/热点三处循环共享；
-       *  统一走中央工厂（律5），plane/@scene/@owner 叶子与其它条件入口口径一致。 */
-      const floorCondCtx = this.buildConditionEvalContext();
-      const floorGroupConditions = (groupId: string) =>
-        this.sceneManager.getCurrentSceneGroupConditions(groupId);
-      if (this.playerDepthFilter) {
-        // 深度遮挡 / 逐像素着色的"脚点"一律取**接地点**（缺省锚点时 = 位置，见 NpcDef.anchor）
-        const pFootX = this.player.contactX;
-        const pFootY = this.player.contactY;
-        const ex = resolveDepthFloorOffsetBoost(
-          zones,
-          pFootX,
-          pFootY,
-          this.flagStore,
-          floorCondCtx,
-          floorGroupConditions,
-        );
-        this.sceneDepthSystem.updateEntityDepthOcclusion(
-          this.playerDepthFilter,
-          pFootX,
-          pFootY,
-          ex,
-        );
-        const ps = this.player.sprite;
-        const pSize = ps.getWorldSize();
-        const pInfo = ps.getShadingFrameInfo();
-        this.driveBakedShading(this.playerDepthFilter, pFootX, pFootY, {
-          worldW: pSize.width,
-          worldH: pSize.height,
-          flipX: (pInfo?.flipX ?? false) !== (ps.container.scale.x < 0),
-          nrmRect: pInfo?.rect ?? null,
-          sheetUrl: pInfo?.sheetUrl ?? null,      // 换图集(背尸/道士)时法线跟着换
-        });
-      }
-      const npcByContainer = new Map<unknown, Npc>();
-      for (const npc of this.sceneManager.getCurrentNpcs()) npcByContainer.set(npc.container, npc);
-      for (const child of this.renderer.entityLayer.children) {
-        if (child.culled) continue;   // 剔除:屏外实体跳过着色驱动(重回画面当帧已 uncull)
-        const c = child as unknown as {
-          filters?: readonly { _isDepthOcclusion?: boolean }[];
-          x: number;
-          y: number;
-        };
-        if (c.filters) {
-          const npc = npcByContainer.get(child);
-          // 脚点取**接地点**：锚点在圆心的物件（铜钱一族）按锚点采深度会差半个身高，
-          // 表现是"影子/遮挡对不上、而画面上物件位置是对的"。非 NPC 容器无锚点概念，
-          // 回落容器坐标（= 改造前的行为）。
-          const fx = npc ? npc.contactX : c.x;
-          const fy = npc ? npc.contactY : c.y;
-          for (const f of c.filters) {
-            if (f._isDepthOcclusion && f !== this.playerDepthFilter) {
-              const ex = resolveDepthFloorOffsetBoost(
-                zones, fx, fy, this.flagStore, floorCondCtx, floorGroupConditions,
-              );
-              this.sceneDepthSystem.updateEntityDepthOcclusion(
-                f as unknown as IEntityShadingFilter,
-                fx,
-                fy,
-                ex,
-              );
-              const size = npc?.getWorldSize();
-              const info = npc?.getShadingFrameInfo() ?? null;
-              this.driveBakedShading(f as unknown as IEntityShadingFilter, fx, fy, npc ? {
-                worldW: size!.width,
-                worldH: size!.height,
-                flipX: info?.flipX ?? false,
-                nrmRect: info?.rect ?? null,
-                sheetUrl: info?.sheetUrl ?? null,   // NPC 经 setEntityField 换动画时同上
-                // NPC 容器还挂着名字标签,包围盒比 sprite 高一截 → 必须换算
-                spriteRect: npc.normalUvSpriteRect() ?? undefined,
-              } : null);
-            }
-          }
-        }
-      }
-      for (const h of this.sceneManager.getCurrentHotspots()) {
-        if (h.container.culled) continue;   // 剔除:屏外热点跳过着色驱动
-        const hf = h.getDepthOcclusionFilter();
-        if (!hf) continue;
-        const footY = h.depthOcclusionFootWorldY();
-        const ex = resolveDepthFloorOffsetBoost(
-          zones, h.container.x, footY, this.flagStore, floorCondCtx, floorGroupConditions,
-        );
-        this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex);
-        // 烘焙场景:热点也走 CHAR_FS,逐帧喂脚点/尺寸/法线(单张静图 → 整帧 rect)。
-        // 展示图翻转经 sprite.scale.x(滤镜外),法线图集为未翻转原图 → flipX 传当前朝向。
-        const size = h.getWorldSize();
-        this.driveBakedShading(hf, h.container.x, footY, {
-          worldW: size.width,
-          worldH: size.height,
-          flipX: h.getFacing() < 0,
-          nrmRect: [0, 0, 1, 1],
-          sheetUrl: h.def.displayImage?.image ?? null,   // 热点换图同理
-        });
-      }
-    }
-
-    this.updateLightEnvFromCurve();
-    // 草木位移图：这一帧的网格渲进离屏 uv 图（不打光的合成面与打光的背景都读它）。
-    // 必须在主画面渲染之前、与光照缓存同一拍——放进场景树里渲染离屏目标会串台（pixi-v8-traps）。
-    if (this.swayBackground?.renderUv(this.renderer.app.renderer)) this.foregroundLayers?.markCoverageDirty();
-    // 前景网格跟着这株此刻的真实最大位移扩 / 缩（按档量化，不变档是一次比较）
-    this.foregroundLayers?.updateDisplacement();
-    // 前景层覆盖图（蒙版 + 前景面深度，遮挡在蒙版里拿它顶替深度图）：读这一帧的位移图，所以紧跟在它后面、主画面之前
-    this.foregroundLayers?.renderCoverage(this.renderer.app.renderer);
-    // 水面细波纹的钟（只在落雷的灯亮着、本来就重烘的那几帧起作用）
-    this.sceneLighting.setSurfaceTime(this.gameClock.now / 1000);
-    // 统一光影：脏才重算场景辐射缓存，稳态是一次布尔判断（零光照计算）。
-    this.sceneLighting.update(this.renderer.app.renderer);
-    this.updateEntityShadows();
-
-    this.renderer.sortEntityLayer(this.player.x, this.player.y);
+    this.syncScenePresentation();
     this.touchMobileControls?.update();
     this.inputManager.endFrame();
   }

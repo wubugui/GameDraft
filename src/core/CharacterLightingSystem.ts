@@ -4,7 +4,7 @@ import type { IGameSystem, GameContext, SceneLightingDef } from '../data/types';
 import { sceneBakeDirUrl, sceneRuntimeAssetUrl } from './projectPaths';
 import { depthLog, depthError } from './depthLog';
 import {
-  fetchPayloadBlob, fetchPayloadBytes, probeAtlasFileForMode, probeModeOf,
+  fetchPayloadBlob, fetchPayloadBytes, fetchOptionalPayloadJson, probeAtlasFileForMode, probeModeOf, type PayloadLoadOptions,
 } from './lightingPayloadFiles';
 import { sampleGroundField, type GroundDepthField } from '../utils/groundDepthField';
 import type {
@@ -118,6 +118,7 @@ export interface CharShadingEntityInfo {
  */
 export class CharacterLightingSystem implements IGameSystem {
   private epoch = 0;
+  private loadController: AbortController | null = null;
   private _hasVolumes = false;
   private meta: LightingPayloadMeta | null = null;
   private groundD: Float32Array | null = null;
@@ -296,6 +297,8 @@ export class CharacterLightingSystem implements IGameSystem {
 
   destroy(): void {
     this.epoch++;
+    this.loadController?.abort(new DOMException('Character lighting retired', 'AbortError'));
+    this.loadController = null;
     this.meta = null;
     this.groundD = null;
     this.groundTex = null;
@@ -547,8 +550,8 @@ export class CharacterLightingSystem implements IGameSystem {
     const task = (async (): Promise<boolean> => {
       try {
         const [rad, emit] = await Promise.all([
-          fetchPayloadBytes(`${base}/vol_rad.bin`),
-          fetchPayloadBytes(`${base}/vol_emit.bin`),
+          fetchPayloadBytes(`${base}/vol_rad.bin`, { signal: this.loadController?.signal }),
+          fetchPayloadBytes(`${base}/vol_emit.bin`, { signal: this.loadController?.signal }),
         ]);
         // 旧时间线不写新状态:拉取期间切了场景/重载了载荷 → 整批丢弃
         if (myEpoch !== this.epoch) return false;
@@ -678,7 +681,7 @@ export class CharacterLightingSystem implements IGameSystem {
                                                  CharacterLightingSystem.binObOf(meta));
     const task = (async (): Promise<boolean> => {
       try {
-        const buf = await fetchPayloadBytes(`${base}/${cfg.file}`);
+        const buf = await fetchPayloadBytes(`${base}/${cfg.file}`, { signal: this.loadController?.signal });
         if (myEpoch !== this.epoch) return false;   // 旧时间线不写新状态
         this.swapProbeAtlas(m, buf, rows);
         depthLog(T, sceneId, `: probe 图集切至 mode ${m} (${(buf.byteLength / 1048576).toFixed(2)}MB)`);
@@ -699,28 +702,34 @@ export class CharacterLightingSystem implements IGameSystem {
    * 200+HTML,`r.ok` 骗人)/ 形状不对(v3 以前的旧版:v2 分账与本运行时列布局不兼容,需重导出)
    * 一律 null,由调用方去试下一个位置。
    */
-  private async fetchPayloadMeta(dir: string, sceneId: string): Promise<LightingPayloadMeta | null> {
+  private async fetchPayloadMeta(dir: string, sceneId: string, options: PayloadLoadOptions = {}): Promise<LightingPayloadMeta | null> {
     try {
-      const r = await fetch(`${dir}/lighting.json`);
-      if (!r.ok) return null;
-      const meta = await r.json() as LightingPayloadMeta;
+      const meta = await fetchOptionalPayloadJson<LightingPayloadMeta>(`${dir}/lighting.json`, options);
+      if (!meta) return null;
       if (typeof meta?.version !== 'number' || meta.version < 3
         || !meta.probes || !meta.world || !meta.cal || !meta.vol) {
         depthLog(T, sceneId, `: ${dir} 的载荷缺字段/旧版(需重导出 v3 固化), ignored`);
+        if (options.strict) throw new Error(`${dir}/lighting.json: invalid character lighting metadata`);
         return null;
       }
       return meta;
-    } catch {
+    } catch (error) {
+      if (options.signal?.aborted || options.strict) throw error;
+      depthError(T, sceneId, `: ${dir} 照明入口读取失败，回落无载荷`, error);
       return null;
     }
   }
 
   /** ground_d.png(RG16)→ CPU 深度场 + GPU 原图纹理(登记进 ownedTextures)。epoch 变了返回 null。 */
   private async decodeGroundPayload(
-    groundBuf: Blob, meta: LightingPayloadMeta, myEpoch: number,
+    groundBuf: Blob, meta: LightingPayloadMeta, myEpoch: number, options: PayloadLoadOptions = {},
   ): Promise<{ g: Float32Array; tex: BufferImageSource } | null> {
     const bmp = await createImageBitmap(groundBuf);
-    if (myEpoch !== this.epoch) { bmp.close(); return null; }
+    if (myEpoch !== this.epoch || options.signal?.aborted) {
+      bmp.close();
+      if (!options.signal && myEpoch !== this.epoch) return null;
+      throw options.signal?.reason ?? new DOMException('Character ground load superseded', 'AbortError');
+    }
     const bw = bmp.width, bh = bmp.height;
     if (bw !== meta.work.w || bh !== meta.work.h) {
       // 尺寸对不上就整张拒用：按 work 尺寸去读会越界成 NaN，脚点遮挡 / 碰撞反投影全错且不报错
@@ -729,10 +738,13 @@ export class CharacterLightingSystem implements IGameSystem {
       return null;
     }
     const cv = new OffscreenCanvas(bw, bh);
-    const ctx2 = cv.getContext('2d')!;
-    ctx2.drawImage(bmp, 0, 0);
-    const id = ctx2.getImageData(0, 0, bw, bh).data;
-    bmp.close();
+    const id = (() => {
+      try {
+        const ctx2 = cv.getContext('2d')!;
+        ctx2.drawImage(bmp, 0, 0);
+        return ctx2.getImageData(0, 0, bw, bh).data;
+      } finally { bmp.close(); }
+    })();
     // GPU 版:直接用原始 RG16 位图建纹理,shader 里按 min/max 解码(与 CPU 侧同一份数据)
     const tex = new BufferImageSource({
       resource: new Uint8Array(id.buffer.slice(0)), width: bw, height: bh,
@@ -760,12 +772,17 @@ export class CharacterLightingSystem implements IGameSystem {
    */
   private async loadGeometryOnly(
     sceneId: string, base: string, meta: LightingPayloadMeta, myEpoch: number,
+    options: PayloadLoadOptions = {},
   ): Promise<void> {
     try {
-      const groundBuf = await fetchPayloadBlob(`${base}/ground_d.png`);
-      if (myEpoch !== this.epoch) return;
-      const ground = await this.decodeGroundPayload(groundBuf, meta, myEpoch);
-      if (!ground) return;
+      const groundBuf = await fetchPayloadBlob(`${base}/ground_d.png`, options);
+      if (myEpoch !== this.epoch || options.signal?.aborted) throw options.signal?.reason ?? new DOMException('Character geometry superseded', 'AbortError');
+      const ground = await this.decodeGroundPayload(groundBuf, meta, myEpoch, options);
+      if (myEpoch !== this.epoch || options.signal?.aborted) throw options.signal?.reason ?? new DOMException('Character geometry superseded', 'AbortError');
+      if (!ground) {
+        if (options.strict) throw new Error(`${base}/ground_d.png: ground geometry invalid`);
+        return;
+      }
       this.meta = meta;
       this.groundD = ground.g;
       this.groundTex = ground.tex;
@@ -778,10 +795,16 @@ export class CharacterLightingSystem implements IGameSystem {
         + `(${base}),光照项不借:角色与粒子退色调融入。要真光照就给这张原画烘一份载荷`);
       this.onReady?.();
     } catch (e) {
+      if (myEpoch !== this.epoch || options.signal?.aborted) throw options.signal?.reason ?? new DOMException('Character geometry superseded', 'AbortError');
       depthError(T, `${sceneId}: 借主背景几何项失败`, e);
       if (myEpoch === this.epoch) {
         this.meta = null; this.groundD = null; this.geometryOnly = false; this.loadedSceneId = null;
+        this.groundTex = null;
+        this.parkLitShaders();
+        for (const texture of this.ownedTextures) texture.destroy();
+        this.ownedTextures = [];
       }
+      if (options.strict) throw e;
     }
   }
 
@@ -816,342 +839,371 @@ export class CharacterLightingSystem implements IGameSystem {
      * 不落盘）喂给游戏同一个装载器。游戏从不传它——不传时与原来逐位相同。
      */
     bakeDirOverride?: string,
+    options: PayloadLoadOptions = {},
   ): Promise<void> {
+    this.loadController?.abort(new DOMException('Character lighting superseded', 'AbortError'));
     const myEpoch = ++this.epoch;
-    this._hasVolumes = false;
-    this.volInflight = null;   // 旧场景的在途拉取作废(epoch 已变,回来也写不进)
-    this.loadedSceneId = null;
-    this.loadedBakeBase = null;
-    // 跨场景残留：pendingLights 会被下一个场景的 setShadowBasis 重放，
-    // 把**上一个场景的灯**打到新场景角色身上（审查抓到）。
-    this.pendingLights = null;
-    this.payloadStale = false;
-    this.geometryOnly = false;
-    this.meta = null; this.groundD = null; this.resources = null; this.probeViz = null;
-    this.probeAtlasU16 = null; this.validU8 = null;
-    this.parkLitShaders();      // 活 shader 先退白图,再销毁旧纹理(防 BindGroup 自毁)
-    for (const t of this.ownedTextures) t.destroy();
-    this.ownedTextures = [];
-    for (const t of this.volTextures) t.destroy();
-    this.volTextures = [];
-    this.disposeStaleVolumeTextures();
-    for (const t of this.probeTextures) t.destroy();
-    this.probeTextures = [];
-    this.disposeStaleProbeTextures();
-    this.loadedProbeMode = 0;
-    this.probeInflight = null;
-    this.sceneWorldW = worldW; this.sceneWorldH = worldH;
-    // 按背景图名索引；找不到就回落到旧的扁平布局（迁移期两条都认，缺省不影响运行）；
-    // 再找不到、且调用方给了几何借用图，就只借那份的几何项。
-    const perBg = bakeDirOverride ?? sceneBakeDirUrl(sceneId, backgroundImage);
-    const legacy = sceneRuntimeAssetUrl(sceneId, 'lighting');
-    const geoDir = !bakeDirOverride && geometryFallbackImage && geometryFallbackImage !== backgroundImage
-      ? sceneBakeDirUrl(sceneId, geometryFallbackImage) : null;
-    let base = perBg;
-    let found = await this.fetchPayloadMeta(perBg, sceneId);
-    if (!found && !bakeDirOverride) {
-      found = await this.fetchPayloadMeta(legacy, sceneId);
-      if (found) { base = legacy; depthLog(T, sceneId, `: 用旧的扁平烘焙布局(${legacy});迁移后可摘`); }
-    }
-    let borrowGeometry = false;
-    if (!found && geoDir) {
-      found = await this.fetchPayloadMeta(geoDir, sceneId);
-      if (found) { base = geoDir; borrowGeometry = true; }
-    }
-    if (myEpoch !== this.epoch) return;
-    if (!found) { depthLog(T, sceneId, ': no lighting payload'); return; }
-    const meta: LightingPayloadMeta = found;
-    if (borrowGeometry) { await this.loadGeometryOnly(sceneId, base, meta, myEpoch); return; }
-    this.loadedBakeBase = base;
-
-    // 防腐门:背景内容哈希(与 validator 同一契约)。
-    //
-    // ⚠ 2026-08-30 从「失配即整份禁用」改为**分级降级**(制作人口径:烘焙数据可以缺省,
-    //   缺省不能把别的搞坏)。整份丢的实际后果今天实测过:失配时连纯几何的 ground_d
-    //   一起没了,而**两条角色着色路都要它** —— 于是整个场景的角色退成不打光的裸 sprite,
-    //   雾津街头(序章主场景)就是这么黑着的。
-    //
-    //   分级依据是载荷里混着两类东西:
-    //   · 几何/标定(work/cal/world/ground_d) —— 背景重画后仍近似成立(尤其只是 relight
-    //     换色的情况,几何逐像素不变),丢了代价极大;
-    //   · 光照项(probe 图集/体素卷/烘焙反解光源) —— 烘死的是**那一版画面的光**,失配即过期。
-    //
-    //   所以失配时**照常装载**,但标记 stale 并在 dev 大声报 —— 「失败不得伪装成功」由
-    //   这条可见告警承担,而不是靠把画面搞坏来提醒作者。
-    let stale = false;
+    const controller = new AbortController();
+    this.loadController = controller;
+    const cancel = (): void => controller.abort(options.signal?.reason ?? new DOMException('Character lighting cancelled', 'AbortError'));
+    options.signal?.addEventListener('abort', cancel, { once: true });
+    if (options.signal?.aborted) cancel();
+    const request = { ...options, signal: controller.signal };
+    const check = (): void => {
+      if (myEpoch !== this.epoch || controller.signal.aborted) throw controller.signal.reason ?? new DOMException('Character lighting superseded', 'AbortError');
+    };
     try {
-      const bg = await fetch(sceneRuntimeAssetUrl(sceneId, backgroundImage));
-      const digest = await crypto.subtle.digest('SHA-1', await bg.arrayBuffer());
-      const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
-      if (hex !== meta.background_sha1) {
-        stale = true;
-        depthError(T, sceneId,
-          `: 照明烘焙过期(bake ${meta.background_sha1} vs bg ${hex}) —— 几何项仍用,`
-          + '光照项(probe/体素)已是旧画面的光,请在角色照明实验室重烘并重新导出');
-      }
-    } catch (e) {
-      stale = true;
-      depthError(T, 'hash gate failed(按过期处理,几何项仍用)', e);
-    }
-    this.payloadStale = stale;
-    if (myEpoch !== this.epoch) return;
-
-    try {
-      // probe 图集**按需加载**:进场景只拉当前 mode 那一种(游戏默认 L2=9列);另两种 F2 切档
-      // 才由 ensureProbeAtlas 现拉。省掉白加载(尤其 BIN 那份;固化后 L2 仅 ~0.12MB)。
-      const shMode0 = (meta.shading as { mode?: number } | undefined)?.mode;
-      // 载荷 shading.mode 说了算(1=L1 Geomerics / 2=SH 线性 / 3=八面体);缺省八面体(2026-09-02 正式档)。
-      // 判定在 lightingPayloadFiles.probeModeOf —— 打包清单按同一条规则决定抽哪张图集。
-      const targetProbeMode = probeModeOf(shMode0);
-      const probeCfg0 = CharacterLightingSystem.probeCfg(targetProbeMode,
-                                                          CharacterLightingSystem.shKOf(meta),
-                                                          CharacterLightingSystem.binObOf(meta));
-      // skyao probe 的网格与坐标系在 **geometry.json**(几何场那侧产的),
-      // 不在 lighting.json 里 —— 两个文件同住一个目录,但由两条烘焙路径分别产出。
-      // 缺文件不算错(老载荷没有这一份):skyao 静默降级为「不遮蔽」。
-      //
-      // ⚠ 前三个走 fetchPayloadBytes/Blob:缺文件**必须抛**。以前是裸 `r.arrayBuffer()`,
-      //   发行包漏抽 atlas_bin.bin 时 404 正文被当图集吃进去——偶数字节补零成全黑,
-      //   奇数字节 Uint16Array 抛 RangeError 整份作废,28 个场景就这么黑了一轮而零报错。
-      const [atlasBuf, valid, groundBuf, geomRes, skyaoRes] = await Promise.all([
-        fetchPayloadBytes(`${base}/${probeCfg0.file}`),
-        fetchPayloadBytes(`${base}/probes_valid.bin`),
-        fetchPayloadBlob(`${base}/ground_d.png`),
-        fetch(`${base}/geometry.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-        fetch(`${base}/skyao_probe.bin`).then((r) => (r.ok ? r.arrayBuffer() : null))
-          .catch(() => null),
-      ]);
-      if (myEpoch !== this.epoch) return;
-
-      const P = meta.probes.nx * meta.probes.ny * meta.probes.nz;
-      // 当前 mode 建真图,另两种 1×1 占位(shader 按 mode 采样,占位不被采)。三张进 probeTextures(可换)。
-      const realAtlas = this.makeProbeTexture(atlasBuf, probeCfg0.col, P);
-      const phTex = (): TextureSource => this.makeProbeTexture(new Uint16Array(4).buffer, 1, 1);
-      const atlasL1 = targetProbeMode === 1 ? realAtlas : phTex();
-      const atlasL2 = targetProbeMode === 2 ? realAtlas : phTex();
-      const atlasBin = targetProbeMode === 3 ? realAtlas : phTex();
-      this.loadedProbeMode = targetProbeMode;
-      const { T: vT, H: vH } = CharacterLightingSystem.probeTiling(P);
-      let validData = new Uint8Array(valid);
-      if (validData.length < vT * vH) {
-        const padded = new Uint8Array(vT * vH);   // 补齐位 = 0 = invalid,不参与插值
-        padded.set(validData);
-        validData = padded;
-      }
-      const validTex = new BufferImageSource({
-        resource: validData, width: vT, height: vH,
-        format: 'r8unorm', scaleMode: 'nearest',
-        alphaMode: 'no-premultiply-alpha',
-      });
-      this.ownedTextures.push(validTex);
-      const V = meta.vol;
-      // 进场景一律 1×1 占位卷保 shader 采样器绑定合法;cache 着色路径(mode≥1)从不采样它。
-      // 真卷由 ensureVolumes() 在开 RT 时现拉替换(volTextures 独立于 ownedTextures 管理)。
-      const volRadTex = this.makeVolumeTexture(new Uint16Array(4).buffer, 1, 1);
-      const volEmitTex = this.makeVolumeTexture(new Uint16Array(4).buffer, 1, 1);
+      check();
       this._hasVolumes = false;
-
-      // ground_d.png:RG16 → 深度场(footQ 的 CPU 采样源)
-      const ground = await this.decodeGroundPayload(groundBuf, meta, myEpoch);
-      if (!ground) return;
-      const g = ground.g;
-      const gtex = ground.tex;
-
-      // 光源表:世界 → q(M 正交,逆=转置)
-      const M = meta.world.M;
-      const lightsQ = new Float32Array(48 * 4);
-      const lightsE = new Float32Array(48 * 4);
-      const lightCount = Math.min(48, meta.lights.length);
-      for (let i = 0; i < lightCount; i++) {
-        const li = meta.lights[i];
-        const X = li.pos;
-        lightsQ[i * 4] = M[0][0] * X[0] + M[1][0] * X[1] + M[2][0] * X[2];
-        lightsQ[i * 4 + 1] = M[0][1] * X[0] + M[1][1] * X[1] + M[2][1] * X[2];
-        lightsQ[i * 4 + 2] = M[0][2] * X[0] + M[1][2] * X[1] + M[2][2] * X[2];
-        lightsQ[i * 4 + 3] = li.area;
-        lightsE[i * 4] = li.radiance[0];
-        lightsE[i * 4 + 1] = li.radiance[1];
-        lightsE[i * 4 + 2] = li.radiance[2];
+      this.volInflight = null;   // 旧场景的在途拉取作废(epoch 已变,回来也写不进)
+      this.loadedSceneId = null;
+      this.loadedBakeBase = null;
+      // 跨场景残留：pendingLights 会被下一个场景的 setShadowBasis 重放，
+      // 把**上一个场景的灯**打到新场景角色身上（审查抓到）。
+      this.pendingLights = null;
+      this.payloadStale = false;
+      this.geometryOnly = false;
+      this.meta = null; this.groundD = null; this.groundTex = null; this.resources = null; this.probeViz = null;
+      this.probeAtlasU16 = null; this.validU8 = null;
+      this.parkLitShaders();      // 活 shader 先退白图,再销毁旧纹理(防 BindGroup 自毁)
+      for (const t of this.ownedTextures) t.destroy();
+      this.ownedTextures = [];
+      for (const t of this.volTextures) t.destroy();
+      this.volTextures = [];
+      this.disposeStaleVolumeTextures();
+      for (const t of this.probeTextures) t.destroy();
+      this.probeTextures = [];
+      this.disposeStaleProbeTextures();
+      this.loadedProbeMode = 0;
+      this.probeInflight = null;
+      this.sceneWorldW = worldW; this.sceneWorldH = worldH;
+      // 按背景图名索引；找不到就回落到旧的扁平布局（迁移期两条都认，缺省不影响运行）；
+      // 再找不到、且调用方给了几何借用图，就只借那份的几何项。
+      const perBg = bakeDirOverride ?? sceneBakeDirUrl(sceneId, backgroundImage);
+      const legacy = sceneRuntimeAssetUrl(sceneId, 'lighting');
+      const geoDir = !bakeDirOverride && geometryFallbackImage && geometryFallbackImage !== backgroundImage
+        ? sceneBakeDirUrl(sceneId, geometryFallbackImage) : null;
+      let base = perBg;
+      let found = await this.fetchPayloadMeta(perBg, sceneId, request);
+      check();
+      if (!found && !bakeDirOverride) {
+        found = await this.fetchPayloadMeta(legacy, sceneId, request);
+        check();
+        if (found) { base = legacy; depthLog(T, sceneId, `: 用旧的扁平烘焙布局(${legacy});迁移后可摘`); }
       }
+      let borrowGeometry = false;
+      if (!found && geoDir) {
+        found = await this.fetchPayloadMeta(geoDir, sceneId, request);
+        check();
+        if (found) { base = geoDir; borrowGeometry = true; }
+      }
+      check();
+      if (!found) {
+        if (options.strict && bakeDirOverride) throw new Error(`${perBg}/lighting.json: explicitly requested payload missing`);
+        depthLog(T, sceneId, ': no lighting payload'); return;
+      }
+      const meta: LightingPayloadMeta = found;
+      if (borrowGeometry) { await this.loadGeometryOnly(sceneId, base, meta, myEpoch, request); check(); return; }
+      this.loadedBakeBase = base;
 
-      // ---- skyao probe:rgba16f 平铺图集(a0,a1x,a1y,a1z)----
-      // ⚠⚠ 它的 M 是 geometry.json 的 **depthConfig det=+1**,与下面 probe 用的
-      //    meta.world.M(det=-1)**不是一个矩阵**。混用不报错,只是方向整个镜像。
-      let skyao: NonNullable<CharShadingSceneResources['skyao']> | null = null;
-      const sp = (geomRes as { skyao_probe?: Record<string, number>;
-                              M?: number[][] } | null)?.skyao_probe;
-      const spM = (geomRes as { M?: number[][] } | null)?.M;
-      if (sp && spM && skyaoRes) {
-        const want = sp.atlas_w * sp.atlas_h * 4 * 2;
-        if (skyaoRes.byteLength !== want) {
-          depthError(T, sceneId, `: skyao_probe.bin ${skyaoRes.byteLength} 字节 ≠ `
-            + `图集 ${sp.atlas_w}x${sp.atlas_h} rgba16f 应有的 ${want} —— 已跳过`);
-        } else {
-          const tex = new BufferImageSource({
-            resource: new Uint16Array(skyaoRes), width: sp.atlas_w, height: sp.atlas_h,
-            format: 'rgba16float', scaleMode: 'nearest',
-            alphaMode: 'no-premultiply-alpha',
-          });
-          this.ownedTextures.push(tex);
-          skyao = {
-            tex,
-            n: [sp.nx, sp.ny, sp.nz],
-            tiles: [sp.tiles_x, sp.tiles_y],
-            wMin: [sp.x0, sp.y0, sp.z0],
-            wScale: [
-              1 / Math.max(sp.x1 - sp.x0, 1e-5),
-              1 / Math.max(sp.y1 - sp.y0, 1e-5),
-              1 / Math.max(sp.z1 - sp.z0, 1e-5),
-            ],
-            mCol: new Float32Array([
-              spM[0][0], spM[1][0], spM[2][0],
-              spM[0][1], spM[1][1], spM[2][1],
-              spM[0][2], spM[1][2], spM[2][2],
-            ]),
-          };
-          depthLog(T, sceneId, `: skyao probe ${sp.nx}x${sp.ny}x${sp.nz} 已载入`);
+      // 防腐门:背景内容哈希(与 validator 同一契约)。
+      //
+      // ⚠ 2026-08-30 从「失配即整份禁用」改为**分级降级**(制作人口径:烘焙数据可以缺省,
+      //   缺省不能把别的搞坏)。整份丢的实际后果今天实测过:失配时连纯几何的 ground_d
+      //   一起没了,而**两条角色着色路都要它** —— 于是整个场景的角色退成不打光的裸 sprite,
+      //   雾津街头(序章主场景)就是这么黑着的。
+      //
+      //   分级依据是载荷里混着两类东西:
+      //   · 几何/标定(work/cal/world/ground_d) —— 背景重画后仍近似成立(尤其只是 relight
+      //     换色的情况,几何逐像素不变),丢了代价极大;
+      //   · 光照项(probe 图集/体素卷/烘焙反解光源) —— 烘死的是**那一版画面的光**,失配即过期。
+      //
+      //   所以失配时**照常装载**,但标记 stale 并在 dev 大声报 —— 「失败不得伪装成功」由
+      //   这条可见告警承担,而不是靠把画面搞坏来提醒作者。
+      let stale = false;
+      try {
+        const bg = await fetchPayloadBytes(sceneRuntimeAssetUrl(sceneId, backgroundImage), request);
+        check();
+        const digest = await crypto.subtle.digest('SHA-1', bg);
+        check();
+        const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
+        if (hex !== meta.background_sha1) {
+          stale = true;
+          depthError(T, sceneId,
+            `: 照明烘焙过期(bake ${meta.background_sha1} vs bg ${hex}) —— 几何项仍用,`
+            + '光照项(probe/体素)已是旧画面的光,请在角色照明实验室重烘并重新导出');
         }
+      } catch (e) {
+        check();
+        stale = true;
+        depthError(T, 'hash gate failed(按过期处理,几何项仍用)', e);
       }
+      check();
+      this.payloadStale = stale;
 
-      const w = meta.world;
-      const pn = meta.probes;
-      this.meta = meta;
-      this.groundD = g;
-      this.groundTex = gtex;
-      this.probeAtlasU16 = new Uint16Array(atlasBuf);
-      this.probeAtlasCol = probeCfg0.col;
-      this.validU8 = new Uint8Array(valid);
-      this.resources = {
-        atlasL1, atlasL2, atlasBin, valid: validTex,
-        volRad: volRadTex, volEmit: volEmitTex,
-        workW: meta.work.w, workH: meta.work.h,
-        worldToWorkX: meta.work.w / Math.max(worldW, 1e-6),
-        worldToWorkY: meta.work.h / Math.max(worldH, 1e-6),
-        cal: { ppu: meta.cal.ppu, cx: meta.cal.cx, cy: meta.cal.cy, theta: meta.cal.theta },
-        vol: {
-          nx: V.nx, ny: V.ny, nz: V.nz, tilesX: V.tiles_x, tilesY: V.tiles_y,
-          qMin: [V.qx_min, V.qy_min, V.qz_min], qMax: [V.qx_max, V.qy_max, V.qz_max],
-        },
-        mCol: new Float32Array([
-          M[0][0], M[1][0], M[2][0],
-          M[0][1], M[1][1], M[2][1],
-          M[0][2], M[1][2], M[2][2],
-        ]),
-        wMin: [w.x0, w.y0, w.z0],
-        wScale: [
-          (pn.nx - 1) / Math.max(w.x1 - w.x0, 1e-5),
-          (pn.ny - 1) / Math.max(w.y1 - w.y0, 1e-5),
-          (pn.nz - 1) / Math.max(w.z1 - w.z0, 1e-5),
-        ],
-        pn: [pn.nx, pn.ny, pn.nz],
-        probeT: CharacterLightingSystem.probeTiling(P).T,
-        shK: CharacterLightingSystem.shKOf(meta),
-        binOb: CharacterLightingSystem.binObOf(meta),
-        ambSH: new Float32Array(meta.ambient_sh),
-        lightsQ, lightsE, lightCount,
-        skyao,
-      };
-      // probe 点云可视化数据:规则晶格位置(=运行时插值实际用的格点)投回场景
-      // 世界系;颜色取固化 E 的 DC 系数(coeff 0),与实验室查看器点云同配方(×0.9 → 1/2.2)。
-      {
-        const atlasU16 = this.probeAtlasU16!;
-        const nCol = this.probeAtlasCol;
-        const validU8 = new Uint8Array(valid);
-        const pts: ProbeVizPoint[] = [];
-        const s2wX = meta.work.w / Math.max(worldW, 1e-6);
-        const s2wY = meta.work.h / Math.max(worldH, 1e-6);
-        for (let px = 0; px < pn.nx; px++) {
-          for (let py = 0; py < pn.ny; py++) {
-            for (let pz = 0; pz < pn.nz; pz++) {
-              const flat = px * (pn.ny * pn.nz) + py * pn.nz + pz;
-              const X = w.x0 + (pn.nx > 1 ? (px / (pn.nx - 1)) * (w.x1 - w.x0) : 0);
-              const Y = w.y0 + (pn.ny > 1 ? (py / (pn.ny - 1)) * (w.y1 - w.y0) : 0);
-              const Z = w.z0 + (pn.nz > 1 ? (pz / (pn.nz - 1)) * (w.z1 - w.z0) : 0);
-              // world → q(M 正交,逆=转置)→ work px → 场景世界
-              const qx = M[0][0] * X + M[1][0] * Y + M[2][0] * Z;
-              const qy = M[0][1] * X + M[1][1] * Y + M[2][1] * Z;
-              const sx = meta.cal.cx + qx * meta.cal.ppu;
-              const sy = meta.cal.cy - qy * meta.cal.ppu;
-              let color = 0;
-              for (let c = 0; c < 3; c++) {
-                const v = Math.max(f16(atlasU16[(flat * nCol) * 4 + c]) * 0.9, 0);
-                const b = Math.max(30, Math.min(255, Math.round(Math.pow(v, 1 / 2.2) * 255)));
-                color = (color << 8) | b;
-              }
-              pts.push({
-                x: sx / s2wX, y: sy / s2wY,
-                color, valid: validU8[flat] > 0,
-              });
-            }
+      try {
+        // probe 图集**按需加载**:进场景只拉当前 mode 那一种(游戏默认 L2=9列);另两种 F2 切档
+        // 才由 ensureProbeAtlas 现拉。省掉白加载(尤其 BIN 那份;固化后 L2 仅 ~0.12MB)。
+        const shMode0 = (meta.shading as { mode?: number } | undefined)?.mode;
+        // 载荷 shading.mode 说了算(1=L1 Geomerics / 2=SH 线性 / 3=八面体);缺省八面体(2026-09-02 正式档)。
+        // 判定在 lightingPayloadFiles.probeModeOf —— 打包清单按同一条规则决定抽哪张图集。
+        const targetProbeMode = probeModeOf(shMode0);
+        const probeCfg0 = CharacterLightingSystem.probeCfg(targetProbeMode,
+                                                            CharacterLightingSystem.shKOf(meta),
+                                                            CharacterLightingSystem.binObOf(meta));
+        // skyao probe 的网格与坐标系在 **geometry.json**(几何场那侧产的),
+        // 不在 lighting.json 里 —— 两个文件同住一个目录,但由两条烘焙路径分别产出。
+        // 缺文件不算错(老载荷没有这一份):skyao 静默降级为「不遮蔽」。
+        //
+        // ⚠ 前三个走 fetchPayloadBytes/Blob:缺文件**必须抛**。以前是裸 `r.arrayBuffer()`,
+        //   发行包漏抽 atlas_bin.bin 时 404 正文被当图集吃进去——偶数字节补零成全黑,
+        //   奇数字节 Uint16Array 抛 RangeError 整份作废,28 个场景就这么黑了一轮而零报错。
+        const [atlasBuf, valid, groundBuf, geomRes, skyaoRes] = await Promise.all([
+          fetchPayloadBytes(`${base}/${probeCfg0.file}`, request),
+          fetchPayloadBytes(`${base}/probes_valid.bin`, request),
+          fetchPayloadBlob(`${base}/ground_d.png`, request),
+          fetchOptionalPayloadJson(`${base}/geometry.json`, request).catch((error) => { check(); depthError(T, 'optional skyao geometry failed', error); return null; }),
+          fetchPayloadBytes(`${base}/skyao_probe.bin`, request).catch((error) => { check(); depthLog(T, 'optional skyao probe unavailable', error); return null; }),
+        ]);
+        check();
+
+        const P = meta.probes.nx * meta.probes.ny * meta.probes.nz;
+        // 当前 mode 建真图,另两种 1×1 占位(shader 按 mode 采样,占位不被采)。三张进 probeTextures(可换)。
+        const realAtlas = this.makeProbeTexture(atlasBuf, probeCfg0.col, P);
+        const phTex = (): TextureSource => this.makeProbeTexture(new Uint16Array(4).buffer, 1, 1);
+        const atlasL1 = targetProbeMode === 1 ? realAtlas : phTex();
+        const atlasL2 = targetProbeMode === 2 ? realAtlas : phTex();
+        const atlasBin = targetProbeMode === 3 ? realAtlas : phTex();
+        this.loadedProbeMode = targetProbeMode;
+        const { T: vT, H: vH } = CharacterLightingSystem.probeTiling(P);
+        let validData = new Uint8Array(valid);
+        if (validData.length < vT * vH) {
+          const padded = new Uint8Array(vT * vH);   // 补齐位 = 0 = invalid,不参与插值
+          padded.set(validData);
+          validData = padded;
+        }
+        const validTex = new BufferImageSource({
+          resource: validData, width: vT, height: vH,
+          format: 'r8unorm', scaleMode: 'nearest',
+          alphaMode: 'no-premultiply-alpha',
+        });
+        this.ownedTextures.push(validTex);
+        const V = meta.vol;
+        // 进场景一律 1×1 占位卷保 shader 采样器绑定合法;cache 着色路径(mode≥1)从不采样它。
+        // 真卷由 ensureVolumes() 在开 RT 时现拉替换(volTextures 独立于 ownedTextures 管理)。
+        const volRadTex = this.makeVolumeTexture(new Uint16Array(4).buffer, 1, 1);
+        const volEmitTex = this.makeVolumeTexture(new Uint16Array(4).buffer, 1, 1);
+        this._hasVolumes = false;
+
+        // ground_d.png:RG16 → 深度场(footQ 的 CPU 采样源)
+        const ground = await this.decodeGroundPayload(groundBuf, meta, myEpoch, request);
+        check();
+        if (!ground) throw new Error(`${base}/ground_d.png: invalid ground payload`);
+        const g = ground.g;
+        const gtex = ground.tex;
+
+        // 光源表:世界 → q(M 正交,逆=转置)
+        const M = meta.world.M;
+        const lightsQ = new Float32Array(48 * 4);
+        const lightsE = new Float32Array(48 * 4);
+        const lightCount = Math.min(48, meta.lights.length);
+        for (let i = 0; i < lightCount; i++) {
+          const li = meta.lights[i];
+          const X = li.pos;
+          lightsQ[i * 4] = M[0][0] * X[0] + M[1][0] * X[1] + M[2][0] * X[2];
+          lightsQ[i * 4 + 1] = M[0][1] * X[0] + M[1][1] * X[1] + M[2][1] * X[2];
+          lightsQ[i * 4 + 2] = M[0][2] * X[0] + M[1][2] * X[1] + M[2][2] * X[2];
+          lightsQ[i * 4 + 3] = li.area;
+          lightsE[i * 4] = li.radiance[0];
+          lightsE[i * 4 + 1] = li.radiance[1];
+          lightsE[i * 4 + 2] = li.radiance[2];
+        }
+
+        // ---- skyao probe:rgba16f 平铺图集(a0,a1x,a1y,a1z)----
+        // ⚠⚠ 它的 M 是 geometry.json 的 **depthConfig det=+1**,与下面 probe 用的
+        //    meta.world.M(det=-1)**不是一个矩阵**。混用不报错,只是方向整个镜像。
+        let skyao: NonNullable<CharShadingSceneResources['skyao']> | null = null;
+        const sp = (geomRes as { skyao_probe?: Record<string, number>;
+                                M?: number[][] } | null)?.skyao_probe;
+        const spM = (geomRes as { M?: number[][] } | null)?.M;
+        if (sp && spM && skyaoRes) {
+          const want = sp.atlas_w * sp.atlas_h * 4 * 2;
+          if (skyaoRes.byteLength !== want) {
+            depthError(T, sceneId, `: skyao_probe.bin ${skyaoRes.byteLength} 字节 ≠ `
+              + `图集 ${sp.atlas_w}x${sp.atlas_h} rgba16f 应有的 ${want} —— 已跳过`);
+          } else {
+            const tex = new BufferImageSource({
+              resource: new Uint16Array(skyaoRes), width: sp.atlas_w, height: sp.atlas_h,
+              format: 'rgba16float', scaleMode: 'nearest',
+              alphaMode: 'no-premultiply-alpha',
+            });
+            this.ownedTextures.push(tex);
+            skyao = {
+              tex,
+              n: [sp.nx, sp.ny, sp.nz],
+              tiles: [sp.tiles_x, sp.tiles_y],
+              wMin: [sp.x0, sp.y0, sp.z0],
+              wScale: [
+                1 / Math.max(sp.x1 - sp.x0, 1e-5),
+                1 / Math.max(sp.y1 - sp.y0, 1e-5),
+                1 / Math.max(sp.z1 - sp.z0, 1e-5),
+              ],
+              mCol: new Float32Array([
+                spM[0][0], spM[1][0], spM[2][0],
+                spM[0][1], spM[1][1], spM[2][1],
+                spM[0][2], spM[1][2], spM[2][2],
+              ]),
+            };
+            depthLog(T, sceneId, `: skyao probe ${sp.nx}x${sp.ny}x${sp.nz} 已载入`);
           }
         }
-        this.probeViz = pts;
-      }
 
-      // 烘焙载荷给采样/调色初值；三项倍率优先取场景作者配置，缺项等价解析旧 beta/GI。
-      // 其余角色诊断旋钮是临时覆盖；粒子保持自己的场景采样初值。
-      const sh = meta.shading;
-      Object.assign(this.vfxFrameLit.uniforms, {
-        uMode: sh && sh.mode >= 1 ? sh.mode : 3,
-        uFold: sh?.fold ?? 1,
-        uAmbStrength: sh?.amb ?? 1, uFlatten: sh?.flatten ?? 0,
-        uEChroma: this.getLightFactors('particles').eChroma, uSkyaoBlend: this.skyaoBlend,
-      });
-      this.vfxFrameLit.update();
-      if (sh) {
-        Object.assign(this.params, {
-          mode: sh.mode, spp: sh.spp, step: sh.step, msteps: sh.msteps,
-          fold: sh.fold > 0, missMode: sh.miss_mode > 0, nee: sh.nee > 0,
-          beta: sh.beta, ambStrength: sh.amb,
-          ...this.getLightFactors('character'),
-          bulge: sh.bulge, flatten: sh.flatten,
-          // 旧载荷没有 giStrength(2026-09-01 新增)——缺省 1 = 行为不变
-          giStrength: (() => {
-            const g = (sh as { giStrength?: unknown }).giStrength;
-            return typeof g === 'number' && Number.isFinite(g) ? g : 1;
-          })(),
+        const w = meta.world;
+        const pn = meta.probes;
+        this.meta = meta;
+        this.groundD = g;
+        this.groundTex = gtex;
+        this.probeAtlasU16 = new Uint16Array(atlasBuf);
+        this.probeAtlasCol = probeCfg0.col;
+        this.validU8 = new Uint8Array(valid);
+        this.resources = {
+          atlasL1, atlasL2, atlasBin, valid: validTex,
+          volRad: volRadTex, volEmit: volEmitTex,
+          workW: meta.work.w, workH: meta.work.h,
+          worldToWorkX: meta.work.w / Math.max(worldW, 1e-6),
+          worldToWorkY: meta.work.h / Math.max(worldH, 1e-6),
+          cal: { ppu: meta.cal.ppu, cx: meta.cal.cx, cy: meta.cal.cy, theta: meta.cal.theta },
+          vol: {
+            nx: V.nx, ny: V.ny, nz: V.nz, tilesX: V.tiles_x, tilesY: V.tiles_y,
+            qMin: [V.qx_min, V.qy_min, V.qz_min], qMax: [V.qx_max, V.qy_max, V.qz_max],
+          },
+          mCol: new Float32Array([
+            M[0][0], M[1][0], M[2][0],
+            M[0][1], M[1][1], M[2][1],
+            M[0][2], M[1][2], M[2][2],
+          ]),
+          wMin: [w.x0, w.y0, w.z0],
+          wScale: [
+            (pn.nx - 1) / Math.max(w.x1 - w.x0, 1e-5),
+            (pn.ny - 1) / Math.max(w.y1 - w.y0, 1e-5),
+            (pn.nz - 1) / Math.max(w.z1 - w.z0, 1e-5),
+          ],
+          pn: [pn.nx, pn.ny, pn.nz],
+          probeT: CharacterLightingSystem.probeTiling(P).T,
+          shK: CharacterLightingSystem.shKOf(meta),
+          binOb: CharacterLightingSystem.binObOf(meta),
+          ambSH: new Float32Array(meta.ambient_sh),
+          lightsQ, lightsE, lightCount,
+          skyao,
+        };
+        // probe 点云可视化数据:规则晶格位置(=运行时插值实际用的格点)投回场景
+        // 世界系;颜色取固化 E 的 DC 系数(coeff 0),与实验室查看器点云同配方(×0.9 → 1/2.2)。
+        {
+          const atlasU16 = this.probeAtlasU16!;
+          const nCol = this.probeAtlasCol;
+          const validU8 = new Uint8Array(valid);
+          const pts: ProbeVizPoint[] = [];
+          const s2wX = meta.work.w / Math.max(worldW, 1e-6);
+          const s2wY = meta.work.h / Math.max(worldH, 1e-6);
+          for (let px = 0; px < pn.nx; px++) {
+            for (let py = 0; py < pn.ny; py++) {
+              for (let pz = 0; pz < pn.nz; pz++) {
+                const flat = px * (pn.ny * pn.nz) + py * pn.nz + pz;
+                const X = w.x0 + (pn.nx > 1 ? (px / (pn.nx - 1)) * (w.x1 - w.x0) : 0);
+                const Y = w.y0 + (pn.ny > 1 ? (py / (pn.ny - 1)) * (w.y1 - w.y0) : 0);
+                const Z = w.z0 + (pn.nz > 1 ? (pz / (pn.nz - 1)) * (w.z1 - w.z0) : 0);
+                // world → q(M 正交,逆=转置)→ work px → 场景世界
+                const qx = M[0][0] * X + M[1][0] * Y + M[2][0] * Z;
+                const qy = M[0][1] * X + M[1][1] * Y + M[2][1] * Z;
+                const sx = meta.cal.cx + qx * meta.cal.ppu;
+                const sy = meta.cal.cy - qy * meta.cal.ppu;
+                let color = 0;
+                for (let c = 0; c < 3; c++) {
+                  const v = Math.max(f16(atlasU16[(flat * nCol) * 4 + c]) * 0.9, 0);
+                  const b = Math.max(30, Math.min(255, Math.round(Math.pow(v, 1 / 2.2) * 255)));
+                  color = (color << 8) | b;
+                }
+                pts.push({
+                  x: sx / s2wX, y: sy / s2wY,
+                  color, valid: validU8[flat] > 0,
+                });
+              }
+            }
+          }
+          this.probeViz = pts;
+        }
+
+        // 烘焙载荷给采样/调色初值；三项倍率优先取场景作者配置，缺项等价解析旧 beta/GI。
+        // 其余角色诊断旋钮是临时覆盖；粒子保持自己的场景采样初值。
+        const sh = meta.shading;
+        Object.assign(this.vfxFrameLit.uniforms, {
+          uMode: sh && sh.mode >= 1 ? sh.mode : 3,
+          uFold: sh?.fold ?? 1,
+          uAmbStrength: sh?.amb ?? 1, uFlatten: sh?.flatten ?? 0,
+          uEChroma: this.getLightFactors('particles').eChroma, uSkyaoBlend: this.skyaoBlend,
         });
-        // 场景角色色度优先；旧载荷仅给缺项提供兼容初值，粒子另取自己的场景参数。
-        this.eChroma = this.getLightFactors('character').eChroma;
+        this.vfxFrameLit.update();
+        if (sh) {
+          Object.assign(this.params, {
+            mode: sh.mode, spp: sh.spp, step: sh.step, msteps: sh.msteps,
+            fold: sh.fold > 0, missMode: sh.miss_mode > 0, nee: sh.nee > 0,
+            beta: sh.beta, ambStrength: sh.amb,
+            ...this.getLightFactors('character'),
+            bulge: sh.bulge, flatten: sh.flatten,
+            // 旧载荷没有 giStrength(2026-09-01 新增)——缺省 1 = 行为不变
+            giStrength: (() => {
+              const g = (sh as { giStrength?: unknown }).giStrength;
+              return typeof g === 'number' && Number.isFinite(g) ? g : 1;
+            })(),
+          });
+          // 场景角色色度优先；旧载荷仅给缺项提供兼容初值，粒子另取自己的场景参数。
+          this.eChroma = this.getLightFactors('character').eChroma;
+        }
+        // 进场景恒未载体素卷 → 强制 cache 着色(mode≥1),RT(mode 0)会采样占位卷得黑。
+        if (this.params.mode < 1) this.params.mode = 3;
+        // sprite 网格着色:场景静态组(mesh 路径与 filter 同源同值)
+        this.groundRange = [meta.ground_d.min, meta.ground_d.max];
+        this.sceneLit = createSceneLitUniforms({
+          worldToWorkX: this.resources.worldToWorkX, worldToWorkY: this.resources.worldToWorkY,
+          cal: this.resources.cal, vol: this.resources.vol,
+          mCol: this.resources.mCol, wMin: this.resources.wMin, wScale: this.resources.wScale,
+          pn: this.resources.pn, probeT: this.resources.probeT, shK: this.resources.shK,
+          binOb: this.resources.binOb,
+          ambSH: this.resources.ambSH,
+          lightsQ: this.resources.lightsQ, lightsE: this.resources.lightsE,
+          lightCount: this.resources.lightCount,
+          groundMin: this.groundRange[0], groundMax: this.groundRange[1],
+          sceneWorldW: this.sceneWorldW, sceneWorldH: this.sceneWorldH,
+          workW: this.resources.workW, workH: this.resources.workH,
+          skyao: this.resources.skyao ?? null,
+        });
+        this.loadedSceneId = sceneId;
+        depthLog(T, sceneId, `: lighting v3 active, ${P} probes, ${lightCount} lights, `
+          + `vol ${V.nx}x${V.ny}x${V.nz}, shading ${sh ? `cfg(mode ${sh.mode})` : 'defaults'}`);
+        this.onReady?.();
+      } catch (e) {
+        if (myEpoch === this.epoch && !controller.signal.aborted) depthError(T, 'payload load failed', e);
+        if (myEpoch === this.epoch) {
+          this.parkLitShaders();
+          this.meta = null; this.groundD = null; this.resources = null;
+          this.groundTex = null;
+          this.loadedSceneId = null; this._hasVolumes = false;
+          for (const t of this.ownedTextures) t.destroy();
+          this.ownedTextures = [];
+          for (const t of this.volTextures) t.destroy();
+          this.volTextures = [];
+          this.disposeStaleVolumeTextures();
+          for (const t of this.probeTextures) t.destroy();
+          this.probeTextures = [];
+          this.disposeStaleProbeTextures();
+          this.loadedProbeMode = 0;
+          this.probeInflight = null;
+        }
+        check();
+        if (options.strict) throw e;
       }
-      // 进场景恒未载体素卷 → 强制 cache 着色(mode≥1),RT(mode 0)会采样占位卷得黑。
-      if (this.params.mode < 1) this.params.mode = 3;
-      // sprite 网格着色:场景静态组(mesh 路径与 filter 同源同值)
-      this.groundRange = [meta.ground_d.min, meta.ground_d.max];
-      this.sceneLit = createSceneLitUniforms({
-        worldToWorkX: this.resources.worldToWorkX, worldToWorkY: this.resources.worldToWorkY,
-        cal: this.resources.cal, vol: this.resources.vol,
-        mCol: this.resources.mCol, wMin: this.resources.wMin, wScale: this.resources.wScale,
-        pn: this.resources.pn, probeT: this.resources.probeT, shK: this.resources.shK,
-        binOb: this.resources.binOb,
-        ambSH: this.resources.ambSH,
-        lightsQ: this.resources.lightsQ, lightsE: this.resources.lightsE,
-        lightCount: this.resources.lightCount,
-        groundMin: this.groundRange[0], groundMax: this.groundRange[1],
-        sceneWorldW: this.sceneWorldW, sceneWorldH: this.sceneWorldH,
-        workW: this.resources.workW, workH: this.resources.workH,
-        skyao: this.resources.skyao ?? null,
-      });
-      this.loadedSceneId = sceneId;
-      depthLog(T, sceneId, `: lighting v3 active, ${P} probes, ${lightCount} lights, `
-        + `vol ${V.nx}x${V.ny}x${V.nz}, shading ${sh ? `cfg(mode ${sh.mode})` : 'defaults'}`);
-      this.onReady?.();
-    } catch (e) {
-      depthError(T, 'payload load failed', e);
-      if (myEpoch === this.epoch) {
-        this.meta = null; this.groundD = null; this.resources = null;
-        this.loadedSceneId = null; this._hasVolumes = false;
-        for (const t of this.ownedTextures) t.destroy();
-        this.ownedTextures = [];
-        for (const t of this.volTextures) t.destroy();
-        this.volTextures = [];
-        this.disposeStaleVolumeTextures();
-        for (const t of this.probeTextures) t.destroy();
-        this.probeTextures = [];
-        this.disposeStaleProbeTextures();
-        this.loadedProbeMode = 0;
-        this.probeInflight = null;
-      }
+    } finally {
+      options.signal?.removeEventListener('abort', cancel);
     }
   }
 

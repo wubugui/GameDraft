@@ -17,6 +17,10 @@ import type { LoaderParser, LoadOptions, ProgressCallback, ResolvedAsset } from 
 export interface PromiseAndParser {
   promise: Promise<any>;
   parser: LoaderParser | null;
+  consumers?: number;
+  fulfilled?: boolean;
+  value?: any;
+  cancel?: () => void;
 }
 
 export class Loader {
@@ -35,6 +39,7 @@ export class Loader {
   private readonly _parsers: LoaderParser[] = [];
   private _parserHash: Record<string, LoaderParser> = {};
   private _parsersValidated = false;
+  private readonly requests = new Set<AbortController>();
 
   /** 装载插件表(改了会在下次 load 前重建 name/id 索引) */
   readonly parsers: LoaderParser[] = new Proxy(this._parsers, {
@@ -50,11 +55,12 @@ export class Loader {
 
   /** 清掉装载缓存(不销毁已载资源) */
   reset(): void {
+    for (const request of this.requests) request.abort(new DOMException('Asset loader reset', 'AbortError'));
     this._parsersValidated = false;
     this.promiseCache = {};
   }
 
-  private _getLoadPromiseAndParser(url: string, data: ResolvedAsset): PromiseAndParser {
+  private _getLoadPromiseAndParser(url: string, data: ResolvedAsset, timeoutMs = 30_000): PromiseAndParser {
     const result: PromiseAndParser = {
       promise: null as unknown as Promise<any>,
       parser: null,
@@ -84,17 +90,48 @@ export class Loader {
           return null;
         }
       }
-      asset = await (parser.load as NonNullable<LoaderParser['load']>).call(parser, url, data, this);
-      result.parser = parser;
-      for (let i = 0; i < this.parsers.length; i++) {
-        const parser2 = this.parsers[i];
-        if (parser2.parse) {
-          if (parser2.parse && (await parser2.testParse?.(asset, data, this))) {
-            asset = (await parser2.parse(asset, data, this)) || asset;
-            result.parser = parser2;
-          }
-        }
+      const controller = new AbortController();
+      result.cancel = () => controller.abort(new DOMException('No remaining asset consumers', 'AbortError'));
+      this.requests.add(controller);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        asset = await new Promise<any>((resolve, reject) => {
+          let open = true;
+          const finish = (error: unknown, value?: any): void => {
+            if (!open) return;
+            open = false;
+            controller.signal.removeEventListener('abort', abort);
+            if (error) reject(error); else resolve(value);
+          };
+          const abort = (): void => finish(controller.signal.reason);
+          controller.signal.addEventListener('abort', abort, { once: true });
+          timer = setTimeout(() => controller.abort(new DOMException(`Asset parser timed out: ${url}`, 'TimeoutError')), Math.max(1, timeoutMs));
+          Promise.resolve().then(async () => {
+            asset = await (parser!.load as NonNullable<LoaderParser['load']>).call(parser, url, { ...data, requestSignal: controller.signal, requestOwner: result }, this);
+            result.parser = parser;
+            for (const parser2 of this.parsers) {
+              controller.signal.throwIfAborted();
+              if (parser2.parse && await parser2.testParse?.(asset, data, this)) {
+                asset = await parser2.parse(asset, { ...data, requestSignal: controller.signal }, this) || asset;
+                result.parser = parser2;
+              }
+            }
+            return asset;
+          })
+            .then(value => {
+              if (!open) { void (result.parser ?? parser)?.unload?.(value, data, this); return; }
+              finish(null, value);
+            }, error => {
+              if (asset !== null) void (result.parser ?? parser)?.unload?.(asset, data, this);
+              finish(error);
+            });
+        });
+      } finally {
+        clearTimeout(timer);
+        this.requests.delete(controller);
       }
+      result.fulfilled = true;
+      result.value = asset;
       return asset;
     })();
     return result;
@@ -119,7 +156,8 @@ export class Loader {
     const options: LoadOptions = typeof onProgressOrOptions === 'function'
       ? { ...Loader.defaultOptions, ...this.loadOptions, onProgress: onProgressOrOptions }
       : { ...Loader.defaultOptions, ...this.loadOptions, ...(onProgressOrOptions || {}) };
-    const { onProgress, onError, strategy, retryCount, retryDelay } = options;
+    const { onProgress, onError, strategy, retryCount, retryDelay, timeoutMs } = options;
+    options.signal?.throwIfAborted();
     let count = 0;
     const assets: Record<string, T> = {};
     const singleAsset = isSingleItem(assetsToLoadIn);
@@ -132,11 +170,19 @@ export class Loader {
     const promises = assetsToLoad.map(async (asset) => {
       const url = path.toAbsolute(asset.src as string);
       if (assets[asset.src as string]) return;
-      await this._loadAssetWithRetry(url, asset, { onProgress, onError, strategy, retryCount, retryDelay }, assets);
+      await this._loadAssetWithRetry(url, asset, { onProgress, onError, strategy, retryCount, retryDelay, timeoutMs, signal: options.signal }, assets);
       count += asset.progressSize || 1;
       if (onProgress) onProgress(count / total);
     });
-    await Promise.all(promises);
+    const all = Promise.all(promises);
+    if (options.signal) {
+      const signal = options.signal;
+      await new Promise<void>((resolve, reject) => {
+        const abort = (): void => { signal.removeEventListener('abort', abort); reject(signal.reason ?? new DOMException('Asset consumer cancelled', 'AbortError')); };
+        signal.addEventListener('abort', abort, { once: true });
+        all.then(() => { signal.removeEventListener('abort', abort); resolve(); }, error => { signal.removeEventListener('abort', abort); reject(error); });
+      });
+    } else await all;
     return singleAsset ? assets[assetsToLoad[0].src as string] : assets;
   }
 
@@ -181,17 +227,24 @@ export class Loader {
     assets: Record<string, any>,
   ): Promise<void> {
     let attempt = 0;
-    const { onError, strategy, retryCount, retryDelay } = options;
+    const { onError, strategy, retryCount, retryDelay, timeoutMs } = options;
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
     while (true) {
+      let request: PromiseAndParser | undefined;
       try {
         if (!this.promiseCache[url]) {
-          this.promiseCache[url] = this._getLoadPromiseAndParser(url, asset);
+          this.promiseCache[url] = this._getLoadPromiseAndParser(url, asset, timeoutMs);
         }
-        assets[asset.src as string] = await this.promiseCache[url].promise;
+        request = this.promiseCache[url];
+        assets[asset.src as string] = await this.consumeRequest(request, options.signal);
         return;
       } catch (e) {
-        delete this.promiseCache[url];
+        // 仅一个消费者取消时，共享请求仍被别人持有，不能删除它让下一次请求重复发车。
+        if (options.signal?.aborted) {
+          if (!request?.fulfilled && request?.consumers === 0 && this.promiseCache[url] === request) delete this.promiseCache[url];
+          throw options.signal.reason ?? new DOMException('Asset consumer cancelled', 'AbortError');
+        }
+        if (this.promiseCache[url] === request) delete this.promiseCache[url];
         delete assets[asset.src as string];
         attempt++;
         const isLast = strategy !== 'retry' || attempt > (retryCount as number);
@@ -211,6 +264,30 @@ export class Loader {
         }
         throw error;
       }
+    }
+  }
+
+  private async consumeRequest(request: PromiseAndParser, signal?: AbortSignal): Promise<any> {
+    signal?.throwIfAborted();
+    request.consumers = (request.consumers ?? 0) + 1;
+    try {
+      if (!signal) return await request.promise;
+      return await new Promise((resolve, reject) => {
+        const abort = (): void => { cleanup(); reject(signal.reason ?? new DOMException('Asset consumer cancelled', 'AbortError')); };
+        const cleanup = (): void => signal.removeEventListener('abort', abort);
+        signal.addEventListener('abort', abort, { once: true });
+        request.promise.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+      });
+    } finally {
+      request.consumers!--;
+      if (!request.fulfilled && request.consumers === 0) request.cancel?.();
+    }
+  }
+
+  /** 摘掉已完成资源的装载缓存，不碰同 URL 后来那一代资源。 */
+  forgetLoaded(value: unknown): void {
+    for (const [url, request] of Object.entries(this.promiseCache)) {
+      if (request.fulfilled && request.value === value) delete this.promiseCache[url];
     }
   }
 }

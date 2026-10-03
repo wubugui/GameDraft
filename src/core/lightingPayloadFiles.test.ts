@@ -8,6 +8,8 @@ import {
   LIGHTING_PAYLOAD_OPTIONAL,
   PROBE_ATLAS_FILE_BY_MODE,
   fetchPayloadBytes,
+  fetchPayloadBlob,
+  fetchOptionalPayloadJson,
   probeAtlasFileForMode,
   probeModeOf,
   requiredLightingPayloadFiles,
@@ -105,5 +107,45 @@ describe('fetchPayloadBytes：缺文件必须抛，不许把 404 正文当数据
     respond(200, 'application/octet-stream', 'abcd');
     const buf = await fetchPayloadBytes('/x/atlas_bin.bin');
     expect(buf.byteLength).toBe(4);
+  });
+
+  it('消费者取消即 settle，忽略 AbortSignal 的底层 fetch 晚返回也不能成功', async () => {
+    let late!: (response: Response) => void;
+    globalThis.fetch = vi.fn((_url, init) => {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return new Promise<Response>((resolve) => { late = resolve; });
+    }) as typeof fetch;
+    const controller = new AbortController();
+    const pending = fetchPayloadBytes('/late.bin', { signal: controller.signal });
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    controller.abort();
+    await rejected;
+    late(new Response('old bytes'));
+  });
+
+  it('响应头已到但响应体永远不结束也有超时，不留下定时器', async () => {
+    vi.useFakeTimers();
+    try {
+      globalThis.fetch = vi.fn(async () => ({
+        ok: true, status: 200, headers: new Headers(), blob: () => new Promise<Blob>(() => {}),
+      })) as unknown as typeof fetch;
+      const pending = fetchPayloadBlob('/stuck.png', { timeoutMs: 50 });
+      const rejected = expect(pending).rejects.toMatchObject({ name: 'TimeoutError' });
+      await vi.advanceTimersByTimeAsync(50);
+      await rejected;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('可选入口只有缺失/HTML降级，HTTP500和取消不可被假装为未烘', async () => {
+    respond(404, 'text/plain', 'not found');
+    expect(await fetchOptionalPayloadJson('/lighting.json')).toBeNull();
+    respond(200, 'text/html', '<html>');
+    expect(await fetchOptionalPayloadJson('/lighting.json')).toBeNull();
+    respond(500, 'application/json', '{"failure":true}');
+    await expect(fetchOptionalPayloadJson('/lighting.json')).rejects.toThrow(/500/);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(fetchOptionalPayloadJson('/lighting.json', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

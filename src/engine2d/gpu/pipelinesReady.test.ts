@@ -11,6 +11,9 @@ import { Buffer, BufferUsage } from '../shader/Buffer';
 import { Geometry } from '../shader/Geometry';
 import { GpuProgram } from '../shader/GpuProgram';
 import { WebGPURenderer } from './WebGPURenderer';
+import { Container } from '../scene/Container';
+import { Mesh } from '../mesh/Mesh';
+import { Shader } from '../shader/Shader';
 
 const WGSL = /* wgsl */ `
 struct GlobalUniforms { uProjectionMatrix: mat3x3<f32>, uWorldTransformMatrix: mat3x3<f32>, uWorldColorAlpha: vec4<f32>, uResolution: vec2<f32> }
@@ -45,7 +48,7 @@ function setup(name: string, opts: { pending?: boolean; fail?: boolean } = {}) {
   const program = new GpuProgram({ name, vertex: { source: WGSL, entryPoint: 'mainVertex' }, fragment: { source: WGSL, entryPoint: 'mainFragment' } });
   renderer.prewarmPipelines([{ program, geometry: makeGeometry(), blendModes: ['normal'] }]);
   expect(created.mock.calls.length).toBeGreaterThan(0);
-  return { rhi, renderer };
+  return { rhi, renderer, program };
 }
 
 /** 记下承诺落定没有(不 await,好在不推进计时器时判断「还挂着」) */
@@ -64,6 +67,37 @@ afterEach(() => {
 });
 
 describe('pipelinesReady 揭幕闸(R4-7)', () => {
+  it('完整首帧只等实际引用的管线，未使用的历史失败不会污染新场景', async () => {
+    const { renderer } = setup('unused-bad', { fail: true });
+    const root = new Container();
+    const result = await renderer.prepareForReveal({ container: root, timeoutMs: 1000 });
+    expect(result).toMatchObject({ status: 'ready', submitted: true, pending: [], failed: [] });
+    expect(result.passes).toBeGreaterThanOrEqual(2);
+    renderer.destroy();
+  });
+
+  it('完整首帧实际需要的管线失败会拒绝，不能沿用旧boolean的fail-open结果', async () => {
+    const { renderer, program } = setup('required-bad', { fail: true });
+    const root = new Container();
+    root.addChild(new Mesh({ geometry: makeGeometry(), shader: new Shader({ gpuProgram: program, resources: {} }) }));
+    await expect(renderer.prepareForReveal({ container: root, timeoutMs: 1000 })).rejects.toThrow('Required GPU pipelines failed');
+    renderer.destroy();
+  });
+
+  it('完整首帧等待期间取消立即拒绝并回收计时器', async () => {
+    const { renderer, program } = setup('required-pending', { pending: true });
+    const root = new Container();
+    root.addChild(new Mesh({ geometry: makeGeometry(), shader: new Shader({ gpuProgram: program, resources: {} }) }));
+    vi.useFakeTimers();
+    const cancel = new AbortController();
+    const waiting = renderer.prepareForReveal({ container: root, timeoutMs: 60_000, signal: cancel.signal });
+    const rejection = expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+    await Promise.resolve();
+    cancel.abort();
+    await rejection;
+    expect(vi.getTimerCount()).toBe(0);
+    renderer.destroy();
+  });
   it('全部就绪:返回 true,计时器收干净', async () => {
     const { renderer } = setup('ready-prog');
     vi.useFakeTimers();

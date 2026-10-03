@@ -12,6 +12,10 @@ import { Assets } from './Assets';
 import { loadTextures, loadImageBitmap } from './loader/parsers/loadTextures';
 import { DOMAdapter, type Adapter } from '../environment/adapter';
 import { Texture } from '../textures/Texture';
+import { AssetManager } from '../../core/AssetManager';
+import { Sprite } from '../sprite/Sprite';
+import { Rectangle } from '../math/Rectangle';
+import { resolveAssetPath } from '../../core/assetPath';
 
 const BASE = 'http://localhost:5173/game/index.html';
 
@@ -259,6 +263,157 @@ describe('Assets(对照 pixi.js 8.17)', () => {
 });
 
 describe('loadTextures 单独对照', () => {
+  it('合法lease最后释放不触发绕过Assets销毁告警，真正直接销毁仍然告警', async () => {
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const manager = new AssetManager();
+    let sprite: Sprite | null = null;
+    try {
+      const root = await manager.loadTexture('/ordered-lease-release.png');
+      const source = root.source;
+      const close = vi.spyOn(source.resource as ImageBitmap, 'close');
+      sprite = new Sprite(new Texture({ source, frame: new Rectangle(0, 0, 16, 16) }));
+      manager.dispose();
+      expect(source.destroyed).toBe(false);
+      sprite.destroy();
+      expect(source.destroyed).toBe(true);
+      expect(root.destroyed).toBe(true);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(Assets.cache.has(resolveAssetPath('/ordered-lease-release.png'))).toBe(false);
+      expect(Assets.loader.promiseCache[root.label!]).toBeUndefined();
+      const assetWarnings = (): unknown[][] => warnings.mock.calls.filter(args => args.some(arg => String(arg).includes('managed by Assets was destroyed instead of unloaded')));
+      expect(assetWarnings()).toHaveLength(0);
+
+      const direct = await Assets.load<Texture>('/direct-wrapper-destroy.png');
+      const directSource = direct.source;
+      const bitmap = directSource.resource as ImageBitmap;
+      direct.destroy(false);
+      expect(assetWarnings()).toHaveLength(1);
+      expect(String(assetWarnings()[0])).toContain('A Texture managed by Assets');
+      expect(directSource.destroyed).toBe(false);
+      Assets.cache.removeValue(direct);
+      directSource.destroy();
+      bitmap.close();
+    } finally {
+      sprite?.destroy();
+      manager.dispose();
+      warnings.mockRestore();
+    }
+  });
+
+  it('场景LRU不能关闭仍被UI子纹理绑定的CPU源，同源换帧后新manager能接管缓存', async () => {
+    const firstManager = new AssetManager({ texture: { entries: 1 } });
+    const path = '/ui-view-lease.png';
+    const cacheKey = resolveAssetPath(path);
+    await firstManager.preloadManifest({ scopeId: 'scene-ui', refs: [{ type: 'texture', path }] });
+    const root = firstManager.getTexture(path)!;
+    const source = root.source;
+    const close = vi.spyOn(source.resource as ImageBitmap, 'close');
+    const firstFrame = new Texture({ source, frame: new Rectangle(0, 0, 16, 16) });
+    const secondFrame = new Texture({ source, frame: new Rectangle(16, 0, 16, 16) });
+    const portrait = new Sprite(firstFrame);
+    firstManager.releaseScope('scene-ui');
+    await firstManager.preloadManifest({ scopeId: 'scene-next', refs: [{ type: 'texture', path: '/ui-view-lease-next.png' }] });
+    expect(firstManager.getTexture(path)).toBeNull();
+    expect(source.destroyed).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    expect(Assets.get(cacheKey)).toBe(root);
+    expect(Assets.getTextureLeaseStats().deferredSources).toBeGreaterThan(0);
+    portrait.texture = secondFrame;
+    expect(source.destroyed).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    const secondManager = new AssetManager();
+    expect(await secondManager.loadTexture(path)).toBe(root);
+    firstManager.dispose();
+    portrait.destroy();
+    expect(root.destroyed).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    secondManager.dispose();
+    expect(source.destroyed).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(Assets.cache.has(cacheKey)).toBe(false);
+    expect(Assets.loader.promiseCache[root.label!]).toBeUndefined();
+    firstFrame.destroy();
+    secondFrame.destroy();
+  });
+
+  it('manager已退出时最后Sprite换图才关闭旧源、摘全局缓存并允许重新解码', async () => {
+    const manager = new AssetManager();
+    const path = '/deferred-view-release.png';
+    const cacheKey = resolveAssetPath(path);
+    const root = await manager.loadTexture(path);
+    const source = root.source;
+    const close = vi.spyOn(source.resource as ImageBitmap, 'close');
+    const portrait = new Sprite(root);
+    manager.dispose();
+    expect(source.destroyed).toBe(false);
+    expect(Assets.get(cacheKey)).toBe(root);
+    portrait.texture = Texture.EMPTY;
+    expect(source.destroyed).toBe(true);
+    expect(root.destroyed).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(Assets.cache.has(cacheKey)).toBe(false);
+    expect(Assets.loader.promiseCache[root.label!]).toBeUndefined();
+    const nextManager = new AssetManager();
+    const next = await nextManager.loadTexture(path);
+    expect(next).not.toBe(root);
+    expect(next.source.destroyed).toBe(false);
+    nextManager.dispose();
+    portrait.destroy();
+  });
+
+  it('跨游戏管理器共享CPU源，最后owner销毁才摘Loader/Cache并关闭位图', async () => {
+    const a = new AssetManager();
+    const b = new AssetManager();
+    const first = await a.loadTexture('/lease-shared.png');
+    const second = await b.loadTexture('/lease-shared.png');
+    expect(second).toBe(first);
+    const close = vi.spyOn(first.source.resource as ImageBitmap, 'close');
+    a.dispose();
+    expect(first.destroyed).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    b.dispose();
+    expect(first.destroyed).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(Assets.cache.has(resolveAssetPath('/lease-shared.png'))).toBe(false);
+    expect(Assets.loader.promiseCache[first.label!]).toBeUndefined();
+  });
+
+  it('零scope的场景纹理LRU淘汰真正关闭CPU位图，重新进入重新载入有效源', async () => {
+    const assets = new AssetManager({ texture: { entries: 1 } });
+    await assets.preloadManifest({ scopeId: 'first', refs: [{ type: 'texture', path: '/scoped-first.png' }] });
+    const first = assets.getTexture('/scoped-first.png')!;
+    const close = vi.spyOn(first.source.resource as ImageBitmap, 'close');
+    assets.releaseScope('first');
+    await assets.preloadManifest({ scopeId: 'second', refs: [{ type: 'texture', path: '/scoped-second.png' }] });
+    expect(first.destroyed).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(Assets.cache.has(resolveAssetPath('/scoped-first.png'))).toBe(false);
+    assets.releaseScope('second');
+    await assets.preloadManifest({ scopeId: 'first-again', refs: [{ type: 'texture', path: '/scoped-first.png' }] });
+    expect(assets.getTexture('/scoped-first.png')).not.toBe(first);
+    expect(assets.getTexture('/scoped-first.png')!.source.destroyed).toBe(false);
+    assets.dispose();
+  });
+
+  it('解码超时之后同URL能重试，迟到的旧bitmap关闭且不能删新资源', async () => {
+    vi.useFakeTimers();
+    let finishOld!: (bitmap: ImageBitmap) => void;
+    const bitmapSpy = vi.spyOn(globalThis, 'createImageBitmap').mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve; }));
+    try {
+      const first = Assets.load<Texture>('/decode-timeout.png', { timeoutMs: 20 });
+      const rejected = expect(first).rejects.toThrow('Failed to load');
+      await vi.advanceTimersByTimeAsync(20);
+      await rejected;
+      const retry = await Assets.load<Texture>('/decode-timeout.png', { timeoutMs: 100 });
+      const close = vi.fn();
+      finishOld({ width: 1, height: 1, close } as unknown as ImageBitmap);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(Assets.get('/decode-timeout.png')).toBe(retry);
+      expect(retry.destroyed).toBe(false);
+      await Assets.unload('/decode-timeout.png');
+    } finally { bitmapSpy.mockRestore(); vi.useRealTimers(); }
+  });
   it('config 缺省值、test() 的扩展名 / data: 判定与 Pixi 相同', () => {
     expect(loadTextures.config).toEqual({ preferWorkers: false, preferCreateImageBitmap: true, crossOrigin: 'anonymous' });
     expect(PIXI.loadTextures.config).toEqual(loadTextures.config);

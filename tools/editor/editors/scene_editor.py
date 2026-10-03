@@ -103,6 +103,7 @@ from ..shared.list_affordances import make_list_search_box
 from ..shared.scene_ids import SCENE_ID_HINT, new_scene_skeleton, scene_id_problem
 from .scene_time_variant_form import TimeVariantForm, variant_summary
 from ..shared.rich_text_field import RichTextLineEdit
+from ..shared.loading_transition_catalog import loading_transition_choices
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor, FilterableTypeCombo
 from ..shared.health_threat_form import HealthThreatSection
@@ -5745,6 +5746,8 @@ class ScenePropertyPanel(QScrollArea):
         """
         self._model.discover_new_animation_bundles()
         self._tv_form.reload_refs()
+        if hasattr(self, "_sc_loading_transition_loaded_selection"):
+            self._refill_loading_transition_choices(*self._loading_transition_selection())
         for attr, provider in (
             ("_sc_filter", self._model.all_filter_ids),
             ("_hs_pickup_item", self._model.all_item_ids),
@@ -7009,6 +7012,14 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_id = QLineEdit(); form.addRow("id", self._sc_id)
         self._sc_name = QLineEdit(); form.addRow("name", self._sc_name)
         self._sc_name.textChanged.connect(lambda *_: self._emit_props_changed())
+        self._sc_loading_transition = QComboBox()
+        self._sc_loading_transition.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._sc_loading_transition.setToolTip(
+            "加载完成后进入场景的转场。未配置时，每次入场随机选择一种。")
+        self._sc_loading_transition_loaded_selection = (False, None)
+        self._refill_loading_transition_choices(False, None)
+        self._sc_loading_transition.currentIndexChanged.connect(lambda *_: self._emit_props_changed())
+        form.addRow("入场转场", self._sc_loading_transition)
         self._sc_width = QDoubleSpinBox()
         self._sc_width.setRange(0, 99999)
         self._sc_width.setDecimals(2)
@@ -8051,6 +8062,9 @@ class ScenePropertyPanel(QScrollArea):
             self._editing_scene_id = str(st.get("id", ""))
             self._sc_id.setText(st.get("id", ""))
             self._sc_name.setText(st.get("name", ""))
+            self._sc_loading_transition_loaded_selection = (
+                "loadingTransition" in st, copy.deepcopy(st.get("loadingTransition")))
+            self._refill_loading_transition_choices(*self._sc_loading_transition_loaded_selection)
             ww = float(st.get("worldWidth", 0) or 0)
             wh = float(st.get("worldHeight", 0) or 0)
             if ww > 0 and wh > 0:
@@ -8853,7 +8867,50 @@ class ScenePropertyPanel(QScrollArea):
         except Exception:
             pass
 
+    def _loading_transition_selection(self) -> tuple[bool, object]:
+        index = self._sc_loading_transition.currentIndex()
+        if index == 0:
+            return False, None
+        if index == self._sc_loading_transition_unknown_index:
+            return True, self._sc_loading_transition_unknown_value
+        return True, self._sc_loading_transition.currentData()
+
+    def _refill_loading_transition_choices(self, present: bool, value: object) -> None:
+        """Refresh catalogue rows without passing unknown business data through QVariant."""
+        rows = loading_transition_choices()
+        self._sc_loading_transition_ids = {kind for kind, _label in rows}
+        combo = self._sc_loading_transition
+        was_blocked = combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItem("不配置（随机）", None)
+            for kind, label in rows:
+                combo.addItem(label, kind)
+            self._sc_loading_transition_unknown_index = -1
+            self._sc_loading_transition_unknown_value = None
+            index = 0
+            if present:
+                index = combo.findData(value) if isinstance(value, str) else -1
+                if index < 0:
+                    self._sc_loading_transition_unknown_value = copy.deepcopy(value)
+                    self._sc_loading_transition_unknown_index = combo.count()
+                    combo.addItem(f"（未知）{value!r}", None)
+                    index = self._sc_loading_transition_unknown_index
+            combo.setCurrentIndex(index)
+        finally:
+            combo.blockSignals(was_blocked)
+
     def _flush_scene_widgets_into(self, sc: dict) -> None:
+        selection = self._loading_transition_selection()
+        present, value = selection
+        if not present:
+            sc.pop("loadingTransition", None)
+        elif (selection == self._sc_loading_transition_loaded_selection
+              or isinstance(value, str) and value in self._sc_loading_transition_ids):
+            # A previous staging flush may contain a different choice. Returning to
+            # the loaded row must also restore its original value, including unknown data.
+            if "loadingTransition" not in sc or sc["loadingTransition"] != value:
+                sc["loadingTransition"] = copy.deepcopy(value)
         sc["name"] = self._sc_name.text()
         ww = self._sc_width.value()
         if ww > 0:

@@ -28,6 +28,7 @@ ENTITY_REFACTOR_PY = "tools/editor/shared/entity_refactor.py"
 ACTION_MANIFEST_TS = "src/core/actionParamManifest.ts"
 EVAL_CONDITION_TS = "src/systems/graphDialogue/evaluateGraphCondition.ts"
 TYPES_TS = "src/data/types.ts"
+LOADING_TRANSITIONS_JSON = "src/data/loadingTransitions.json"
 
 # ConditionTrace 里非叶子的 kind;剩下的就是条件叶子清单(机器可校验锚点)
 _NON_LEAF_TRACE_KINDS = {"all", "any", "not", "unknown"}
@@ -63,6 +64,7 @@ class LanguageSpec:
     flag_ops: list[str]
     player_postures: list[str]
     warnings: list[str] = field(default_factory=list)
+    loading_transition_labels: dict[str, str] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #
@@ -185,6 +187,36 @@ def extract_condition_language(root: Path) -> tuple[list[str], list[str], list[s
     return leaves, quest_statuses, line_statuses, flag_ops, postures, warnings
 
 
+def extract_loading_transition_labels(root: Path) -> dict[str, str]:
+    """Resolve the JSON-backed ``keyof typeof`` alias instead of mirroring its enum."""
+    types_path = root / TYPES_TS
+    text = types_path.read_text(encoding="utf-8")
+    alias = re.search(
+        r"export\s+type\s+LoadingTransitionKind\s*=\s*keyof\s+typeof\s+([\w$]+)\s*;", text)
+    if not alias:
+        raise ValueError(f"{TYPES_TS} 提不到 LoadingTransitionKind 的 JSON 目录别名")
+    imported = re.search(
+        rf"import\s+(?:type\s+)?{re.escape(alias.group(1))}\s+from\s+['\"]([^'\"]+\.json)['\"]\s*;",
+        text)
+    if not imported:
+        raise ValueError(f"{TYPES_TS} 提不到 {alias.group(1)} 的 JSON import")
+    path = (types_path.parent / imported.group(1)).resolve()
+    if path != (root / LOADING_TRANSITIONS_JSON).resolve():
+        raise ValueError("转场目录路径已改变，json_lang 的权威监视路径需要同步")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError(f"{LOADING_TRANSITIONS_JSON} 须为非空对象")
+    labels: dict[str, str] = {}
+    for kind, definition in raw.items():
+        if not isinstance(kind, str) or not kind or not isinstance(definition, dict):
+            raise ValueError(f"{LOADING_TRANSITIONS_JSON} 条目 {kind!r} 形状异常")
+        label = definition.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError(f"{LOADING_TRANSITIONS_JSON} 条目 {kind!r} 缺少 label")
+        labels[kind] = label
+    return labels
+
+
 # --------------------------------------------------------------------------- #
 # 汇总 + 权威对账 tripwire
 # --------------------------------------------------------------------------- #
@@ -231,4 +263,5 @@ def extract_language_spec(root: Path) -> LanguageSpec:
         flag_ops=flag_ops,
         player_postures=postures,
         warnings=warnings,
+        loading_transition_labels=extract_loading_transition_labels(root),
     )

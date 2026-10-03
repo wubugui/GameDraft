@@ -539,6 +539,10 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
     return this._lost;
   }
 
+  waitForSubmittedWork(): Promise<void> {
+    return this.destroyed || this._isLost ? Promise.reject(new RhiError('backend', 'Device unavailable')) : Promise.resolve();
+  }
+
   onRestored(listener: () => void): () => void {
     this.restoredListeners.add(listener);
     return () => this.restoredListeners.delete(listener);

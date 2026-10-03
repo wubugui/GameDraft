@@ -20,7 +20,7 @@ import { checkDataUrl, checkExtension } from '../../utils/helpers';
 import { warn } from '../../utils/warn';
 import { WorkerManager } from '../workers/WorkerManager';
 import { LoaderParserPriority, type LoaderParser, type ResolvedAsset } from '../../types';
-import type { Loader } from '../Loader';
+import type { Loader, PromiseAndParser } from '../Loader';
 
 const validImageExtensions = ['.jpeg', '.jpg', '.png', '.webp', '.avif'];
 const validImageMIMEs = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
@@ -37,18 +37,20 @@ export interface LoadTextureConfig {
 
 /** 主线程路径:fetch → blob → createImageBitmap(选项规则见文件头) */
 export async function loadImageBitmap(url: string, asset?: ResolvedAsset<TextureSourceOptions>): Promise<ImageBitmap> {
-  const response = await DOMAdapter.get().fetch(url);
+  const response = await DOMAdapter.get().fetch(url, { signal: asset?.requestSignal });
   if (!response.ok) {
     throw new Error(`[loadImageBitmap] Failed to fetch ${url}: ${response.status} ${response.statusText}`);
   }
   const imageBlob = await response.blob();
-  return asset?.data?.alphaMode === 'premultiplied-alpha'
+  const bitmap = await (asset?.data?.alphaMode === 'premultiplied-alpha'
     ? createImageBitmap(imageBlob, { premultiplyAlpha: 'none' })
-    : createImageBitmap(imageBlob);
+    : createImageBitmap(imageBlob));
+  if (asset?.requestSignal?.aborted) { bitmap.close(); asset.requestSignal.throwIfAborted(); }
+  return bitmap;
 }
 
 /** 由源建一张被 Assets 管着的纹理(同 Pixi `createTexture`) */
-export function createTexture(source: ImageSource, loader: Loader, url: string): Texture {
+export function createTexture(source: ImageSource, loader: Loader, url: string, owner?: PromiseAndParser): Texture {
   source.label = url;
   (source as ImageSource & { _sourceOrigin?: string })._sourceOrigin = url;
   const texture = new Texture({
@@ -56,13 +58,13 @@ export function createTexture(source: ImageSource, loader: Loader, url: string):
     label: url,
   });
   const unload = (): void => {
-    delete loader.promiseCache[url];
-    if (Cache.has(url)) {
+    if (!owner || loader.promiseCache[url] === owner) delete loader.promiseCache[url];
+    if (Cache.has(url) && Cache.get(url) === texture) {
       Cache.remove(url);
     }
   };
   texture.source.once('destroy', () => {
-    if (loader.promiseCache[url]) {
+    if (loader.promiseCache[url] && (!owner || loader.promiseCache[url] === owner)) {
       warn('[Assets] A TextureSource managed by Assets was destroyed instead of unloaded! Use Assets.unload() instead of destroying the TextureSource.');
       unload();
     }
@@ -98,22 +100,29 @@ export const loadTextures: LoaderParser<Texture, TextureSourceOptions, LoadTextu
     // 与 Pixi 相同:按"全局上有没有 createImageBitmap"判(类型上它恒存在,实际环境里可能没有)
     if ((globalThis as { createImageBitmap?: unknown }).createImageBitmap && config.preferCreateImageBitmap) {
       if (config.preferWorkers && (await WorkerManager.isImageBitmapSupported())) {
-        src = await WorkerManager.loadImageBitmap(url, asset);
+        src = await WorkerManager.loadImageBitmap(url, asset, asset?.requestSignal);
       } else {
         src = await loadImageBitmap(url, asset);
       }
     } else {
       src = await new Promise<HTMLImageElement>((resolve, reject) => {
         const img = DOMAdapter.get().createImage();
+        const signal: AbortSignal | undefined = asset?.requestSignal;
+        const cleanup = (): void => { img.onload = null; img.onerror = null; signal?.removeEventListener('abort', abort); };
+        const abort = (): void => { cleanup(); img.src = ''; reject(signal?.reason); };
+        signal?.throwIfAborted();
+        signal?.addEventListener('abort', abort, { once: true });
         img.crossOrigin = config.crossOrigin;
         img.src = url;
         if (img.complete) {
+          cleanup();
           resolve(img);
         } else {
           img.onload = () => {
+            cleanup();
             resolve(img);
           };
-          img.onerror = reject;
+          img.onerror = error => { cleanup(); reject(error); };
         }
       });
     }
@@ -123,7 +132,7 @@ export const loadTextures: LoaderParser<Texture, TextureSourceOptions, LoadTextu
       resolution: asset?.data?.resolution || getResolutionOfUrl(url),
       ...asset?.data,
     } as ConstructorParameters<typeof ImageSource>[0]);
-    return createTexture(base, loader as Loader, url);
+    return createTexture(base, loader as Loader, url, asset?.requestOwner);
   },
   unload(texture: Texture): void {
     texture.destroy(true);
